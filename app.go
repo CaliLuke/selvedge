@@ -154,6 +154,12 @@ func (a *App) Shutdown(ctx context.Context) error {
 		return fmt.Errorf("shutdown timed out after %v", a.config.shutdownTimeout)
 	}
 
+	// Executions have finished committing their lease releases. Wake other
+	// workers once so shutdown abandons do not wait for idle polling backoff.
+	if notifier, ok := a.storage.(interface{ NotifyRunnable(context.Context) }); ok {
+		notifier.NotifyRunnable(ctx)
+	}
+
 	// Release the leader lock if we held it. Without this, a fresh
 	// process starting after a graceful shutdown has to wait the full
 	// leader-lease TTL (default 45s) before it can become leader and
@@ -1007,7 +1013,13 @@ func (a *App) resumeResumableWorkflows() (int, error) {
 	}
 
 	// Find runnable instances with free leases and orphaned expired leases.
-	workflows, err := a.storage.FindDispatchable(a.ctx, a.config.maxWorkflowsPerBatch)
+	a.workflowRunnersMu.RLock()
+	names := make([]string, 0, len(a.workflowRunners))
+	for name := range a.workflowRunners {
+		names = append(names, name)
+	}
+	a.workflowRunnersMu.RUnlock()
+	workflows, err := a.storage.FindDispatchable(a.ctx, a.config.maxWorkflowsPerBatch, names...)
 	if err != nil {
 		return 0, fmt.Errorf("failed to find resumable workflows: %w", err)
 	}
@@ -1018,20 +1030,6 @@ func (a *App) resumeResumableWorkflows() (int, error) {
 
 	dispatched := 0
 	for _, wf := range workflows {
-		// Skip workflows this worker cannot execute so they do not reset backoff.
-		instance, err := a.storage.GetInstance(a.ctx, wf)
-		if err != nil {
-			return dispatched, err
-		}
-		if instance == nil {
-			continue
-		}
-		a.workflowRunnersMu.RLock()
-		_, registered := a.workflowRunners[instance.WorkflowName]
-		a.workflowRunnersMu.RUnlock()
-		if !registered {
-			continue
-		}
 		// Check context before acquiring semaphore
 		if a.ctx.Err() != nil {
 			break

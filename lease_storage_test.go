@@ -15,7 +15,7 @@ type leaseStore interface {
 	RenewLease(context.Context, storage.Fence, time.Duration) (bool, error)
 	ReleaseLease(context.Context, storage.Fence, bool) error
 	MarkRunnable(context.Context, string) error
-	FindDispatchable(context.Context, int) ([]string, error)
+	FindDispatchable(context.Context, int, ...string) ([]string, error)
 }
 
 func newLeaseStore(t *testing.T, factory replayAppFactory) (*typedReplayHarness, leaseStore) {

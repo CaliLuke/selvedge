@@ -233,11 +233,11 @@ func (s *Store) ListInstances(ctx context.Context, opts storage.ListInstancesOpt
 }
 
 // FindDispatchable delegates to storage with before/after fault hooks and call recording.
-func (s *Store) FindDispatchable(ctx context.Context, limit int) ([]string, error) {
+func (s *Store) FindDispatchable(ctx context.Context, limit int, workflowNames ...string) ([]string, error) {
 	if err := s.before(ctx, "FindDispatchable"); err != nil {
 		return nil, err
 	}
-	v0, err := s.Storage.FindDispatchable(ctx, limit)
+	v0, err := s.Storage.FindDispatchable(ctx, limit, workflowNames...)
 	return v0, s.after(ctx, "FindDispatchable", err)
 }
 

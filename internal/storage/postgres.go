@@ -858,6 +858,12 @@ func (s *PostgresStorage) CleanupExpiredSystemLocks(ctx context.Context) error {
 	return err
 }
 
+// NotifyRunnable wakes dispatchers after a batch of runnable mutations, such as
+// lease releases during shutdown. It is a no-op when notifications are disabled.
+func (s *PostgresStorage) NotifyRunnable(ctx context.Context) {
+	s.notifyRunnable(ctx, "")
+}
+
 // notifyRunnable publishes only after the mutation's transaction commits. The
 // notification is a hint to all dispatchers; the runnable flag remains durable.
 func (s *PostgresStorage) notifyRunnable(ctx context.Context, instanceID string) {

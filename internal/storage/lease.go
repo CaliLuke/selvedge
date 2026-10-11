@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -22,7 +23,8 @@ type LeaseManager interface {
 	// MarkRunnable marks a running instance for dispatch without changing ownership.
 	MarkRunnable(context.Context, string) error
 	// FindDispatchable lists runnable unowned instances and instances with expired leases.
-	FindDispatchable(context.Context, int) ([]string, error)
+	// A nil name filter includes all workflows; a non-nil empty filter includes none.
+	FindDispatchable(context.Context, int, ...string) ([]string, error)
 }
 
 type leaseStore struct {
@@ -87,12 +89,26 @@ func (s leaseStore) MarkRunnable(ctx context.Context, id string) error {
 }
 
 // FindDispatchable lists runnable unowned instances and instances with expired leases.
-func (s leaseStore) FindDispatchable(ctx context.Context, limit int) ([]string, error) {
+func (s leaseStore) FindDispatchable(ctx context.Context, limit int, workflowNames ...string) ([]string, error) {
+	if workflowNames != nil && len(workflowNames) == 0 {
+		return nil, nil
+	}
 	if limit <= 0 {
 		limit = 100
 	}
+	args := make([]any, 1, len(workflowNames)+1)
+	args[0] = limit
+	filter := ""
+	if len(workflowNames) > 0 {
+		placeholders := make([]string, len(workflowNames))
+		for i, name := range workflowNames {
+			placeholders[i] = fmt.Sprintf("$%d", i+2)
+			args = append(args, name)
+		}
+		filter = " AND workflow_name IN (" + strings.Join(placeholders, ",") + ")"
+	}
 	rows, err := observeExecutor(s.driver, s.DB()).QueryContext(ctx, `SELECT instance_id FROM workflow_instances WHERE status='running' AND
- ((lease_owner IS NULL AND runnable) OR (lease_owner IS NOT NULL AND lease_expires_ms < `+s.driver.NowMillisExpr()+`)) ORDER BY started_at, instance_id LIMIT $1`, limit)
+ ((lease_owner IS NULL AND runnable) OR (lease_owner IS NOT NULL AND lease_expires_ms < `+s.driver.NowMillisExpr()+`))`+filter+` ORDER BY started_at, instance_id LIMIT $1`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -129,8 +145,8 @@ func (s *SQLiteStorage) MarkRunnable(ctx context.Context, id string) error {
 }
 
 // FindDispatchable lists runnable unowned instances and instances with expired leases.
-func (s *SQLiteStorage) FindDispatchable(ctx context.Context, limit int) ([]string, error) {
-	return (leaseStore{s, s.driver}).FindDispatchable(ctx, limit)
+func (s *SQLiteStorage) FindDispatchable(ctx context.Context, limit int, workflowNames ...string) ([]string, error) {
+	return (leaseStore{s, s.driver}).FindDispatchable(ctx, limit, workflowNames...)
 }
 
 // AcquireLease grants a fresh epoch to a runnable unowned instance or an instance with an expired lease.
@@ -160,8 +176,8 @@ func (s *PostgresStorage) MarkRunnable(ctx context.Context, id string) error {
 }
 
 // FindDispatchable lists runnable unowned instances and instances with expired leases.
-func (s *PostgresStorage) FindDispatchable(ctx context.Context, limit int) ([]string, error) {
-	return (leaseStore{s, s.driver}).FindDispatchable(ctx, limit)
+func (s *PostgresStorage) FindDispatchable(ctx context.Context, limit int, workflowNames ...string) ([]string, error) {
+	return (leaseStore{s, s.driver}).FindDispatchable(ctx, limit, workflowNames...)
 }
 
 // The store's millisecond grant must never be shorter than the holder's budget.
