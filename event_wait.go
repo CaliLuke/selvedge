@@ -35,7 +35,7 @@ func subscribeEvent(ctx *WorkflowContext, channelName string) error {
 	activityID := ctx.GenerateActivityID(fmt.Sprintf("subscribe_%s", channelName))
 
 	// Check if already subscribed (replay)
-	if _, ok := ctx.GetCachedResult(activityID); ok {
+	if _, ok := ctx.lookupRecorded(activityID); ok {
 		return nil
 	}
 
@@ -61,9 +61,6 @@ func subscribeEvent(ctx *WorkflowContext, channelName string) error {
 	if err := s.SubscribeToChannel(ctx.Context(), ctx.InstanceID(), channelName, storage.ChannelModeBroadcast); err != nil {
 		return fmt.Errorf("failed to subscribe to channel: %w", err)
 	}
-
-	// Record for replay
-	ctx.SetCachedResult(activityID, true)
 
 	return nil
 }
@@ -95,29 +92,21 @@ func receiveEvent[T any](ctx *WorkflowContext, channelName string, opts ...recei
 
 	// Check if result is cached (replay)
 	// First try raw JSON to avoid re-serialization
-	if rawJSON, ok := ctx.GetCachedResultRaw(activityID); ok && len(rawJSON) > 0 {
+	if event, ok := ctx.lookupRecorded(activityID); ok && event.EventType != storage.HistoryActivityFailed && event.EventType != storage.HistoryMessageTimeout && len(event.EventData) > 0 {
+		rawJSON := event.EventData
 		// Decode the recorded Go message envelope.
 		var msg receivedEventMessage[T]
 		if err := json.Unmarshal(rawJSON, &msg); err == nil && msg.ChannelName != "" {
 			return &msg, nil
 		}
 	}
-	// Also check GetCachedResult which handles cached errors
-	if result, ok := ctx.GetCachedResult(activityID); ok {
-		// Check if it's an error (e.g., timeout)
-		if err, isErr := result.(error); isErr {
-			// Convert generic timeout error to ChannelMessageTimeoutError
-			// so that errors.As works correctly
+	if event, ok := ctx.lookupRecorded(activityID); ok {
+		if event.EventType == storage.HistoryActivityFailed || event.EventType == storage.HistoryMessageTimeout {
+			err := replayRecordedError(event)
 			if strings.Contains(err.Error(), "timeout waiting for channel message") {
-				return nil, &ChannelMessageTimeoutError{
-					InstanceID:  ctx.InstanceID(),
-					ChannelName: channelName,
-				}
+				return nil, &ChannelMessageTimeoutError{InstanceID: ctx.InstanceID(), ChannelName: channelName}
 			}
 			return nil, err
-		}
-		if msg, ok := result.(*receivedEventMessage[T]); ok {
-			return msg, nil
 		}
 		return nil, fmt.Errorf("cached result type mismatch for channel receive %s", activityID)
 	}
@@ -175,9 +164,6 @@ func receiveEvent[T any](ctx *WorkflowContext, channelName string, opts ...recei
 		if err := ctx.RecordActivityResult(activityID, result, nil); err != nil {
 			return nil, fmt.Errorf("failed to record activity result: %w", err)
 		}
-
-		// Cache for replay
-		ctx.SetCachedResult(activityID, result)
 
 		// Call OnEventWaitComplete hook
 		if h := ctx.Hooks(); h != nil {

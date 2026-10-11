@@ -11,13 +11,6 @@ import (
 	"github.com/CaliLuke/selvedge/internal/storage"
 )
 
-// CachedResult holds both raw JSON bytes and the unmarshaled value.
-// This avoids re-serialization when the raw JSON is needed.
-type CachedResult struct {
-	RawJSON []byte // Original JSON bytes from history
-	Value   any    // Unmarshaled value
-}
-
 // Engine handles workflow execution with deterministic replay.
 type Engine struct {
 	storage  storage.Storage
@@ -53,9 +46,9 @@ type ExecutionContext struct {
 	historyIndex int
 	isReplaying  bool
 
-	// Cached results from replay
-	cachedResults map[string]*CachedResult
-	cachedErrors  map[string]error
+	// Raw recorded rows; values are decoded by their typed caller.
+	recorded map[string]*storage.HistoryEvent
+	fatal    error
 
 	// Replay statistics
 	cacheHits     int
@@ -86,47 +79,31 @@ func (ec *ExecutionContext) GenerateActivityID(activityName string) string {
 	return fmt.Sprintf("%s:%d", activityName, ec.activityCounter[activityName])
 }
 
-// GetCachedResult retrieves a cached result from replay history.
-// Returns (result, true) if found, (nil, false) if not found.
-// The returned value is the unmarshaled any value from CachedResult.Value.
-func (ec *ExecutionContext) GetCachedResult(activityID string) (any, bool) {
-	if cached, ok := ec.cachedResults[activityID]; ok {
-		ec.counterMu.Lock()
+// Lookup retrieves a raw recorded row by its history key.
+func (ec *ExecutionContext) Lookup(key string) (*storage.HistoryEvent, bool) {
+	ec.counterMu.Lock()
+	defer ec.counterMu.Unlock()
+	event, ok := ec.recorded[key]
+	if ok {
 		ec.cacheHits++
-		ec.counterMu.Unlock()
-		return cached.Value, true
 	}
-	if err, ok := ec.cachedErrors[activityID]; ok {
-		ec.counterMu.Lock()
-		ec.cacheHits++
-		ec.counterMu.Unlock()
-		return err, true
-	}
-	return nil, false
+	return event, ok
 }
 
-// GetCachedResultRaw retrieves a cached result with raw JSON bytes.
-// Returns (*CachedResult, true) if found, (nil, false) if not found.
-// Use this to avoid re-serialization when the raw JSON is needed.
-func (ec *ExecutionContext) GetCachedResultRaw(activityID string) (*CachedResult, bool) {
-	if cached, ok := ec.cachedResults[activityID]; ok {
-		return cached, true
-	}
-	return nil, false
-}
-
-// SetCachedResult caches a result for replay.
-func (ec *ExecutionContext) SetCachedResult(activityID string, result any) {
-	if err, ok := result.(error); ok {
-		ec.cachedErrors[activityID] = err
-	} else {
-		ec.cachedResults[activityID] = &CachedResult{Value: result}
+// Fail marks an execution as failed even if workflow code catches the error.
+func (ec *ExecutionContext) Fail(err error) {
+	ec.counterMu.Lock()
+	defer ec.counterMu.Unlock()
+	if ec.fatal == nil {
+		ec.fatal = err
 	}
 }
 
-// SetCachedResultWithRaw caches a result with raw JSON bytes for replay.
-func (ec *ExecutionContext) SetCachedResultWithRaw(activityID string, rawJSON []byte, value any) {
-	ec.cachedResults[activityID] = &CachedResult{RawJSON: rawJSON, Value: value}
+// Fatal returns the first failure that must terminate this execution.
+func (ec *ExecutionContext) Fatal() error {
+	ec.counterMu.Lock()
+	defer ec.counterMu.Unlock()
+	return ec.fatal
 }
 
 // RecordActivityID records that an activity has been executed.
@@ -136,20 +113,31 @@ func (ec *ExecutionContext) RecordActivityID(activityID string) {
 
 // RecordActivityResult records an activity result to storage.
 // This delegates to the engine's RecordActivityResult method.
-func (ec *ExecutionContext) RecordActivityResult(activityID string, result any, activityErr error) error {
+func (ec *ExecutionContext) RecordActivityResult(activityID string, result any, activityErr error) (*storage.HistoryEvent, error) {
 	ec.counterMu.Lock()
 	ec.newActivities++
 	ec.counterMu.Unlock()
-	return ec.engine.RecordActivityResult(ec.ctx, ec.instanceID, activityID, result, activityErr)
+	return ec.recordActivityResult(ec.ctx, activityID, result, activityErr)
 }
 
 // RecordActivityResultWithContext records an activity result to storage using the provided context.
 // This is useful when recording within a transaction where the transaction context should be used.
-func (ec *ExecutionContext) RecordActivityResultWithContext(ctx context.Context, activityID string, result any, activityErr error) error {
+func (ec *ExecutionContext) RecordActivityResultWithContext(ctx context.Context, activityID string, result any, activityErr error) (*storage.HistoryEvent, error) {
 	ec.counterMu.Lock()
 	ec.newActivities++
 	ec.counterMu.Unlock()
-	return ec.engine.RecordActivityResult(ctx, ec.instanceID, activityID, result, activityErr)
+	return ec.recordActivityResult(ctx, activityID, result, activityErr)
+}
+
+func (ec *ExecutionContext) recordActivityResult(ctx context.Context, key string, result any, activityErr error) (*storage.HistoryEvent, error) {
+	event, err := ec.engine.RecordActivityResult(ctx, ec.instanceID, key, result, activityErr)
+	if err != nil {
+		return nil, err
+	}
+	ec.counterMu.Lock()
+	ec.recorded[key] = event
+	ec.counterMu.Unlock()
+	return event, nil
 }
 
 // Storage returns the storage interface for advanced use cases.
@@ -222,38 +210,20 @@ func (e *Engine) executeWorkflow(ctx context.Context, instanceID string, runner 
 	})
 	defer func() { _ = iter.Close() }()
 
-	// Build cached results from history
-	cachedResults := make(map[string]*CachedResult)
-	cachedErrors := make(map[string]error)
+	// Keep raw rows even when their payload is invalid JSON. The typed caller
+	// must fail decoding rather than treating a corrupt result as unrecorded.
+	recorded := make(map[string]*storage.HistoryEvent)
 	historyCount := 0
-
 	for {
 		event, ok := iter.Next()
 		if !ok {
 			break
 		}
 		historyCount++
-
 		switch event.EventType {
-		case storage.HistoryActivityCompleted, storage.HistoryChannelMessageReceived:
-			// Both activity results and channel messages are cached for replay
-			var result any
-			if event.DataType == "json" && len(event.EventData) > 0 {
-				if err := json.Unmarshal(event.EventData, &result); err == nil {
-					// Store both raw JSON and unmarshaled value
-					cachedResults[event.ActivityID] = &CachedResult{
-						RawJSON: event.EventData,
-						Value:   result,
-					}
-				}
-			}
-		case storage.HistoryActivityFailed, storage.HistoryMessageTimeout:
-			// Both activity failures and message timeouts are cached as errors
-			errMsg := ""
-			if len(event.EventData) > 0 {
-				_ = json.Unmarshal(event.EventData, &errMsg)
-			}
-			cachedErrors[event.ActivityID] = fmt.Errorf("%s", errMsg)
+		case storage.HistoryActivityCompleted, storage.HistoryChannelMessageReceived,
+			storage.HistoryActivityFailed, storage.HistoryMessageTimeout:
+			recorded[event.ActivityID] = event
 		}
 	}
 	if err := iter.Err(); err != nil {
@@ -270,8 +240,7 @@ func (e *Engine) executeWorkflow(ctx context.Context, instanceID string, runner 
 		history:         nil, // History is processed via iterator, not stored
 		historyIndex:    0,
 		isReplaying:     isReplaying,
-		cachedResults:   cachedResults,
-		cachedErrors:    cachedErrors,
+		recorded:        recorded,
 	}
 
 	startTime := time.Now()
@@ -295,6 +264,9 @@ func (e *Engine) executeWorkflow(ctx context.Context, instanceID string, runner 
 
 	// Execute the workflow
 	result, err := runner(execCtx)
+	if fatal := execCtx.Fatal(); fatal != nil {
+		err = fatal
+	}
 
 	duration := time.Since(startTime)
 
@@ -416,7 +388,7 @@ func (e *Engine) RecordActivityResult(
 	activityID string,
 	result any,
 	activityErr error,
-) error {
+) (*storage.HistoryEvent, error) {
 	event := &storage.HistoryEvent{
 		InstanceID: instanceID,
 		ActivityID: activityID,
@@ -431,10 +403,29 @@ func (e *Engine) RecordActivityResult(
 		event.EventType = storage.HistoryActivityCompleted
 		resultData, err := json.Marshal(result)
 		if err != nil {
-			return fmt.Errorf("failed to serialize result: %w", err)
+			return nil, fmt.Errorf("failed to serialize result: %w", err)
 		}
 		event.EventData = resultData
 	}
 
-	return e.storage.AppendHistory(ctx, event)
+	if err := e.storage.AppendHistory(ctx, event); err != nil {
+		return nil, err
+	}
+	// Read the stored bytes, including any normalization by the database.
+	// S3's row-returning history API will replace this iterator lookup.
+	iter := storage.NewHistoryIterator(ctx, e.storage, instanceID, nil)
+	defer func() { _ = iter.Close() }()
+	for {
+		stored, ok := iter.Next()
+		if !ok {
+			break
+		}
+		if stored.ActivityID == activityID {
+			return stored, nil
+		}
+	}
+	if err := iter.Err(); err != nil {
+		return nil, err
+	}
+	return nil, fmt.Errorf("recorded activity result missing for %s", activityID)
 }

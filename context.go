@@ -2,6 +2,7 @@ package selvedge
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 
@@ -46,7 +47,7 @@ func GetWorkflowContext(ctx context.Context) *WorkflowContext {
 }
 
 // WorkflowContext provides context for workflow execution.
-// It manages activity ID generation, replay state, and history caching.
+// It manages activity ID generation, replay state, and recorded history.
 type WorkflowContext struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
@@ -57,8 +58,7 @@ type WorkflowContext struct {
 	workflowName string
 
 	// Replay state
-	isReplaying  bool
-	historyCache map[string]any // activity_id → result
+	isReplaying bool
 
 	// Activity ID management
 	activityCounts map[string]int // function_name → counter
@@ -75,7 +75,6 @@ type WorkflowContext struct {
 func NewWorkflowContext(
 	ctx context.Context,
 	instanceID, workerID, workflowName string,
-	historyCache map[string]any,
 	isReplaying bool,
 ) *WorkflowContext {
 	ctx, cancel := context.WithCancel(ctx)
@@ -86,7 +85,6 @@ func NewWorkflowContext(
 		workerID:       workerID,
 		workflowName:   workflowName,
 		isReplaying:    isReplaying,
-		historyCache:   historyCache,
 		activityCounts: make(map[string]int),
 	}
 }
@@ -119,7 +117,6 @@ func (c *WorkflowContext) WithContext(ctx context.Context) *WorkflowContext {
 		workerID:       c.workerID,
 		workflowName:   c.workflowName,
 		isReplaying:    c.isReplaying,
-		historyCache:   c.historyCache,
 		activityCounts: c.activityCounts,
 		execCtx:        c.execCtx,
 	}
@@ -157,70 +154,37 @@ func (c *WorkflowContext) GenerateActivityID(functionName string) string {
 	return fmt.Sprintf("%s:%d", functionName, c.activityCounts[functionName])
 }
 
-// GetCachedResult retrieves a cached result for the given activity ID.
-// Returns the result and true if found, or nil and false if not cached.
-func (c *WorkflowContext) GetCachedResult(activityID string) (any, bool) {
-	// Delegate to execution context when using replay engine
+// lookupRecorded retrieves a raw row from the replay execution.
+func (c *WorkflowContext) lookupRecorded(key string) (*storage.HistoryEvent, bool) {
 	if c.execCtx != nil {
-		return c.execCtx.GetCachedResult(activityID)
-	}
-	// Fallback to local cache
-	if c.historyCache == nil {
-		return nil, false
-	}
-	result, ok := c.historyCache[activityID]
-	return result, ok
-}
-
-// GetCachedResultRaw retrieves a cached result with raw JSON bytes.
-// Returns (rawJSON, true) if found, (nil, false) if not found.
-// Use this to avoid re-serialization when the raw JSON is needed.
-func (c *WorkflowContext) GetCachedResultRaw(activityID string) ([]byte, bool) {
-	// Delegate to execution context when using replay engine
-	if c.execCtx != nil {
-		if cached, ok := c.execCtx.GetCachedResultRaw(activityID); ok {
-			return cached.RawJSON, true
-		}
+		return c.execCtx.Lookup(key)
 	}
 	return nil, false
 }
 
-// SetCachedResult stores a result in the history cache.
-// This is typically called after activity execution to cache results locally.
-func (c *WorkflowContext) SetCachedResult(activityID string, result any) {
-	// Delegate to execution context when using replay engine
-	if c.execCtx != nil {
-		c.execCtx.SetCachedResult(activityID, result)
-		return
-	}
-	// Fallback to local cache
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.historyCache == nil {
-		c.historyCache = make(map[string]any)
-	}
-	c.historyCache[activityID] = result
+// RecordActivityResult records an activity result to storage.
+func (c *WorkflowContext) RecordActivityResult(activityID string, result any, activityErr error) error {
+	_, err := c.recordActivityResult(activityID, result, activityErr)
+	return err
 }
 
-// RecordActivityResult records an activity result to storage and caches it.
-// This is called after activity execution when NOT replaying.
-func (c *WorkflowContext) RecordActivityResult(activityID string, result any, err error) error {
-	// Record to storage if using replay engine
+func (c *WorkflowContext) recordActivityResult(activityID string, result any, activityErr error) (*storage.HistoryEvent, error) {
 	if c.execCtx != nil {
-		// Use the WorkflowContext's ctx (which may be a transaction context)
-		// instead of the ExecutionContext's original ctx
-		if recordErr := c.execCtx.RecordActivityResultWithContext(c.ctx, activityID, result, err); recordErr != nil {
-			return recordErr
-		}
+		return c.execCtx.RecordActivityResultWithContext(c.ctx, activityID, result, activityErr)
 	}
-	// Cache the result (either result or error)
+	// Standalone contexts have no durable store. Still use the JSON codec so
+	// that activity values have the same representation as an engine run.
+	event := &storage.HistoryEvent{InstanceID: c.instanceID, ActivityID: activityID, DataType: "json", EventType: storage.HistoryActivityCompleted}
+	if activityErr != nil {
+		event.EventType = storage.HistoryActivityFailed
+		result = activityErr.Error()
+	}
+	data, err := json.Marshal(result)
 	if err != nil {
-		c.SetCachedResult(activityID, err)
-	} else {
-		c.SetCachedResult(activityID, result)
+		return nil, fmt.Errorf("failed to serialize result: %w", err)
 	}
-	return nil
+	event.EventData = data
+	return event, nil
 }
 
 // RecordActivityID records that an activity ID has been used.

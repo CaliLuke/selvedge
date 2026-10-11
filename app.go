@@ -706,7 +706,7 @@ func (a *App) handleExpiredTimer(timer *storage.TimerSubscription) error {
 		"expires_at": timer.ExpiresAt.Format(time.RFC3339),
 		"completed":  true,
 	}
-	if err := a.engine.RecordActivityResult(a.ctx, timer.InstanceID, timer.TimerID, timerResult, nil); err != nil {
+	if _, err := a.engine.RecordActivityResult(a.ctx, timer.InstanceID, timer.TimerID, timerResult, nil); err != nil {
 		_ = a.storage.ReleaseLock(a.ctx, timer.InstanceID, a.config.workerID)
 		return fmt.Errorf("failed to record timer result: %w", err)
 	}

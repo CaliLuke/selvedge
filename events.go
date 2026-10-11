@@ -154,7 +154,7 @@ func Sleep(ctx *WorkflowContext, duration time.Duration, opts ...SleepOption) er
 	}
 
 	// Check if result is cached (replay)
-	if _, ok := ctx.GetCachedResult(timerID); ok {
+	if _, ok := ctx.lookupRecorded(timerID); ok {
 		return nil
 	}
 

@@ -153,11 +153,10 @@ func TestActivity_Execute_CacheHit(t *testing.T) {
 				},
 			)
 
-			ctx := context.Background()
 			historyCache := map[string]any{
 				"test_activity:1": tt.cachedResult,
 			}
-			wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", historyCache, true)
+			wfCtx := workflowContextWithRecordedHistory(t, historyCache)
 
 			result, err := activity.Execute(wfCtx, "input")
 
@@ -203,8 +202,7 @@ func TestActivity_Execute_WithActivityID(t *testing.T) {
 				},
 			)
 
-			ctx := context.Background()
-			wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", nil, false)
+			wfCtx := workflowContextWithRecordedHistory(t, nil)
 
 			var opts []ExecuteOption
 			if tt.providedID != "" {
@@ -215,9 +213,9 @@ func TestActivity_Execute_WithActivityID(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, "result", result)
 
-			cachedResult, found := wfCtx.GetCachedResult(tt.expectID)
+			cachedResult, found := wfCtx.lookupRecorded(tt.expectID)
 			assert.True(t, found, "result should be cached with expected ID")
-			assert.Equal(t, "result", cachedResult)
+			assert.JSONEq(t, `"result"`, string(cachedResult.EventData))
 		})
 	}
 }
@@ -233,7 +231,7 @@ func TestActivity_executeWithRetry_SuccessOnFirstTry(t *testing.T) {
 	)
 
 	ctx := context.Background()
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", nil, false)
+	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", false)
 
 	result, err := activity.executeWithRetry(wfCtx, "input", "test:1")
 
@@ -256,7 +254,7 @@ func TestActivity_executeWithRetry_SuccessAfterRetries(t *testing.T) {
 	)
 
 	ctx := context.Background()
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", nil, false)
+	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", false)
 
 	result, err := activity.executeWithRetry(wfCtx, "input", "test:1")
 
@@ -276,7 +274,7 @@ func TestActivity_executeWithRetry_ExhaustedRetries(t *testing.T) {
 	)
 
 	ctx := context.Background()
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", nil, false)
+	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", false)
 
 	result, err := activity.executeWithRetry(wfCtx, "input", "test:1")
 
@@ -301,7 +299,7 @@ func TestActivity_executeWithRetry_TerminalErrorNoRetry(t *testing.T) {
 	)
 
 	ctx := context.Background()
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", nil, false)
+	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", false)
 
 	result, err := activity.executeWithRetry(wfCtx, "input", "test:1")
 
@@ -320,7 +318,7 @@ func TestActivity_executeWithRetry_ContextCancellation(t *testing.T) {
 	)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", nil, false)
+	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", false)
 
 	go func() {
 		time.Sleep(50 * time.Millisecond)
@@ -348,7 +346,7 @@ func TestActivity_executeWithRetry_Timeout(t *testing.T) {
 	)
 
 	ctx := context.Background()
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", nil, false)
+	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", false)
 
 	_, err := activity.executeWithRetry(wfCtx, "input", "test:1")
 
@@ -393,7 +391,7 @@ func TestActivity_Execute_NonTransactional_NoStorage(t *testing.T) {
 	)
 
 	ctx := context.Background()
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", nil, false)
+	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", false)
 
 	result, err := activity.Execute(wfCtx, "input")
 
@@ -401,9 +399,8 @@ func TestActivity_Execute_NonTransactional_NoStorage(t *testing.T) {
 	assert.Equal(t, "result", result)
 	assert.True(t, fnCalled)
 
-	cachedResult, found := wfCtx.GetCachedResult("test:1")
-	assert.True(t, found)
-	assert.Equal(t, "result", cachedResult)
+	_, found := wfCtx.lookupRecorded("test:1")
+	assert.False(t, found)
 }
 
 func TestActivity_Execute_Error_NoStorage(t *testing.T) {
@@ -415,7 +412,7 @@ func TestActivity_Execute_Error_NoStorage(t *testing.T) {
 	)
 
 	ctx := context.Background()
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", nil, false)
+	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", false)
 
 	result, err := activity.Execute(wfCtx, "input")
 
@@ -423,9 +420,8 @@ func TestActivity_Execute_Error_NoStorage(t *testing.T) {
 	assert.Empty(t, result)
 	assert.True(t, IsTerminalError(err))
 
-	cachedResult, found := wfCtx.GetCachedResult("test:1")
-	assert.True(t, found, "error should be cached")
-	assert.True(t, IsTerminalError(cachedResult.(error)))
+	_, found := wfCtx.lookupRecorded("test:1")
+	assert.False(t, found)
 }
 
 func TestActivity_TypedInputOutput(t *testing.T) {
@@ -448,7 +444,7 @@ func TestActivity_TypedInputOutput(t *testing.T) {
 	)
 
 	ctx := context.Background()
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", nil, false)
+	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", false)
 
 	result, err := activity.Execute(wfCtx, Input{Name: "test", Value: 21})
 

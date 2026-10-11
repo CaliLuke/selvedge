@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/CaliLuke/selvedge/hooks"
+	"github.com/CaliLuke/selvedge/internal/storage"
 	"github.com/CaliLuke/selvedge/retry"
 )
 
@@ -90,6 +91,12 @@ func (a *Activity[I, O]) Execute(
 	input I,
 	opts ...ExecuteOption,
 ) (O, error) {
+	if ctx.execCtx != nil {
+		if err := ctx.execCtx.Fatal(); err != nil {
+			var zero O
+			return zero, err
+		}
+	}
 	options := &executeOptions{}
 	for _, opt := range opts {
 		opt(options)
@@ -113,9 +120,16 @@ func (a *Activity[I, O]) Execute(
 		})
 	}
 
-	// Check if result is cached (replay)
-	if result, ok := ctx.GetCachedResult(activityID); ok {
-		// Call OnActivityCacheHit hook
+	// Replay uses recorded bytes decoded directly into the activity's output type.
+	if event, ok := ctx.lookupRecorded(activityID); ok {
+		if event.EventType == storage.HistoryActivityFailed || event.EventType == storage.HistoryMessageTimeout {
+			var zero O
+			return zero, replayRecordedError(event)
+		}
+		result, err := decodeActivityRecorded[O](ctx, event)
+		if err != nil {
+			return result, err
+		}
 		if h := ctx.Hooks(); h != nil {
 			h.OnActivityCacheHit(ctx.Context(), hooks.ActivityCacheHitInfo{
 				InstanceID:   ctx.InstanceID(),
@@ -125,17 +139,7 @@ func (a *Activity[I, O]) Execute(
 				CachedResult: result,
 			})
 		}
-		// Type assertion with proper handling
-		if typedResult, ok := result.(O); ok {
-			return typedResult, nil
-		}
-		// Handle error results stored in cache
-		if err, ok := result.(error); ok {
-			var zero O
-			return zero, err
-		}
-		var zero O
-		return zero, fmt.Errorf("cached result type mismatch for activity %s", activityID)
+		return result, nil
 	}
 
 	// Execute with or without transaction based on configuration
@@ -166,8 +170,9 @@ func (a *Activity[I, O]) executeInTransaction(
 	// Execute the activity
 	result, execErr := a.executeWithRetry(txWorkflowCtx, input, activityID)
 
-	// Record result to storage and cache
-	if recordErr := txWorkflowCtx.RecordActivityResult(activityID, result, execErr); recordErr != nil {
+	// Record the serialized result before committing.
+	stored, recordErr := txWorkflowCtx.recordActivityResult(activityID, result, execErr)
+	if recordErr != nil {
 		// Rollback on record failure
 		_ = ctx.Storage().RollbackTransaction(txCtx)
 		return zero, fmt.Errorf("failed to record activity result: %w", recordErr)
@@ -187,7 +192,7 @@ func (a *Activity[I, O]) executeInTransaction(
 		return zero, fmt.Errorf("failed to commit transaction: %w", commitErr)
 	}
 
-	return result, nil
+	return decodeActivityRecorded[O](ctx, stored)
 }
 
 // executeWithoutTransaction runs the activity without a transaction wrapper.
@@ -199,8 +204,9 @@ func (a *Activity[I, O]) executeWithoutTransaction(
 	// Execute the activity
 	result, err := a.executeWithRetry(ctx, input, activityID)
 
-	// Record result to storage and cache (only when not replaying)
-	if recordErr := ctx.RecordActivityResult(activityID, result, err); recordErr != nil {
+	// Return the serialized representation on first execution, too.
+	stored, recordErr := ctx.recordActivityResult(activityID, result, err)
+	if recordErr != nil {
 		var zero O
 		return zero, fmt.Errorf("failed to record activity result: %w", recordErr)
 	}
@@ -213,7 +219,7 @@ func (a *Activity[I, O]) executeWithoutTransaction(
 	// Record activity ID for tracking
 	ctx.RecordActivityID(activityID)
 
-	return result, nil
+	return decodeActivityRecorded[O](ctx, stored)
 }
 
 // executeWithRetry executes the activity with retry logic.

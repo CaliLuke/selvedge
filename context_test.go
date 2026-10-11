@@ -19,7 +19,6 @@ func TestNewWorkflowContext(t *testing.T) {
 		instanceID   string
 		workerID     string
 		workflowName string
-		historyCache map[string]any
 		isReplaying  bool
 	}{
 		{
@@ -27,7 +26,6 @@ func TestNewWorkflowContext(t *testing.T) {
 			instanceID:   "inst-001",
 			workerID:     "worker-1",
 			workflowName: "test_workflow",
-			historyCache: nil,
 			isReplaying:  false,
 		},
 		{
@@ -35,26 +33,21 @@ func TestNewWorkflowContext(t *testing.T) {
 			instanceID:   "inst-002",
 			workerID:     "worker-2",
 			workflowName: "test_workflow",
-			historyCache: map[string]any{},
 			isReplaying:  false,
 		},
 		{
-			name:         "replay with history cache",
+			name:         "replay context",
 			instanceID:   "inst-003",
 			workerID:     "worker-3",
 			workflowName: "test_workflow",
-			historyCache: map[string]any{
-				"activity_a:1": "result1",
-				"activity_b:1": 42,
-			},
-			isReplaying: true,
+			isReplaying:  true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			wfCtx := NewWorkflowContext(ctx, tt.instanceID, tt.workerID, tt.workflowName, tt.historyCache, tt.isReplaying)
+			wfCtx := NewWorkflowContext(ctx, tt.instanceID, tt.workerID, tt.workflowName, tt.isReplaying)
 
 			require.NotNil(t, wfCtx)
 			assert.Equal(t, tt.instanceID, wfCtx.InstanceID())
@@ -68,7 +61,7 @@ func TestNewWorkflowContext(t *testing.T) {
 
 func TestWorkflowContext_Getters(t *testing.T) {
 	ctx := context.Background()
-	wfCtx := NewWorkflowContext(ctx, "test-instance", "test-worker", "test-workflow", nil, false)
+	wfCtx := NewWorkflowContext(ctx, "test-instance", "test-worker", "test-workflow", false)
 
 	tests := []struct {
 		name     string
@@ -140,7 +133,7 @@ func TestWorkflowContext_GenerateActivityID(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", nil, false)
+			wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", false)
 
 			for i, call := range tt.calls {
 				result := wfCtx.GenerateActivityID(call)
@@ -155,8 +148,8 @@ func TestWorkflowContext_GenerateActivityID_Deterministic(t *testing.T) {
 
 	ctx := context.Background()
 
-	wfCtx1 := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", nil, false)
-	wfCtx2 := NewWorkflowContext(ctx, "inst-2", "worker-2", "workflow", nil, false)
+	wfCtx1 := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", false)
+	wfCtx2 := NewWorkflowContext(ctx, "inst-2", "worker-2", "workflow", false)
 
 	results1 := make([]string, 0, len(calls))
 	results2 := make([]string, 0, len(calls))
@@ -170,7 +163,7 @@ func TestWorkflowContext_GenerateActivityID_Deterministic(t *testing.T) {
 
 func TestWorkflowContext_GenerateActivityID_Concurrency(t *testing.T) {
 	ctx := context.Background()
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", nil, false)
+	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", false)
 
 	const goroutines = 100
 	const callsPerGoroutine = 10
@@ -203,132 +196,9 @@ func TestWorkflowContext_GenerateActivityID_Concurrency(t *testing.T) {
 	assert.Len(t, seen, goroutines*callsPerGoroutine, "should have generated unique IDs for all calls")
 }
 
-func TestWorkflowContext_GetSetCachedResult_LocalCache(t *testing.T) {
-	tests := []struct {
-		name         string
-		activityID   string
-		setValue     any
-		lookupID     string
-		wantValue    any
-		wantFound    bool
-		initialCache map[string]any
-	}{
-		{
-			name:         "set and get string",
-			activityID:   "act:1",
-			setValue:     "result string",
-			lookupID:     "act:1",
-			wantValue:    "result string",
-			wantFound:    true,
-			initialCache: nil,
-		},
-		{
-			name:         "set and get int",
-			activityID:   "act:2",
-			setValue:     42,
-			lookupID:     "act:2",
-			wantValue:    42,
-			wantFound:    true,
-			initialCache: nil,
-		},
-		{
-			name:         "set and get struct",
-			activityID:   "act:3",
-			setValue:     struct{ Name string }{Name: "test"},
-			lookupID:     "act:3",
-			wantValue:    struct{ Name string }{Name: "test"},
-			wantFound:    true,
-			initialCache: nil,
-		},
-		{
-			name:         "set and get error",
-			activityID:   "act:4",
-			setValue:     errors.New("test error"),
-			lookupID:     "act:4",
-			wantValue:    errors.New("test error"),
-			wantFound:    true,
-			initialCache: nil,
-		},
-		{
-			name:       "lookup non-existent",
-			activityID: "",
-			setValue:   nil,
-			lookupID:   "missing:1",
-			wantValue:  nil,
-			wantFound:  false,
-		},
-		{
-			name:         "get from initial cache",
-			activityID:   "",
-			setValue:     nil,
-			lookupID:     "preset:1",
-			wantValue:    "preset value",
-			wantFound:    true,
-			initialCache: map[string]any{"preset:1": "preset value"},
-		},
-		{
-			name:         "set and get nil value",
-			activityID:   "act:nil",
-			setValue:     nil,
-			lookupID:     "act:nil",
-			wantValue:    nil,
-			wantFound:    true,
-			initialCache: nil,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx := context.Background()
-			wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", tt.initialCache, false)
-
-			if tt.activityID != "" || tt.setValue != nil {
-				wfCtx.SetCachedResult(tt.activityID, tt.setValue)
-			}
-
-			result, found := wfCtx.GetCachedResult(tt.lookupID)
-			assert.Equal(t, tt.wantFound, found)
-
-			if tt.wantFound {
-				if wantErr, ok := tt.wantValue.(error); ok {
-					gotErr, ok := result.(error)
-					require.True(t, ok, "expected error type")
-					assert.Equal(t, wantErr.Error(), gotErr.Error())
-				} else {
-					assert.Equal(t, tt.wantValue, result)
-				}
-			}
-		})
-	}
-}
-
-func TestWorkflowContext_GetCachedResult_NilCache(t *testing.T) {
-	ctx := context.Background()
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", nil, false)
-
-	result, found := wfCtx.GetCachedResult("any:1")
-	assert.False(t, found)
-	assert.Nil(t, result)
-}
-
-func TestWorkflowContext_SetCachedResult_InitializesCache(t *testing.T) {
-	ctx := context.Background()
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", nil, false)
-
-	result, found := wfCtx.GetCachedResult("test:1")
-	assert.False(t, found)
-	assert.Nil(t, result)
-
-	wfCtx.SetCachedResult("test:1", "value")
-
-	result, found = wfCtx.GetCachedResult("test:1")
-	assert.True(t, found)
-	assert.Equal(t, "value", result)
-}
-
 func TestWorkflowContext_WithContext(t *testing.T) {
 	parentCtx := context.Background()
-	wfCtx := NewWorkflowContext(parentCtx, "inst-1", "worker-1", "workflow", map[string]any{"a:1": "value"}, true)
+	wfCtx := NewWorkflowContext(parentCtx, "inst-1", "worker-1", "workflow", true)
 
 	wfCtx.GenerateActivityID("counter")
 	wfCtx.GenerateActivityID("counter")
@@ -344,17 +214,13 @@ func TestWorkflowContext_WithContext(t *testing.T) {
 	assert.Equal(t, wfCtx.WorkflowName(), newWfCtx.WorkflowName())
 	assert.Equal(t, wfCtx.IsReplaying(), newWfCtx.IsReplaying())
 
-	result, found := newWfCtx.GetCachedResult("a:1")
-	assert.True(t, found)
-	assert.Equal(t, "value", result)
-
 	id := newWfCtx.GenerateActivityID("counter")
 	assert.Equal(t, "counter:3", id)
 }
 
 func TestWorkflowContext_Cancel(t *testing.T) {
 	ctx := context.Background()
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", nil, false)
+	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", false)
 
 	assert.Nil(t, wfCtx.Err())
 
@@ -372,7 +238,7 @@ func TestWorkflowContext_Cancel(t *testing.T) {
 
 func TestWorkflowContext_Done(t *testing.T) {
 	ctx := context.Background()
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", nil, false)
+	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", false)
 
 	doneChan := wfCtx.Done()
 	require.NotNil(t, doneChan)
@@ -402,7 +268,7 @@ func TestWorkflowContext_Err(t *testing.T) {
 			name: "no error initially",
 			setupContext: func() (*WorkflowContext, func()) {
 				ctx := context.Background()
-				wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", nil, false)
+				wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", false)
 				return wfCtx, func() {}
 			},
 			wantErr: nil,
@@ -411,7 +277,7 @@ func TestWorkflowContext_Err(t *testing.T) {
 			name: "context canceled",
 			setupContext: func() (*WorkflowContext, func()) {
 				ctx := context.Background()
-				wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", nil, false)
+				wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", false)
 				return wfCtx, func() { wfCtx.Cancel() }
 			},
 			wantErr: context.Canceled,
@@ -420,7 +286,7 @@ func TestWorkflowContext_Err(t *testing.T) {
 			name: "parent context canceled",
 			setupContext: func() (*WorkflowContext, func()) {
 				parentCtx, parentCancel := context.WithCancel(context.Background())
-				wfCtx := NewWorkflowContext(parentCtx, "inst-1", "worker-1", "workflow", nil, false)
+				wfCtx := NewWorkflowContext(parentCtx, "inst-1", "worker-1", "workflow", false)
 				return wfCtx, parentCancel
 			},
 			wantErr: context.Canceled,
@@ -443,14 +309,14 @@ func TestWorkflowContext_Err(t *testing.T) {
 
 func TestWorkflowContext_Storage_NilWithoutExecCtx(t *testing.T) {
 	ctx := context.Background()
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", nil, false)
+	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", false)
 
 	assert.Nil(t, wfCtx.Storage())
 }
 
 func TestWorkflowContext_Session_NilWithoutStorage(t *testing.T) {
 	ctx := context.Background()
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", nil, false)
+	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", false)
 
 	assert.Nil(t, wfCtx.Session())
 }
@@ -473,7 +339,7 @@ func TestWorkflowContext_IsReplaying_Values(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", nil, tt.isReplaying)
+			wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", tt.isReplaying)
 			assert.Equal(t, tt.isReplaying, wfCtx.IsReplaying())
 		})
 	}
@@ -481,7 +347,7 @@ func TestWorkflowContext_IsReplaying_Values(t *testing.T) {
 
 func TestWorkflowContext_RecordActivityID_WithoutExecCtx(t *testing.T) {
 	ctx := context.Background()
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", nil, false)
+	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", false)
 
 	assert.NotPanics(t, func() {
 		wfCtx.RecordActivityID("test:1")
@@ -490,34 +356,20 @@ func TestWorkflowContext_RecordActivityID_WithoutExecCtx(t *testing.T) {
 
 func TestWorkflowContext_RecordActivityResult_WithoutExecCtx(t *testing.T) {
 	ctx := context.Background()
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", nil, false)
+	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", false)
 
 	err := wfCtx.RecordActivityResult("test:1", "result", nil)
 	assert.NoError(t, err)
 
-	result, found := wfCtx.GetCachedResult("test:1")
-	assert.True(t, found)
-	assert.Equal(t, "result", result)
+	_, found := wfCtx.lookupRecorded("test:1")
+	assert.False(t, found)
 }
 
-func TestWorkflowContext_RecordActivityResult_CachesError(t *testing.T) {
+func TestWorkflowContext_RecordActivityResult_WithoutExecCtx_Error(t *testing.T) {
 	ctx := context.Background()
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", nil, false)
+	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", false)
 
 	testErr := errors.New("activity failed")
 	err := wfCtx.RecordActivityResult("test:1", nil, testErr)
 	assert.NoError(t, err)
-
-	result, found := wfCtx.GetCachedResult("test:1")
-	assert.True(t, found)
-	assert.Equal(t, testErr, result)
-}
-
-func TestWorkflowContext_GetCachedResultRaw_WithoutExecCtx(t *testing.T) {
-	ctx := context.Background()
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", nil, false)
-
-	raw, found := wfCtx.GetCachedResultRaw("test:1")
-	assert.False(t, found)
-	assert.Nil(t, raw)
 }

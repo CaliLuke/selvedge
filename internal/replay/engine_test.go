@@ -62,8 +62,7 @@ func TestExecutionContext_Context(t *testing.T) {
 		ctx:             ctx,
 		instanceID:      "inst-1",
 		activityCounter: make(map[string]int),
-		cachedResults:   make(map[string]*CachedResult),
-		cachedErrors:    make(map[string]error),
+		recorded:        make(map[string]*storage.HistoryEvent),
 	}
 
 	assert.Equal(t, ctx, execCtx.Context())
@@ -90,8 +89,7 @@ func TestExecutionContext_InstanceID(t *testing.T) {
 				ctx:             context.Background(),
 				instanceID:      tt.instanceID,
 				activityCounter: make(map[string]int),
-				cachedResults:   make(map[string]*CachedResult),
-				cachedErrors:    make(map[string]error),
+				recorded:        make(map[string]*storage.HistoryEvent),
 			}
 
 			assert.Equal(t, tt.instanceID, execCtx.InstanceID())
@@ -121,8 +119,7 @@ func TestExecutionContext_IsReplaying(t *testing.T) {
 				instanceID:      "inst-1",
 				isReplaying:     tt.isReplaying,
 				activityCounter: make(map[string]int),
-				cachedResults:   make(map[string]*CachedResult),
-				cachedErrors:    make(map[string]error),
+				recorded:        make(map[string]*storage.HistoryEvent),
 			}
 
 			assert.Equal(t, tt.isReplaying, execCtx.IsReplaying())
@@ -159,8 +156,7 @@ func TestExecutionContext_GenerateActivityID(t *testing.T) {
 				ctx:             context.Background(),
 				instanceID:      "inst-1",
 				activityCounter: make(map[string]int),
-				cachedResults:   make(map[string]*CachedResult),
-				cachedErrors:    make(map[string]error),
+				recorded:        make(map[string]*storage.HistoryEvent),
 			}
 
 			var results []string
@@ -178,8 +174,7 @@ func TestExecutionContext_GenerateActivityID_Concurrency(t *testing.T) {
 		ctx:             context.Background(),
 		instanceID:      "inst-1",
 		activityCounter: make(map[string]int),
-		cachedResults:   make(map[string]*CachedResult),
-		cachedErrors:    make(map[string]error),
+		recorded:        make(map[string]*storage.HistoryEvent),
 	}
 
 	const goroutines = 50
@@ -213,230 +208,6 @@ func TestExecutionContext_GenerateActivityID_Concurrency(t *testing.T) {
 	assert.Len(t, seen, goroutines*callsPerGoroutine)
 }
 
-func TestExecutionContext_GetCachedResult(t *testing.T) {
-	tests := []struct {
-		name         string
-		cachedValues map[string]*CachedResult
-		cachedErrors map[string]error
-		activityID   string
-		wantResult   any
-		wantFound    bool
-	}{
-		{
-			name: "found in cachedResults",
-			cachedValues: map[string]*CachedResult{
-				"act:1": {Value: "result"},
-			},
-			cachedErrors: make(map[string]error),
-			activityID:   "act:1",
-			wantResult:   "result",
-			wantFound:    true,
-		},
-		{
-			name:         "found in cachedErrors",
-			cachedValues: make(map[string]*CachedResult),
-			cachedErrors: map[string]error{
-				"act:2": errors.New("cached error"),
-			},
-			activityID: "act:2",
-			wantResult: errors.New("cached error"),
-			wantFound:  true,
-		},
-		{
-			name:         "not found",
-			cachedValues: make(map[string]*CachedResult),
-			cachedErrors: make(map[string]error),
-			activityID:   "act:3",
-			wantResult:   nil,
-			wantFound:    false,
-		},
-		{
-			name: "result with int value",
-			cachedValues: map[string]*CachedResult{
-				"act:4": {Value: 42},
-			},
-			cachedErrors: make(map[string]error),
-			activityID:   "act:4",
-			wantResult:   42,
-			wantFound:    true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			execCtx := &ExecutionContext{
-				ctx:             context.Background(),
-				instanceID:      "inst-1",
-				activityCounter: make(map[string]int),
-				cachedResults:   tt.cachedValues,
-				cachedErrors:    tt.cachedErrors,
-			}
-
-			result, found := execCtx.GetCachedResult(tt.activityID)
-
-			assert.Equal(t, tt.wantFound, found)
-			if tt.wantFound {
-				if wantErr, ok := tt.wantResult.(error); ok {
-					gotErr, ok := result.(error)
-					require.True(t, ok)
-					assert.Equal(t, wantErr.Error(), gotErr.Error())
-				} else {
-					assert.Equal(t, tt.wantResult, result)
-				}
-			}
-		})
-	}
-}
-
-func TestExecutionContext_GetCachedResultRaw(t *testing.T) {
-	tests := []struct {
-		name         string
-		cachedValues map[string]*CachedResult
-		activityID   string
-		wantRaw      []byte
-		wantFound    bool
-	}{
-		{
-			name: "found with raw JSON",
-			cachedValues: map[string]*CachedResult{
-				"act:1": {RawJSON: []byte(`{"key":"value"}`), Value: map[string]any{"key": "value"}},
-			},
-			activityID: "act:1",
-			wantRaw:    []byte(`{"key":"value"}`),
-			wantFound:  true,
-		},
-		{
-			name: "found without raw JSON",
-			cachedValues: map[string]*CachedResult{
-				"act:2": {Value: "result"},
-			},
-			activityID: "act:2",
-			wantRaw:    nil,
-			wantFound:  true,
-		},
-		{
-			name:         "not found",
-			cachedValues: make(map[string]*CachedResult),
-			activityID:   "act:3",
-			wantRaw:      nil,
-			wantFound:    false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			execCtx := &ExecutionContext{
-				ctx:             context.Background(),
-				instanceID:      "inst-1",
-				activityCounter: make(map[string]int),
-				cachedResults:   tt.cachedValues,
-				cachedErrors:    make(map[string]error),
-			}
-
-			cached, found := execCtx.GetCachedResultRaw(tt.activityID)
-
-			assert.Equal(t, tt.wantFound, found)
-			if tt.wantFound {
-				require.NotNil(t, cached)
-				assert.Equal(t, tt.wantRaw, cached.RawJSON)
-			} else {
-				assert.Nil(t, cached)
-			}
-		})
-	}
-}
-
-func TestExecutionContext_SetCachedResult(t *testing.T) {
-	tests := []struct {
-		name          string
-		activityID    string
-		result        any
-		wantInResults bool
-		wantInErrors  bool
-	}{
-		{
-			name:          "set string result",
-			activityID:    "act:1",
-			result:        "success",
-			wantInResults: true,
-			wantInErrors:  false,
-		},
-		{
-			name:          "set int result",
-			activityID:    "act:2",
-			result:        42,
-			wantInResults: true,
-			wantInErrors:  false,
-		},
-		{
-			name:          "set error result",
-			activityID:    "act:3",
-			result:        errors.New("test error"),
-			wantInResults: false,
-			wantInErrors:  true,
-		},
-		{
-			name:          "set struct result",
-			activityID:    "act:4",
-			result:        struct{ Name string }{Name: "test"},
-			wantInResults: true,
-			wantInErrors:  false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			execCtx := &ExecutionContext{
-				ctx:             context.Background(),
-				instanceID:      "inst-1",
-				activityCounter: make(map[string]int),
-				cachedResults:   make(map[string]*CachedResult),
-				cachedErrors:    make(map[string]error),
-			}
-
-			execCtx.SetCachedResult(tt.activityID, tt.result)
-
-			_, inResults := execCtx.cachedResults[tt.activityID]
-			_, inErrors := execCtx.cachedErrors[tt.activityID]
-
-			assert.Equal(t, tt.wantInResults, inResults)
-			assert.Equal(t, tt.wantInErrors, inErrors)
-
-			result, found := execCtx.GetCachedResult(tt.activityID)
-			assert.True(t, found)
-
-			if err, ok := tt.result.(error); ok {
-				gotErr, ok := result.(error)
-				require.True(t, ok)
-				assert.Equal(t, err.Error(), gotErr.Error())
-			} else {
-				assert.Equal(t, tt.result, result)
-			}
-		})
-	}
-}
-
-func TestExecutionContext_SetCachedResultWithRaw(t *testing.T) {
-	execCtx := &ExecutionContext{
-		ctx:             context.Background(),
-		instanceID:      "inst-1",
-		activityCounter: make(map[string]int),
-		cachedResults:   make(map[string]*CachedResult),
-		cachedErrors:    make(map[string]error),
-	}
-
-	rawJSON := []byte(`{"name":"test","value":42}`)
-	value := map[string]any{"name": "test", "value": float64(42)}
-
-	execCtx.SetCachedResultWithRaw("act:1", rawJSON, value)
-
-	cached, found := execCtx.GetCachedResultRaw("act:1")
-	require.True(t, found)
-	require.NotNil(t, cached)
-	assert.Equal(t, rawJSON, cached.RawJSON)
-	assert.Equal(t, value, cached.Value)
-}
-
 func TestExecutionContext_Storage(t *testing.T) {
 	store := setupTestStorage(t)
 	engine := NewEngine(store, &hooks.NoOpHooks{}, "worker-1")
@@ -446,8 +217,7 @@ func TestExecutionContext_Storage(t *testing.T) {
 		instanceID:      "inst-1",
 		engine:          engine,
 		activityCounter: make(map[string]int),
-		cachedResults:   make(map[string]*CachedResult),
-		cachedErrors:    make(map[string]error),
+		recorded:        make(map[string]*storage.HistoryEvent),
 	}
 
 	assert.Equal(t, store, execCtx.Storage())
@@ -575,7 +345,7 @@ func TestEngine_RecordActivityResult(t *testing.T) {
 			}
 			require.NoError(t, store.CreateInstance(context.Background(), instance))
 
-			err := engine.RecordActivityResult(context.Background(), instance.InstanceID, tt.activityID, tt.result, tt.activityErr)
+			stored, err := engine.RecordActivityResult(context.Background(), instance.InstanceID, tt.activityID, tt.result, tt.activityErr)
 			require.NoError(t, err)
 
 			history, _, err := store.GetHistoryPaginated(context.Background(), instance.InstanceID, 0, 10)
@@ -583,16 +353,23 @@ func TestEngine_RecordActivityResult(t *testing.T) {
 			require.Len(t, history, 1)
 			assert.Equal(t, tt.wantEvent, history[0].EventType)
 			assert.Equal(t, tt.activityID, history[0].ActivityID)
+			assert.Equal(t, history[0], stored)
 		})
 	}
 }
 
-func TestCachedResult_Structure(t *testing.T) {
-	cached := &CachedResult{
-		RawJSON: []byte(`{"key":"value"}`),
-		Value:   map[string]any{"key": "value"},
+func TestExecutionContext_Lookup(t *testing.T) {
+	completed := &storage.HistoryEvent{ActivityID: "ok", EventType: storage.HistoryActivityCompleted, EventData: []byte(`{"n":9007199254740993}`)}
+	corrupt := &storage.HistoryEvent{ActivityID: "corrupt", EventType: storage.HistoryActivityCompleted, EventData: []byte(`{`)}
+	failed := &storage.HistoryEvent{ActivityID: "failed", EventType: storage.HistoryActivityFailed, EventData: []byte(`"failed"`)}
+	ec := &ExecutionContext{recorded: map[string]*storage.HistoryEvent{"ok": completed, "corrupt": corrupt, "failed": failed}}
+	for _, event := range []*storage.HistoryEvent{completed, corrupt, failed} {
+		got, found := ec.Lookup(event.ActivityID)
+		require.True(t, found)
+		require.Same(t, event, got)
 	}
-
-	assert.Equal(t, []byte(`{"key":"value"}`), cached.RawJSON)
-	assert.Equal(t, map[string]any{"key": "value"}, cached.Value)
+	got, found := ec.Lookup("missing")
+	require.False(t, found)
+	require.Nil(t, got)
+	require.Equal(t, 3, ec.cacheHits)
 }

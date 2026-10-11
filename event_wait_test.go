@@ -40,11 +40,10 @@ func TestWithReceiveTimeout(t *testing.T) {
 }
 
 func TestSubscribe_ReplayCacheHit(t *testing.T) {
-	ctx := context.Background()
 	historyCache := map[string]any{
 		"subscribe_test-channel:1": true,
 	}
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", historyCache, true)
+	wfCtx := workflowContextWithRecordedHistory(t, historyCache)
 
 	err := subscribeEvent(wfCtx, "test-channel")
 	require.NoError(t, err)
@@ -52,7 +51,7 @@ func TestSubscribe_ReplayCacheHit(t *testing.T) {
 
 func TestSubscribe_NoStorage(t *testing.T) {
 	ctx := context.Background()
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", nil, false)
+	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", false)
 
 	err := subscribeEvent(wfCtx, "test-channel")
 	require.Error(t, err)
@@ -64,7 +63,6 @@ func TestReceive_CachedResult(t *testing.T) {
 		Content string
 	}
 
-	ctx := context.Background()
 	cachedMsg := &receivedEventMessage[TestMessage]{
 		ID:          1,
 		ChannelName: "test-channel",
@@ -74,7 +72,7 @@ func TestReceive_CachedResult(t *testing.T) {
 	historyCache := map[string]any{
 		"receive_test-channel:1": cachedMsg,
 	}
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", historyCache, true)
+	wfCtx := workflowContextWithRecordedHistory(t, historyCache)
 
 	result, err := receiveEvent[TestMessage](wfCtx, "test-channel")
 
@@ -88,7 +86,6 @@ func TestReceive_CachedTimeoutError(t *testing.T) {
 		Content string
 	}
 
-	ctx := context.Background()
 	cachedErr := &ChannelMessageTimeoutError{
 		InstanceID:  "inst-1",
 		ChannelName: "test-channel",
@@ -96,7 +93,7 @@ func TestReceive_CachedTimeoutError(t *testing.T) {
 	historyCache := map[string]any{
 		"receive_test-channel:1": cachedErr,
 	}
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", historyCache, true)
+	wfCtx := workflowContextWithRecordedHistory(t, historyCache)
 
 	result, err := receiveEvent[TestMessage](wfCtx, "test-channel")
 
@@ -115,7 +112,7 @@ func TestReceive_NoStorage(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", nil, false)
+	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", false)
 
 	result, err := receiveEvent[TestMessage](wfCtx, "test-channel")
 
@@ -167,16 +164,15 @@ func TestReceive_CachedGenericError(t *testing.T) {
 		Content string
 	}
 
-	ctx := context.Background()
 	cachedErr := errors.New("some other error")
 	historyCache := map[string]any{
 		"receive_test-channel:1": cachedErr,
 	}
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", historyCache, true)
+	wfCtx := workflowContextWithRecordedHistory(t, historyCache)
 
 	result, err := receiveEvent[TestMessage](wfCtx, "test-channel")
 
 	require.Error(t, err)
 	assert.Nil(t, result)
-	assert.Equal(t, cachedErr, err)
+	assert.EqualError(t, err, cachedErr.Error())
 }
