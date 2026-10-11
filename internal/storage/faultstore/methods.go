@@ -79,24 +79,6 @@ func (s *Store) SetHistoryValueIfNull(ctx context.Context, f *storage.Fence, id,
 	return v0, s.after(ctx, "SetHistoryValueIfNull", err)
 }
 
-// UpdateInstanceStatus delegates to storage with before/after fault hooks and call recording.
-func (s *Store) UpdateInstanceStatus(ctx context.Context, id string, status storage.WorkflowStatus, msg string) error {
-	if err := s.before(ctx, "UpdateInstanceStatus"); err != nil {
-		return err
-	}
-	err := s.Storage.UpdateInstanceStatus(ctx, id, status, msg)
-	return s.after(ctx, "UpdateInstanceStatus", err)
-}
-
-// UpdateInstanceOutput delegates to storage with before/after fault hooks and call recording.
-func (s *Store) UpdateInstanceOutput(ctx context.Context, id string, data []byte) error {
-	if err := s.before(ctx, "UpdateInstanceOutput"); err != nil {
-		return err
-	}
-	err := s.Storage.UpdateInstanceOutput(ctx, id, data)
-	return s.after(ctx, "UpdateInstanceOutput", err)
-}
-
 // UpdateInstanceActivity delegates to storage with before/after fault hooks and call recording.
 func (s *Store) UpdateInstanceActivity(ctx context.Context, id, key string) error {
 	if err := s.before(ctx, "UpdateInstanceActivity"); err != nil {
@@ -104,15 +86,6 @@ func (s *Store) UpdateInstanceActivity(ctx context.Context, id, key string) erro
 	}
 	err := s.Storage.UpdateInstanceActivity(ctx, id, key)
 	return s.after(ctx, "UpdateInstanceActivity", err)
-}
-
-// CancelInstance delegates to storage with before/after fault hooks and call recording.
-func (s *Store) CancelInstance(ctx context.Context, id, reason string) error {
-	if err := s.before(ctx, "CancelInstance"); err != nil {
-		return err
-	}
-	err := s.Storage.CancelInstance(ctx, id, reason)
-	return s.after(ctx, "CancelInstance", err)
 }
 
 // RegisterTimerSubscription delegates to storage with before/after fault hooks and call recording.
@@ -383,4 +356,39 @@ func (s *Store) CleanupExpiredSystemLocks(ctx context.Context) error {
 	}
 	err := s.Storage.CleanupExpiredSystemLocks(ctx)
 	return s.after(ctx, "CleanupExpiredSystemLocks", err)
+}
+
+// RequestCancel delegates with fault injection.
+func (s *Store) RequestCancel(ctx context.Context, id, reason string) (storage.WorkflowStatus, error) {
+	if err := s.before(ctx, "RequestCancel"); err != nil {
+		return "", err
+	}
+	v, err := s.Storage.RequestCancel(ctx, id, reason)
+	return v, s.after(ctx, "RequestCancel", err)
+}
+
+// IsCancelRequested delegates with fault injection.
+func (s *Store) IsCancelRequested(ctx context.Context, id string) (bool, error) {
+	if err := s.before(ctx, "IsCancelRequested"); err != nil {
+		return false, err
+	}
+	v, err := s.Storage.IsCancelRequested(ctx, id)
+	return v, s.after(ctx, "IsCancelRequested", err)
+}
+
+// CloseInstance delegates with fault injection.
+func (s *Store) CloseInstance(ctx context.Context, f storage.Fence, status storage.WorkflowStatus, output []byte, event *storage.HistoryEvent) error {
+	if err := s.before(ctx, "CloseInstance"); err != nil {
+		return err
+	}
+	return s.after(ctx, "CloseInstance", s.Storage.CloseInstance(ctx, f, status, output, event))
+}
+
+// ReserveTimer delegates with fault injection.
+func (s *Store) ReserveTimer(ctx context.Context, f *storage.Fence, timer *storage.TimerSubscription) (*storage.HistoryEvent, error) {
+	if err := s.before(ctx, "ReserveTimer"); err != nil {
+		return nil, err
+	}
+	v, err := s.Storage.ReserveTimer(ctx, f, timer)
+	return v, s.after(ctx, "ReserveTimer", err)
 }

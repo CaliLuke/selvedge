@@ -153,18 +153,41 @@ func Sleep(ctx *WorkflowContext, duration time.Duration, opts ...SleepOption) er
 		return err
 	}
 	if found && event.EventData != nil {
-		return nil
+		return sleepOutcome(ctx, event)
 	}
-	stored, err := ctx.execCtx.Reserve(timerID, "sleep")
+	stored, err := ctx.Storage().ReserveTimer(ctx.Context(), ctx.execCtx.Fence(), &storage.TimerSubscription{
+		InstanceID: ctx.InstanceID(), TimerID: timerID, ActivityID: timerID, ExpiresAt: time.Now().Add(duration),
+	})
 	if err != nil {
+		ctx.execCtx.Fail(err)
 		return err
 	}
-	if stored != nil && stored.EventType != storage.HistoryReserved && stored.EventData != nil {
-		return nil
+	if stored.EventData != nil {
+		return sleepOutcome(ctx, stored)
 	}
-
-	// Calculate expiry time (must be calculated on first execution only)
-	expiresAt := time.Now().Add(duration)
+	requested, err := ctx.Storage().IsCancelRequested(ctx.Context(), ctx.InstanceID())
+	if err != nil {
+		ctx.execCtx.Fail(err)
+		return err
+	}
+	if requested {
+		cancellation, err := cancellationAtYield(ctx)
+		if err != nil {
+			return err
+		}
+		stored, err = ctx.Storage().SetHistoryValueIfNull(ctx.Context(), ctx.execCtx.Fence(), ctx.InstanceID(), timerID, "sleep", storage.HistoryTimerCancelled, encodeError(cancellation))
+		if err != nil {
+			ctx.execCtx.Fail(err)
+			return err
+		}
+		return sleepOutcome(ctx, stored)
+	}
+	var reservation storage.SleepReservation
+	if err := json.Unmarshal(stored.ReservationData, &reservation); err != nil {
+		ctx.execCtx.Fail(err)
+		return err
+	}
+	expiresAt := reservation.ExpiresAt
 
 	// Call OnTimerStart hook
 	if h := ctx.Hooks(); h != nil {
@@ -181,6 +204,25 @@ func Sleep(ctx *WorkflowContext, duration time.Duration, opts ...SleepOption) er
 
 	// Return SuspendSignal that the replay engine will handle
 	return NewTimerSuspend(ctx.InstanceID(), timerID, timerID, expiresAt)
+}
+
+func cancellationAtYield(ctx *WorkflowContext) (*WorkflowCancelledError, error) {
+	instance, err := ctx.Storage().GetInstance(ctx.Context(), ctx.InstanceID())
+	if err == nil && instance == nil {
+		err = storage.ErrInstanceNotFound
+	}
+	if err != nil {
+		ctx.execCtx.Fail(err)
+		return nil, err
+	}
+	return &WorkflowCancelledError{InstanceID: ctx.InstanceID(), Reason: instance.CancelReason}, nil
+}
+
+func sleepOutcome(ctx *WorkflowContext, event *storage.HistoryEvent) error {
+	if event.EventType == storage.HistoryTimerCancelled {
+		return replayRecordedError(ctx, event)
+	}
+	return nil
 }
 
 // SleepOption configures sleep behavior.

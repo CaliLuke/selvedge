@@ -301,11 +301,11 @@ type failureWriteStore struct {
 	err error
 }
 
-func (s failureWriteStore) RecordHistory(ctx context.Context, f *storage.Fence, ev *storage.HistoryEvent) (*storage.HistoryEvent, error) {
-	if ev.ActivityID == "$workflow_failed" {
-		return nil, s.err
+func (s failureWriteStore) CloseInstance(ctx context.Context, f storage.Fence, status storage.WorkflowStatus, output []byte, ev *storage.HistoryEvent) error {
+	if ev != nil && ev.ActivityID == "$workflow_failed" {
+		return s.err
 	}
-	return s.Storage.RecordHistory(ctx, f, ev)
+	return s.Storage.CloseInstance(ctx, f, status, output, ev)
 }
 func TestWorkflowFailureWriteErrorReported(t *testing.T) {
 	testWorkflowFailureWriteErrorReported(t, createTestApp)

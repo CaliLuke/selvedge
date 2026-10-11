@@ -122,7 +122,7 @@ func TestPostgresStorage_CreateAndGetInstance(t *testing.T) {
 	}
 }
 
-func TestPostgresStorage_UpdateInstanceStatus(t *testing.T) {
+func TestPostgresStorage_RequestCancel(t *testing.T) {
 	store := setupPostgresStorage(t)
 	defer store.Close()
 
@@ -138,8 +138,8 @@ func TestPostgresStorage_UpdateInstanceStatus(t *testing.T) {
 	}
 	store.CreateInstance(ctx, instance)
 
-	if err := store.UpdateInstanceStatus(fixtureContext(t, store, ctx, "test-status-1"), "test-status-1", StatusRunning, ""); err != nil {
-		t.Fatalf("UpdateInstanceStatus failed: %v", err)
+	if _, err := store.RequestCancel(ctx, "test-status-1", "test"); err != nil {
+		t.Fatalf("RequestCancel failed: %v", err)
 	}
 
 	got, _ := store.GetInstance(ctx, "test-status-1")

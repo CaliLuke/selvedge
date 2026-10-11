@@ -227,7 +227,7 @@ func (s *SQLiteStorage) GetInstance(ctx context.Context, instanceID string) (*Wo
 		SELECT instance_id, workflow_name, framework, status, input_data, output_data,
 			   current_activity_id, source_hash, owner_service,
 			   lease_owner, lease_epoch, lease_expires_ms, runnable,
-			   started_at, updated_at
+			   started_at, updated_at, COALESCE(cancel_reason,'')
 		FROM workflow_instances WHERE instance_id = ?
 	`, instanceID)
 
@@ -241,7 +241,7 @@ func (s *SQLiteStorage) GetInstance(ctx context.Context, instanceID string) (*Wo
 		&inst.InstanceID, &inst.WorkflowName, &framework, &inst.Status,
 		&inputData, &outputData, &activityID, &sourceHash, &ownerService,
 		&leaseOwner, &inst.LeaseEpoch, &leaseExpires, &inst.Runnable,
-		&startedAt, &updatedAt,
+		&startedAt, &updatedAt, &inst.CancelReason,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -287,20 +287,6 @@ func (s *SQLiteStorage) GetInstance(ctx context.Context, instanceID string) (*Wo
 	return &inst, nil
 }
 
-// UpdateInstanceStatus updates the status of a workflow instance.
-// Note: errorMsg parameter is kept for interface compatibility but is ignored.
-// Error messages are tracked via history events (WorkflowFailed).
-func (s *SQLiteStorage) UpdateInstanceStatus(ctx context.Context, instanceID string, status WorkflowStatus, errorMsg string) error {
-	return (fenceStore{s}).withFence(ctx, contextFence(ctx, instanceID), func(conn Executor) error {
-		_, err := conn.ExecContext(ctx, `
-		UPDATE workflow_instances
-		SET status = ?, updated_at = datetime('now')
-		WHERE instance_id = ?
-	`, status, instanceID)
-		return err
-	})
-}
-
 // UpdateInstanceActivity updates the current activity ID.
 func (s *SQLiteStorage) UpdateInstanceActivity(ctx context.Context, instanceID, activityID string) error {
 	return (fenceStore{s}).withFence(ctx, contextFence(ctx, instanceID), func(conn Executor) error {
@@ -313,47 +299,10 @@ func (s *SQLiteStorage) UpdateInstanceActivity(ctx context.Context, instanceID, 
 	})
 }
 
-// UpdateInstanceOutput updates the output data.
-func (s *SQLiteStorage) UpdateInstanceOutput(ctx context.Context, instanceID string, outputData []byte) error {
-	return (fenceStore{s}).withFence(ctx, contextFence(ctx, instanceID), func(conn Executor) error {
-		_, err := conn.ExecContext(ctx, `
-		UPDATE workflow_instances
-		SET output_data = ?, status = 'completed', updated_at = datetime('now')
-		WHERE instance_id = ?
-	`, string(outputData), instanceID)
-		return err
-	})
-}
-
-// CancelInstance cancels a workflow instance.
-// Returns ErrWorkflowNotCancellable if the workflow is already completed, cancelled, failed, or does not exist.
-// Note: reason parameter is kept for interface compatibility but is ignored.
-// Cancellation reasons are tracked via history events.
-func (s *SQLiteStorage) CancelInstance(ctx context.Context, instanceID, reason string) error {
-	return (fenceStore{s}).withFence(ctx, contextFence(ctx, instanceID), func(conn Executor) error {
-		result, err := conn.ExecContext(ctx, `
-		UPDATE workflow_instances
-		SET status = 'cancelled', updated_at = datetime('now')
-		WHERE instance_id = ? AND status='running'
-	`, instanceID)
-		if err != nil {
-			return err
-		}
-		rows, err := result.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if rows == 0 {
-			return ErrWorkflowNotCancellable
-		}
-		return nil
-	})
-}
-
 // ListInstances lists workflow instances with cursor-based pagination and filters.
 func (s *SQLiteStorage) ListInstances(ctx context.Context, opts ListInstancesOptions) (*PaginationResult, error) {
 	conn := s.getConn(ctx)
-	query := "SELECT instance_id, workflow_name, status, started_at, updated_at FROM workflow_instances WHERE 1=1"
+	query := "SELECT instance_id, workflow_name, status, started_at, updated_at, COALESCE(cancel_reason,'') FROM workflow_instances WHERE 1=1"
 	args := []any{}
 
 	// Handle both new and deprecated filter options
@@ -434,7 +383,7 @@ func (s *SQLiteStorage) ListInstances(ctx context.Context, opts ListInstancesOpt
 	for rows.Next() {
 		var inst WorkflowInstance
 		var startedAt, updatedAt sql.NullString
-		if err := rows.Scan(&inst.InstanceID, &inst.WorkflowName, &inst.Status, &startedAt, &updatedAt); err != nil {
+		if err := rows.Scan(&inst.InstanceID, &inst.WorkflowName, &inst.Status, &startedAt, &updatedAt, &inst.CancelReason); err != nil {
 			return nil, err
 		}
 		if startedAt.Valid {
@@ -483,7 +432,7 @@ func (s *SQLiteStorage) GetHistoryPaginated(ctx context.Context, instanceID stri
 	conn := s.getConn(ctx)
 	// Fetch one extra to check if there are more events
 	rows, err := conn.QueryContext(ctx, `
-		SELECT id, instance_id, activity_id, command, event_type, event_data, event_data_binary, data_type, created_at
+		SELECT id, instance_id, activity_id, command, event_type, event_data, event_data_binary, data_type, reservation_data, created_at
 		FROM workflow_history
 		WHERE instance_id = ? AND id > ?
 		ORDER BY id ASC
@@ -497,11 +446,11 @@ func (s *SQLiteStorage) GetHistoryPaginated(ctx context.Context, instanceID stri
 	var history []*HistoryEvent
 	for rows.Next() {
 		var h HistoryEvent
-		var eventData sql.NullString
+		var eventData, reservation sql.NullString
 		var eventDataBinary []byte
 		var createdAtStr string
 
-		if err := rows.Scan(&h.ID, &h.InstanceID, &h.ActivityID, &h.Command, &h.EventType, &eventData, &eventDataBinary, &h.DataType, &createdAtStr); err != nil {
+		if err := rows.Scan(&h.ID, &h.InstanceID, &h.ActivityID, &h.Command, &h.EventType, &eventData, &eventDataBinary, &h.DataType, &reservation, &createdAtStr); err != nil {
 			return nil, false, err
 		}
 		h.CreatedAt, _ = parseSQLiteTime(createdAtStr)
@@ -509,6 +458,9 @@ func (s *SQLiteStorage) GetHistoryPaginated(ctx context.Context, instanceID stri
 			h.EventData = []byte(eventData.String)
 		}
 		h.EventDataBinary = eventDataBinary
+		if reservation.Valid {
+			h.ReservationData = []byte(reservation.String)
+		}
 		history = append(history, &h)
 	}
 	if err := rows.Err(); err != nil {

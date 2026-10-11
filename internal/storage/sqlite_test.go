@@ -67,8 +67,8 @@ func TestSQLiteStorage(t *testing.T) {
 		}
 	})
 
-	t.Run("UpdateInstanceStatus", func(t *testing.T) {
-		err := storage.UpdateInstanceStatus(fixtureContext(t, storage, ctx, "test-instance-1"), "test-instance-1", StatusRunning, "")
+	t.Run("RequestCancel", func(t *testing.T) {
+		_, err := storage.RequestCancel(ctx, "test-instance-1", "test")
 		if err != nil {
 			t.Fatalf("failed to update status: %v", err)
 		}
@@ -510,7 +510,7 @@ func TestSQLiteStorage_InputFilters(t *testing.T) {
 
 	t.Run("combined with status filter", func(t *testing.T) {
 		// Update one instance to completed (filter-test-1 is gold)
-		if err := storage.UpdateInstanceStatus(fixtureContext(t, storage, ctx, "filter-test-1"), "filter-test-1", StatusCompleted, ""); err != nil {
+		if err := storage.CloseInstance(ctx, *contextFence(fixtureContext(t, storage, ctx, "filter-test-1"), "filter-test-1"), StatusCompleted, nil, nil); err != nil {
 			t.Fatalf("failed to update status: %v", err)
 		}
 

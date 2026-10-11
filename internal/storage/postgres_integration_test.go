@@ -134,7 +134,7 @@ func TestPostgresIntegration_CreateAndGetInstance(t *testing.T) {
 	}
 }
 
-func TestPostgresIntegration_UpdateInstanceStatus(t *testing.T) {
+func TestPostgresIntegration_RequestCancel(t *testing.T) {
 	store, cleanup := setupPostgresContainer(t)
 	defer cleanup()
 
@@ -150,8 +150,8 @@ func TestPostgresIntegration_UpdateInstanceStatus(t *testing.T) {
 	}
 	store.CreateInstance(ctx, instance)
 
-	if err := store.UpdateInstanceStatus(fixtureContext(t, store, ctx, "test-status-1"), "test-status-1", StatusRunning, ""); err != nil {
-		t.Fatalf("UpdateInstanceStatus failed: %v", err)
+	if _, err := store.RequestCancel(ctx, "test-status-1", "test"); err != nil {
+		t.Fatalf("RequestCancel failed: %v", err)
 	}
 
 	got, _ := store.GetInstance(ctx, "test-status-1")

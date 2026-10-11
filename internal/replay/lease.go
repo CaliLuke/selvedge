@@ -63,6 +63,7 @@ func (e *Engine) ConfigureLease(config LeaseConfig, clock func() Clock) error {
 
 // Execution tracks a conservative monotonic belief, including request latency.
 type Execution struct {
+	closed      bool // Accessed only by the dispatch goroutine.
 	fence       storage.Fence
 	clk         Clock
 	mu          sync.Mutex

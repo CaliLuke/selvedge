@@ -2,6 +2,7 @@
 package selvedge
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -68,6 +69,9 @@ func (e *WorkflowCancelledError) Error() string {
 	}
 	return fmt.Sprintf("workflow %s cancelled", e.InstanceID)
 }
+
+// Unwrap makes workflow cancellation match context.Canceled.
+func (e *WorkflowCancelledError) Unwrap() error { return context.Canceled }
 
 // WorkflowNotFoundError indicates that a workflow instance was not found.
 type WorkflowNotFoundError struct {

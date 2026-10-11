@@ -73,6 +73,9 @@ func withReceiveEventTimeout(d time.Duration) receiveEventOption {
 }
 
 func receiveEvent[T any](ctx *WorkflowContext, channelName string, opts ...receiveEventOption) (*receivedEventMessage[T], error) {
+	if err := ctx.execCtx.Fatal(); err != nil {
+		return nil, err
+	}
 	options := &receiveOptions{}
 	for _, opt := range opts {
 		opt(options)
@@ -181,6 +184,24 @@ func receiveEvent[T any](ctx *WorkflowContext, channelName string, opts ...recei
 		}
 
 		return decodeRecorded[*receivedEventMessage[T]](stored)
+	}
+
+	requested, err := s.IsCancelRequested(ctx.Context(), ctx.InstanceID())
+	if err != nil {
+		ctx.execCtx.Fail(err)
+		return nil, err
+	}
+	if requested {
+		cancellation, err := cancellationAtYield(ctx)
+		if err != nil {
+			return nil, err
+		}
+		stored, err := s.RecordHistory(ctx.Context(), ctx.execCtx.Fence(), &storage.HistoryEvent{InstanceID: ctx.InstanceID(), ActivityID: activityID, Command: "receive:" + channelName, EventType: storage.HistoryActivityFailed, EventData: encodeError(cancellation), DataType: "json"})
+		if err != nil {
+			ctx.execCtx.Fail(err)
+			return nil, err
+		}
+		return nil, replayRecordedError(ctx, stored)
 	}
 
 	// No pending messages - need to wait for message

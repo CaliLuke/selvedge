@@ -746,63 +746,26 @@ func (a *App) FindInstancesWithOptions(ctx context.Context, opts storage.ListIns
 	return result.Instances, nil
 }
 
-// cancelWorkflow cancels a running workflow.
+// cancelWorkflow durably requests cancellation and wakes dispatch.
 func (a *App) cancelWorkflow(ctx context.Context, instanceID, reason string) error {
 	if a.storage == nil {
 		return fmt.Errorf("storage not initialized")
 	}
-
-	// Get the instance to check its status
-	instance, err := a.storage.GetInstance(ctx, instanceID)
-	if err != nil {
-		return fmt.Errorf("failed to get instance: %w", err)
-	}
-	if instance == nil {
+	status, err := a.storage.RequestCancel(ctx, instanceID, reason)
+	if errors.Is(err, storage.ErrInstanceNotFound) {
 		return &WorkflowNotFoundError{InstanceID: instanceID}
 	}
-
-	// Check if the workflow can be cancelled
-	switch instance.Status {
-	case storage.StatusCompleted:
-		return fmt.Errorf("cannot cancel completed workflow")
-	case storage.StatusFailed:
-		return fmt.Errorf("cannot cancel failed workflow")
-	case storage.StatusCancelled:
-		return nil // Already cancelled, idempotent
-	}
-
-	if err := a.storage.MarkRunnable(ctx, instanceID); err != nil {
-		return err
-	}
-	f, acquired, err := a.storage.AcquireLease(ctx, instanceID, a.config.workerID+"/"+uuid.NewString(), a.config.lease.TTL)
 	if err != nil {
 		return err
 	}
-	if !acquired {
-		return fmt.Errorf("workflow is leased by another execution")
+	switch status {
+	case storage.StatusCompleted:
+		return ErrWorkflowAlreadyCompleted
+	case storage.StatusFailed:
+		return ErrWorkflowAlreadyFailed
+	case storage.StatusRunning:
+		a.wakeDispatcher()
 	}
-	ctx = storage.ContextWithFence(ctx, f)
-	defer func() { _ = a.storage.ReleaseLease(context.WithoutCancel(ctx), f, false) }()
-
-	// Note: Event subscription cleanup is handled by CancelInstance
-
-	// Mark the workflow as cancelled
-	if err := a.storage.CancelInstance(ctx, instanceID, reason); err != nil {
-		// Translate internal storage error to public API error
-		if errors.Is(err, storage.ErrWorkflowNotCancellable) {
-			return ErrWorkflowNotCancellable
-		}
-		return fmt.Errorf("failed to cancel instance: %w", err)
-	}
-
-	// Call hook
-	a.hooks.OnWorkflowCancelled(ctx, hooks.WorkflowCancelledInfo{
-		InstanceID:   instanceID,
-		WorkflowName: instance.WorkflowName,
-		Reason:       reason,
-		Duration:     time.Since(instance.StartedAt),
-	})
-
 	return nil
 }
 

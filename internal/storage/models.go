@@ -17,6 +17,7 @@ const (
 
 // WorkflowInstance represents a single execution of a workflow.
 type WorkflowInstance struct {
+	CancelReason      string         `json:"cancel_reason,omitempty"`
 	InstanceID        string         `json:"instance_id"`
 	WorkflowName      string         `json:"workflow_name"`
 	Framework         string         `json:"framework"` // "go" or "python"
@@ -49,7 +50,8 @@ const (
 	HistoryEventReceived HistoryEventType = "EventReceived"
 
 	// Timer expired (via Sleep/SleepUntil)
-	HistoryTimerExpired HistoryEventType = "TimerExpired"
+	HistoryTimerExpired   HistoryEventType = "TimerExpired"
+	HistoryTimerCancelled HistoryEventType = "TimerCancelled"
 
 	// Internal event delivery record (via WaitEvent)
 	HistoryChannelMessageReceived HistoryEventType = "ChannelMessageReceived"
@@ -64,6 +66,7 @@ const (
 
 // HistoryEvent represents a single event in a workflow's execution history.
 type HistoryEvent struct {
+	ReservationData []byte           `json:"reservation_data,omitempty"` // Immutable command metadata, separate from its observed value.
 	Command         string           `json:"command"`
 	ID              int64            `json:"id"`
 	InstanceID      string           `json:"instance_id"`

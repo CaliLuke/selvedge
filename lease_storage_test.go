@@ -145,9 +145,9 @@ func testStalledExecutionCommitRejected(t *testing.T, factory replayAppFactory) 
 			require.ErrorIs(t, err, storage.ErrFenced)
 			require.ErrorIs(t, s.ReleaseLease(h.app.ctx, f, true), storage.ErrFenced)
 			stale := storage.ContextWithFence(h.app.ctx, f)
-			require.ErrorIs(t, h.app.storage.UpdateInstanceStatus(stale, "lease", storage.StatusCompleted, ""), storage.ErrFenced)
-			require.ErrorIs(t, h.app.storage.UpdateInstanceOutput(stale, "lease", []byte(`1`)), storage.ErrFenced)
-			require.ErrorIs(t, h.app.storage.CancelInstance(stale, "lease", "cancel"), storage.ErrFenced)
+			for _, status := range []storage.WorkflowStatus{storage.StatusCompleted, storage.StatusFailed, storage.StatusCancelled} {
+				require.ErrorIs(t, h.app.storage.CloseInstance(stale, f, status, []byte(`1`), nil), storage.ErrFenced)
+			}
 			require.ErrorIs(t, h.app.storage.RegisterTimerSubscription(stale, &storage.TimerSubscription{InstanceID: "lease", TimerID: "timer", ExpiresAt: time.Now()}), storage.ErrFenced)
 			require.ErrorIs(t, h.app.storage.SubscribeToChannel(stale, "lease", "messages", storage.ChannelModeBroadcast), storage.ErrFenced)
 			require.ErrorIs(t, h.app.storage.UpdateDeliveryCursor(stale, "lease", "messages", 1), storage.ErrFenced)

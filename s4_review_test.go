@@ -50,7 +50,10 @@ func testTerminalTimerIsRemoved(t *testing.T, factory replayAppFactory) {
 			ctx := storage.ContextWithFence(h.app.ctx, f)
 			timer := &storage.TimerSubscription{InstanceID: "lease", TimerID: "pause", ExpiresAt: time.Now().Add(-time.Hour)}
 			require.NoError(t, h.app.storage.RegisterTimerSubscription(ctx, timer))
-			require.NoError(t, h.app.storage.UpdateInstanceStatus(ctx, "lease", status, ""))
+			require.NoError(t, h.app.storage.CloseInstance(ctx, f, status, nil, nil))
+			// Simulate a stale subscription left by a faulty writer after close.
+			_, err = h.app.storage.DB().Exec("INSERT INTO workflow_timer_subscriptions(instance_id,timer_id,expires_at,activity_id) VALUES($1,$2,$3,$4)", "lease", "pause", time.Now().Add(-time.Hour).UTC().Format("2006-01-02 15:04:05"), "pause")
+			require.NoError(t, err)
 			tx, err := h.app.storage.BeginTransaction(h.app.ctx)
 			require.NoError(t, err)
 			require.NoError(t, h.app.storage.FireTimer(tx, timer))
@@ -157,11 +160,6 @@ func testContextWritesRequireMatchingFence(t *testing.T, factory replayAppFactor
 	require.True(t, ok)
 	require.NotEqual(t, f.InstanceID, other.InstanceID)
 	writes := map[string]func(context.Context) error{
-		"status": func(c context.Context) error {
-			return h.app.storage.UpdateInstanceStatus(c, "lease", storage.StatusCompleted, "")
-		},
-		"output":   func(c context.Context) error { return h.app.storage.UpdateInstanceOutput(c, "lease", []byte(`1`)) },
-		"cancel":   func(c context.Context) error { return h.app.storage.CancelInstance(c, "lease", "cancel") },
 		"activity": func(c context.Context) error { return h.app.storage.UpdateInstanceActivity(c, "lease", "next") },
 		"timer register": func(c context.Context) error {
 			return h.app.storage.RegisterTimerSubscription(c, &storage.TimerSubscription{InstanceID: "lease", TimerID: "pause", ExpiresAt: time.Now()})
@@ -198,7 +196,7 @@ func testCommitCheckStopsBeforeSQL(t *testing.T, factory replayAppFactory) {
 	})
 	id := seedErrorWorkflow(t, h, w)
 	fs.Before = func(_ context.Context, method string) error {
-		if method == "ReserveHistory" {
+		if method == "ReserveTimer" {
 			clk.Advance(801 * time.Millisecond)
 		}
 		return nil

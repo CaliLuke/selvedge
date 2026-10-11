@@ -20,17 +20,20 @@ func (s historyStore) get(ctx context.Context, instanceID, key string) (*History
 
 func readHistory(ctx context.Context, conn Executor, instanceID, key string) (*HistoryEvent, error) {
 	row := conn.QueryRowContext(ctx, `
-		SELECT id, instance_id, activity_id, command, event_type, event_data, event_data_binary, data_type, created_at
+		SELECT id, instance_id, activity_id, command, event_type, event_data, event_data_binary, data_type, reservation_data, created_at
 		FROM workflow_history WHERE instance_id = $1 AND activity_id = $2
 	`, instanceID, key)
 	var ev HistoryEvent
-	var data sql.NullString
+	var data, reservation sql.NullString
 	var created any
-	if err := row.Scan(&ev.ID, &ev.InstanceID, &ev.ActivityID, &ev.Command, &ev.EventType, &data, &ev.EventDataBinary, &ev.DataType, &created); err != nil {
+	if err := row.Scan(&ev.ID, &ev.InstanceID, &ev.ActivityID, &ev.Command, &ev.EventType, &data, &ev.EventDataBinary, &ev.DataType, &reservation, &created); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
+	}
+	if reservation.Valid {
+		ev.ReservationData = []byte(reservation.String)
 	}
 	if data.Valid {
 		ev.EventData = []byte(data.String)
@@ -80,10 +83,10 @@ func writeHistory(ctx context.Context, conn Executor, ev *HistoryEvent, fill boo
 	}
 	var id int64
 	err = conn.QueryRowContext(ctx, `
-		INSERT INTO workflow_history (instance_id, activity_id, command, event_type, event_data, event_data_binary, data_type)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO workflow_history (instance_id, activity_id, command, event_type, event_data, event_data_binary, data_type, reservation_data)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (instance_id, activity_id) DO NOTHING RETURNING id
-	`, ev.InstanceID, ev.ActivityID, ev.Command, ev.EventType, data, ev.EventDataBinary, ev.DataType).Scan(&id)
+	`, ev.InstanceID, ev.ActivityID, ev.Command, ev.EventType, data, ev.EventDataBinary, ev.DataType, nullableJSON(ev.ReservationData)).Scan(&id)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
@@ -165,4 +168,11 @@ func (s *PostgresStorage) SetHistoryValueIfNull(ctx context.Context, f *Fence, i
 // GetHistoryEvent returns the stored row, or nil when absent.
 func (s *PostgresStorage) GetHistoryEvent(ctx context.Context, instanceID, key string) (*HistoryEvent, error) {
 	return (historyStore{s}).get(ctx, instanceID, key)
+}
+
+func nullableJSON(data []byte) any {
+	if data == nil {
+		return nil
+	}
+	return string(data)
 }

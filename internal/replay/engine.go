@@ -253,7 +253,7 @@ func (e *Engine) Run(ctx context.Context, instanceID string, runner WorkflowRunn
 	if ctx.Err() != nil {
 		err = errors.Join(err, ErrLeaseLost)
 	}
-	if !errors.Is(err, storage.ErrFenced) {
+	if !x.closed && !errors.Is(err, storage.ErrFenced) {
 		releaseCtx, cancelRelease := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		releaseErr := e.storage.ReleaseLease(releaseCtx, f, err != nil)
 		cancelRelease()
@@ -337,55 +337,54 @@ func (e *Engine) executeWorkflow(ctx context.Context, instanceID string, runner 
 		return errors.Join(err, ctx.Err())
 	}
 
+	if sig := AsSuspendSignal(err); sig != nil {
+		return e.handleSuspendSignal(ctx, instanceID, sig)
+	}
+	var resultData []byte
+	if err == nil {
+		resultData, err = json.Marshal(result)
+		if err != nil {
+			err = fmt.Errorf("failed to serialize result: %w", err)
+		}
+	}
+	status := storage.StatusCompleted
+	var closeEvent *storage.HistoryEvent
+	var cancelledInstance *storage.WorkflowInstance
 	if err != nil {
-		// Check for SuspendSignal
-		if sig := AsSuspendSignal(err); sig != nil {
-			return e.handleSuspendSignal(ctx, instanceID, sig)
+		status = storage.StatusFailed
+		if errors.Is(err, context.Canceled) {
+			requested, readErr := e.storage.IsCancelRequested(ctx, instanceID)
+			if readErr != nil {
+				return errors.Join(err, readErr)
+			}
+			if requested {
+				status = storage.StatusCancelled
+				cancelledInstance, readErr = e.storage.GetInstance(ctx, instanceID)
+				if readErr != nil {
+					return errors.Join(err, readErr)
+				}
+				if cancelledInstance == nil {
+					return errors.Join(err, storage.ErrInstanceNotFound)
+				}
+			}
 		}
-
-		// Record workflow failure in history
-		eventData := e.codec.Encode(err)
-		_, writeErr := e.storage.RecordHistory(ctx, &f, &storage.HistoryEvent{
-			InstanceID: instanceID,
-			EventType:  storage.HistoryWorkflowFailed,
-			ActivityID: "$workflow_failed",
-			Command:    "close",
-			EventData:  eventData,
-			DataType:   "json",
-		})
-
-		if writeErr != nil {
-			return errors.Join(err, fmt.Errorf("failed to record workflow failure: %w", writeErr))
+		eventType := storage.HistoryWorkflowFailed
+		if status == storage.StatusCancelled {
+			eventType = storage.HistoryWorkflowCancelled
 		}
-		// Mark as failed
-		if statusErr := e.storage.UpdateInstanceStatus(ctx, instanceID, storage.StatusFailed, err.Error()); statusErr != nil {
-			return errors.Join(err, fmt.Errorf("failed to mark workflow failed: %w", statusErr))
-		}
-
-		e.hooks.OnWorkflowFailed(ctx, hooks.WorkflowFailedInfo{
-			InstanceID: instanceID,
-			Error:      err,
-			Duration:   duration,
-		})
-
+		closeEvent = &storage.HistoryEvent{InstanceID: instanceID, EventType: eventType, ActivityID: "$workflow_failed", Command: "close", EventData: e.codec.Encode(err), DataType: "json"}
+	}
+	if closeErr := e.storage.CloseInstance(ctx, f, status, resultData, closeEvent); closeErr != nil {
+		return errors.Join(err, closeErr)
+	}
+	x.closed = true
+	if status == storage.StatusCancelled {
+		e.hooks.OnWorkflowCancelled(ctx, hooks.WorkflowCancelledInfo{InstanceID: instanceID, WorkflowName: cancelledInstance.WorkflowName, Reason: cancelledInstance.CancelReason, Duration: time.Since(cancelledInstance.StartedAt)})
 		return err
 	}
-
-	// Success - serialize result and mark as completed
-	resultData, err := json.Marshal(result)
 	if err != nil {
-		if statusErr := e.storage.UpdateInstanceStatus(ctx, instanceID, storage.StatusFailed, "failed to serialize result"); statusErr != nil {
-			return errors.Join(err, statusErr)
-		}
-		return fmt.Errorf("failed to serialize result: %w", err)
-	}
-
-	if err := e.storage.UpdateInstanceOutput(ctx, instanceID, resultData); err != nil {
-		return fmt.Errorf("failed to set result: %w", err)
-	}
-
-	if err := e.storage.UpdateInstanceStatus(ctx, instanceID, storage.StatusCompleted, ""); err != nil {
-		return fmt.Errorf("failed to update status: %w", err)
+		e.hooks.OnWorkflowFailed(ctx, hooks.WorkflowFailedInfo{InstanceID: instanceID, Error: err, Duration: duration})
+		return err
 	}
 
 	// Call OnReplayComplete hook if we were replaying
@@ -422,17 +421,7 @@ func (e *Engine) handleSuspendSignal(ctx context.Context, instanceID string, sig
 
 // handleTimerSuspend handles the timer suspension case.
 func (e *Engine) handleTimerSuspend(ctx context.Context, instanceID string, sig *SuspendSignal) error {
-	// Register timer subscription
-	timer := &storage.TimerSubscription{
-		InstanceID: instanceID,
-		TimerID:    sig.TimerID,
-		ExpiresAt:  sig.ExpiresAt,
-		ActivityID: sig.ActivityID,
-	}
-
-	if err := e.storage.RegisterTimerSubscription(ctx, timer); err != nil {
-		return fmt.Errorf("failed to register timer subscription: %w", err)
-	}
+	// Sleep already reserved and armed the timer in one fenced transaction.
 
 	return nil
 }

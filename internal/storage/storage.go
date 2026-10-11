@@ -7,10 +7,6 @@ import (
 	"time"
 )
 
-// ErrWorkflowNotCancellable indicates that the workflow cannot be cancelled.
-// This happens when the workflow is already completed, cancelled, failed, or does not exist.
-var ErrWorkflowNotCancellable = errors.New("workflow cannot be cancelled")
-
 // Executor is a database executor interface that can be either *sql.DB or *sql.Tx.
 // This allows users to execute custom SQL queries within the same transaction
 // as the workflow activity.
@@ -90,17 +86,17 @@ type InstanceManager interface {
 	// GetInstance retrieves a workflow instance by ID.
 	GetInstance(ctx context.Context, instanceID string) (*WorkflowInstance, error)
 
-	// UpdateInstanceStatus updates the status and related fields.
-	UpdateInstanceStatus(ctx context.Context, instanceID string, status WorkflowStatus, errorMsg string) error
+	// RequestCancel durably requests cancellation and wakes a running instance.
+	RequestCancel(ctx context.Context, instanceID, reason string) (WorkflowStatus, error)
+
+	// IsCancelRequested reports whether cancellation was requested.
+	IsCancelRequested(ctx context.Context, instanceID string) (bool, error)
+
+	// CloseInstance atomically closes a running instance under its execution fence.
+	CloseInstance(ctx context.Context, f Fence, status WorkflowStatus, output []byte, closeEvent *HistoryEvent) error
 
 	// UpdateInstanceActivity updates the current activity ID.
 	UpdateInstanceActivity(ctx context.Context, instanceID string, activityID string) error
-
-	// UpdateInstanceOutput updates the output data for a completed workflow.
-	UpdateInstanceOutput(ctx context.Context, instanceID string, outputData []byte) error
-
-	// CancelInstance marks a workflow as cancelled.
-	CancelInstance(ctx context.Context, instanceID string, reason string) error
 
 	// ListInstances lists workflow instances with optional filtering and pagination.
 	// Returns PaginationResult with cursor-based pagination.
@@ -160,6 +156,8 @@ type HistoryManager interface {
 
 // TimerSubscriptionManager handles timer subscriptions.
 type TimerSubscriptionManager interface {
+	// ReserveTimer atomically reserves a sleep and arms its timer with the first expiry.
+	ReserveTimer(context.Context, *Fence, *TimerSubscription) (*HistoryEvent, error)
 	// FireTimer atomically records a timer result, wakes its instance, and removes the subscription.
 	FireTimer(context.Context, *TimerSubscription) error
 	// RegisterTimerSubscription registers a workflow to wait for a timer.

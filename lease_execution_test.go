@@ -383,7 +383,7 @@ func testSwallowedFenceRejectionStopsExecution(t *testing.T, factory replayAppFa
 	}
 	require.ErrorIs(t, h.RunOnce(id), storage.ErrFenced)
 	require.Zero(t, calls)
-	require.NotContains(t, fs.Calls(), "UpdateInstanceStatus")
+	require.NotContains(t, fs.Calls(), "CloseInstance")
 	require.NotContains(t, fs.Calls(), "ReleaseLease")
 }
 
@@ -428,7 +428,7 @@ func runCrashScenario(t *testing.T, factory replayAppFactory, crashAt int, after
 	id := seedErrorWorkflow(t, h, w)
 	inject := func(_ context.Context, method string) error {
 		switch method {
-		case "AcquireLease", "SetHistoryValueIfNull", "ReserveHistory", "RegisterTimerSubscription", "ReleaseLease", "FireTimer", "UpdateInstanceOutput", "UpdateInstanceStatus":
+		case "AcquireLease", "SetHistoryValueIfNull", "ReserveTimer", "RegisterTimerSubscription", "ReleaseLease", "FireTimer", "CloseInstance":
 			writeIndex++
 		}
 		if !crashed && crashAt > 0 && writeIndex == crashAt {
@@ -529,7 +529,7 @@ func testShutdownAbandonsLease(t *testing.T, factory replayAppFactory) {
 	ids, err := fs.FindDispatchable(h.app.ctx, 10)
 	require.NoError(t, err)
 	require.Contains(t, ids, id)
-	require.NotContains(t, fs.Calls(), "UpdateInstanceStatus")
+	require.NotContains(t, fs.Calls(), "CloseInstance")
 	require.NoError(t, h.RunOnce(id))
 	assertCompletedLeaseRun(t, h, id)
 }
@@ -545,7 +545,7 @@ func testStalledEngineCommit(t *testing.T, factory replayAppFactory, owner strin
 	})
 	id := seedErrorWorkflow(t, h, w)
 	fs.Before = func(_ context.Context, method string) error {
-		if method == "ReserveHistory" {
+		if method == "ReserveTimer" {
 			close(checked)
 			<-resume
 		}
@@ -560,7 +560,7 @@ func testStalledEngineCommit(t *testing.T, factory replayAppFactory, owner strin
 	require.True(t, ok)
 	close(resume)
 	require.ErrorIs(t, <-done, storage.ErrFenced)
-	require.Equal(t, []string{"AcquireLease", "ReserveHistory"}, executionWrites(fs))
+	require.Equal(t, []string{"AcquireLease", "ReserveTimer"}, executionWrites(fs))
 	rows, err := fs.GetHistoryCount(h.app.ctx, id)
 	require.NoError(t, err)
 	require.Zero(t, rows)
@@ -574,7 +574,7 @@ func executionWrites(s *faultstore.Store) []string {
 	var writes []string
 	for _, method := range s.Calls() {
 		switch method {
-		case "AcquireLease", "RenewLease", "ReleaseLease", "ReserveHistory", "RecordHistory", "SetHistoryValueIfNull", "UpdateInstanceStatus", "UpdateInstanceOutput", "UpdateInstanceActivity", "RegisterTimerSubscription", "SubscribeToChannel", "RegisterChannelReceive", "ConsumeChannelMessage":
+		case "AcquireLease", "RenewLease", "ReleaseLease", "ReserveHistory", "ReserveTimer", "RecordHistory", "SetHistoryValueIfNull", "CloseInstance", "UpdateInstanceActivity", "RegisterTimerSubscription", "SubscribeToChannel", "RegisterChannelReceive", "ConsumeChannelMessage":
 			writes = append(writes, method)
 		}
 	}

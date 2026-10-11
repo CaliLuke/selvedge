@@ -174,7 +174,7 @@ func GetWorkflowResult[O any](ctx context.Context, app *App, instanceID string) 
 	}
 
 	// Get error from history events if workflow failed
-	if instance.Status == storage.StatusFailed {
+	if instance.Status == storage.StatusFailed || instance.Status == storage.StatusCancelled {
 		failure, err := getWorkflowErrorFromHistory(ctx, app.Storage(), instanceID)
 		if err != nil {
 			return nil, err

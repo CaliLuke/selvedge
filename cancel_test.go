@@ -47,13 +47,17 @@ func TestCancelWorkflow(t *testing.T) {
 		t.Fatalf("Failed to cancel workflow: %v", err)
 	}
 
-	// Verify workflow status is cancelled
+	// A request remains running until the workflow observes it at a yield.
 	result, err := app.GetInstance(ctx, "test-cancel-123")
 	if err != nil {
 		t.Fatalf("Failed to get instance: %v", err)
 	}
-	if result.Status != storage.StatusCancelled {
-		t.Errorf("Expected status 'cancelled', got '%s'", result.Status)
+	if result.Status != storage.StatusRunning {
+		t.Errorf("Expected status 'running', got '%s'", result.Status)
+	}
+	requested, err := app.Storage().IsCancelRequested(ctx, "test-cancel-123")
+	if err != nil || !requested {
+		t.Fatalf("expected durable cancellation request: requested=%v err=%v", requested, err)
 	}
 }
 

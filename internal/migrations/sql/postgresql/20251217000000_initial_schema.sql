@@ -14,6 +14,8 @@ CREATE INDEX IF NOT EXISTS idx_definitions_hash ON workflow_definitions(source_h
 
 -- Workflow instances with distributed locking support
 CREATE TABLE IF NOT EXISTS workflow_instances (
+    cancel_requested_at TIMESTAMP NULL,
+    cancel_reason TEXT NULL,
     lease_owner TEXT NULL,
     lease_epoch BIGINT NOT NULL DEFAULT 0,
     lease_expires_ms BIGINT NULL,
@@ -54,6 +56,7 @@ CREATE TABLE IF NOT EXISTS workflow_history (
     command TEXT NOT NULL DEFAULT '',
     data_type TEXT NOT NULL DEFAULT 'json',
     event_data TEXT,
+    reservation_data TEXT,
     event_data_binary BYTEA,
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     FOREIGN KEY (instance_id) REFERENCES workflow_instances(instance_id) ON DELETE CASCADE,

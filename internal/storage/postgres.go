@@ -205,7 +205,7 @@ func (s *PostgresStorage) GetInstance(ctx context.Context, instanceID string) (*
 		SELECT instance_id, workflow_name, status, input_data, output_data,
 			   current_activity_id, source_hash, owner_service, framework,
 			   lease_owner, lease_epoch, lease_expires_ms, runnable,
-			   started_at, updated_at
+			   started_at, updated_at, COALESCE(cancel_reason,'')
 		FROM workflow_instances WHERE instance_id = $1
 	`, instanceID)
 
@@ -218,7 +218,7 @@ func (s *PostgresStorage) GetInstance(ctx context.Context, instanceID string) (*
 		&inst.InstanceID, &inst.WorkflowName, &inst.Status,
 		&inputData, &outputData, &activityID, &sourceHash, &ownerService, &framework,
 		&leaseOwner, &inst.LeaseEpoch, &leaseExpires, &inst.Runnable,
-		&inst.StartedAt, &inst.UpdatedAt,
+		&inst.StartedAt, &inst.UpdatedAt, &inst.CancelReason,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -253,19 +253,6 @@ func (s *PostgresStorage) GetInstance(ctx context.Context, instanceID string) (*
 	return &inst, nil
 }
 
-// UpdateInstanceStatus updates the status of a workflow instance.
-func (s *PostgresStorage) UpdateInstanceStatus(ctx context.Context, instanceID string, status WorkflowStatus, errorMsg string) error {
-	return (fenceStore{s}).withFence(ctx, contextFence(ctx, instanceID), func(conn Executor) error {
-		// Note: errorMsg parameter kept for interface compatibility but ignored
-		_, err := conn.ExecContext(ctx, `
-		UPDATE workflow_instances
-		SET status = $1, updated_at = NOW()
-		WHERE instance_id = $2
-	`, status, instanceID)
-		return err
-	})
-}
-
 // UpdateInstanceActivity updates the current activity ID.
 func (s *PostgresStorage) UpdateInstanceActivity(ctx context.Context, instanceID, activityID string) error {
 	return (fenceStore{s}).withFence(ctx, contextFence(ctx, instanceID), func(conn Executor) error {
@@ -278,45 +265,10 @@ func (s *PostgresStorage) UpdateInstanceActivity(ctx context.Context, instanceID
 	})
 }
 
-// UpdateInstanceOutput updates the output data.
-func (s *PostgresStorage) UpdateInstanceOutput(ctx context.Context, instanceID string, outputData []byte) error {
-	return (fenceStore{s}).withFence(ctx, contextFence(ctx, instanceID), func(conn Executor) error {
-		_, err := conn.ExecContext(ctx, `
-		UPDATE workflow_instances
-		SET output_data = $1, status = 'completed', updated_at = NOW()
-		WHERE instance_id = $2
-	`, string(outputData), instanceID)
-		return err
-	})
-}
-
-// CancelInstance cancels a workflow instance.
-// Returns ErrWorkflowNotCancellable if the workflow is already completed, cancelled, failed, or does not exist.
-func (s *PostgresStorage) CancelInstance(ctx context.Context, instanceID, reason string) error {
-	return (fenceStore{s}).withFence(ctx, contextFence(ctx, instanceID), func(conn Executor) error {
-		result, err := conn.ExecContext(ctx, `
-		UPDATE workflow_instances
-		SET status = 'cancelled', updated_at = NOW()
-		WHERE instance_id = $1 AND status='running'
-	`, instanceID)
-		if err != nil {
-			return err
-		}
-		rows, err := result.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if rows == 0 {
-			return ErrWorkflowNotCancellable
-		}
-		return nil
-	})
-}
-
 // ListInstances lists workflow instances with cursor-based pagination and filters.
 func (s *PostgresStorage) ListInstances(ctx context.Context, opts ListInstancesOptions) (*PaginationResult, error) {
 	conn := s.getConn(ctx)
-	query := "SELECT instance_id, workflow_name, status, started_at, updated_at FROM workflow_instances WHERE 1=1"
+	query := "SELECT instance_id, workflow_name, status, started_at, updated_at, COALESCE(cancel_reason,'') FROM workflow_instances WHERE 1=1"
 	args := []any{}
 	argN := 1
 
@@ -403,7 +355,7 @@ func (s *PostgresStorage) ListInstances(ctx context.Context, opts ListInstancesO
 	var instances []*WorkflowInstance
 	for rows.Next() {
 		var inst WorkflowInstance
-		if err := rows.Scan(&inst.InstanceID, &inst.WorkflowName, &inst.Status, &inst.StartedAt, &inst.UpdatedAt); err != nil {
+		if err := rows.Scan(&inst.InstanceID, &inst.WorkflowName, &inst.Status, &inst.StartedAt, &inst.UpdatedAt, &inst.CancelReason); err != nil {
 			return nil, err
 		}
 		instances = append(instances, &inst)
@@ -442,7 +394,7 @@ func (s *PostgresStorage) GetHistoryPaginated(ctx context.Context, instanceID st
 	conn := s.getConn(ctx)
 	// Fetch one extra to check if there are more events
 	rows, err := conn.QueryContext(ctx, `
-		SELECT id, instance_id, activity_id, command, event_type, event_data, event_data_binary, data_type, created_at
+		SELECT id, instance_id, activity_id, command, event_type, event_data, event_data_binary, data_type, reservation_data, created_at
 		FROM workflow_history
 		WHERE instance_id = $1 AND id > $2
 		ORDER BY id ASC
@@ -456,16 +408,19 @@ func (s *PostgresStorage) GetHistoryPaginated(ctx context.Context, instanceID st
 	var history []*HistoryEvent
 	for rows.Next() {
 		var h HistoryEvent
-		var eventData sql.NullString
+		var eventData, reservation sql.NullString
 		var eventDataBinary []byte
 
-		if err := rows.Scan(&h.ID, &h.InstanceID, &h.ActivityID, &h.Command, &h.EventType, &eventData, &eventDataBinary, &h.DataType, &h.CreatedAt); err != nil {
+		if err := rows.Scan(&h.ID, &h.InstanceID, &h.ActivityID, &h.Command, &h.EventType, &eventData, &eventDataBinary, &h.DataType, &reservation, &h.CreatedAt); err != nil {
 			return nil, false, err
 		}
 		if eventData.Valid {
 			h.EventData = []byte(eventData.String)
 		}
 		h.EventDataBinary = eventDataBinary
+		if reservation.Valid {
+			h.ReservationData = []byte(reservation.String)
+		}
 		history = append(history, &h)
 	}
 	if err := rows.Err(); err != nil {
