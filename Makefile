@@ -1,7 +1,7 @@
 # Selvedge - Development Commands
 # Run `make` or `make help` to see available commands
 
-.PHONY: help build test test-coverage test-verbose lint lint-fix fmt tidy clean install-tools check build-examples build-cmd sync-schema check-schema-sync
+.PHONY: help build test test-coverage test-verbose lint lint-fix fmt tidy clean install-tools check sync-schema check-schema-sync
 
 # Default target - show help
 .DEFAULT_GOAL := help
@@ -29,15 +29,6 @@ help: ## Show this help message
 build: ## Build the project
 	$(GOBUILD) ./...
 
-build-cmd: ## Build the CLI tool
-	$(GOBUILD) -o selvedge ./cmd/selvedge
-
-build-examples: ## Build all examples
-	@for dir in examples/*/; do \
-		echo "Building $$dir..."; \
-		$(GOBUILD) -o $${dir}app $$dir || exit 1; \
-	done
-
 test: ## Run tests
 	$(GOTEST) ./... -count=1
 
@@ -61,8 +52,6 @@ tidy: ## Run go mod tidy
 
 clean: ## Clean build artifacts and caches
 	$(GOCLEAN) ./...
-	rm -rf selvedge
-	rm -f examples/*/app
 	rm -f *.db *.db-shm *.db-wal
 	rm -rf .golangci-lint-cache
 
@@ -75,6 +64,7 @@ check: fmt lint test ## Run all checks (fmt, lint, test)
 # and the //go:embed-target copy that ships in the Go module zip.
 SCHEMA_SRC := schema/db/migrations
 SCHEMA_DST := internal/migrations/sql
+SCHEMA_DIALECTS := sqlite postgresql
 
 sync-schema: ## Refresh internal/migrations/sql/ from the schema/ submodule (run after bumping the submodule pointer)
 	@if [ ! -f $(SCHEMA_SRC)/postgresql/*.sql ] && [ -z "$$(ls -A $(SCHEMA_SRC) 2>/dev/null)" ]; then \
@@ -83,7 +73,9 @@ sync-schema: ## Refresh internal/migrations/sql/ from the schema/ submodule (run
 	fi
 	@rm -rf $(SCHEMA_DST)
 	@mkdir -p $(SCHEMA_DST)
-	@cp -R $(SCHEMA_SRC)/. $(SCHEMA_DST)/
+	@for dialect in $(SCHEMA_DIALECTS); do \
+		cp -R $(SCHEMA_SRC)/$$dialect $(SCHEMA_DST)/ || exit 1; \
+	done
 	@echo "synced $(SCHEMA_SRC) -> $(SCHEMA_DST)"
 
 check-schema-sync: ## Fail if internal/migrations/sql/ has drifted from the schema/ submodule (CI guard)
@@ -91,11 +83,12 @@ check-schema-sync: ## Fail if internal/migrations/sql/ has drifted from the sche
 		echo "schema/ submodule not initialized — run: git submodule update --init schema"; \
 		exit 1; \
 	fi
-	@diff -ruN $(SCHEMA_SRC) $(SCHEMA_DST) >/dev/null || { \
-		echo "ERROR: $(SCHEMA_DST) is out of sync with $(SCHEMA_SRC)."; \
-		echo "       Run \`make sync-schema\` and commit the result."; \
-		echo ""; \
-		diff -ruN $(SCHEMA_SRC) $(SCHEMA_DST) || true; \
-		exit 1; \
-	}
+	@for dialect in $(SCHEMA_DIALECTS); do \
+		diff -ruN $(SCHEMA_SRC)/$$dialect $(SCHEMA_DST)/$$dialect >/dev/null || { \
+			echo "ERROR: $(SCHEMA_DST)/$$dialect is out of sync with $(SCHEMA_SRC)/$$dialect."; \
+			echo "       Run \`make sync-schema\` and commit the result."; \
+			diff -ruN $(SCHEMA_SRC)/$$dialect $(SCHEMA_DST)/$$dialect || true; \
+			exit 1; \
+		}; \
+	done
 	@echo "$(SCHEMA_DST) is in sync with $(SCHEMA_SRC)"

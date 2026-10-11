@@ -4,7 +4,6 @@ package storage
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -51,15 +50,10 @@ func cleanupTables(t *testing.T, store *PostgresStorage) {
 
 	// Order matters due to foreign key constraints
 	tables := []string{
-		"channel_message_claims",
 		"channel_delivery_cursors",
 		"channel_messages",
 		"channel_subscriptions",
-		"workflow_group_memberships",
-		"workflow_compensations",
-		"outbox_events",
 		"workflow_timer_subscriptions",
-		"workflow_history_archive",
 		"workflow_history",
 		"workflow_instances",
 		"workflow_definitions",
@@ -305,104 +299,6 @@ func TestPostgresStorage_TimerSubscription(t *testing.T) {
 	}
 }
 
-func TestPostgresStorage_OutboxOperations(t *testing.T) {
-	store := setupPostgresStorage(t)
-	defer store.Close()
-
-	ctx := context.Background()
-
-	// Add outbox event
-	event := &OutboxEvent{
-		EventID:     "event-1",
-		EventType:   "order.created",
-		EventSource: "order-service",
-		EventData:   []byte(`{"order_id": "123"}`),
-		DataType:    "json",
-		ContentType: "application/json",
-		Status:      "pending",
-	}
-
-	if err := store.AddOutboxEvent(ctx, event); err != nil {
-		t.Fatalf("AddOutboxEvent failed: %v", err)
-	}
-
-	// Get pending events
-	events, err := store.GetPendingOutboxEvents(ctx, 10)
-	if err != nil {
-		t.Fatalf("GetPendingOutboxEvents failed: %v", err)
-	}
-
-	if len(events) != 1 {
-		t.Fatalf("len(events) = %d, want 1", len(events))
-	}
-
-	// Mark as sent
-	if err := store.MarkOutboxEventSent(ctx, "event-1"); err != nil {
-		t.Fatalf("MarkOutboxEventSent failed: %v", err)
-	}
-
-	// Should not appear in pending
-	events2, _ := store.GetPendingOutboxEvents(ctx, 10)
-	if len(events2) != 0 {
-		t.Errorf("len(events) = %d after sent, want 0", len(events2))
-	}
-}
-
-func TestPostgresStorage_CompensationOperations(t *testing.T) {
-	store := setupPostgresStorage(t)
-	defer store.Close()
-
-	ctx := context.Background()
-	now := time.Now().UTC()
-
-	// Create instance
-	instance := &WorkflowInstance{
-		InstanceID:   "test-comp-1",
-		WorkflowName: "test_workflow",
-		Status:       StatusRunning,
-		StartedAt:    now,
-		UpdatedAt:    now,
-	}
-	store.CreateInstance(ctx, instance)
-
-	// Add compensations
-	comp1 := &CompensationEntry{
-		InstanceID:   "test-comp-1",
-		ActivityID:   "activity:1",
-		ActivityName: "rollback_activity1",
-		Args:         []byte(`{"id": "1"}`),
-	}
-	// Small delay to ensure ordering by created_at
-	time.Sleep(10 * time.Millisecond)
-	comp2 := &CompensationEntry{
-		InstanceID:   "test-comp-1",
-		ActivityID:   "activity:2",
-		ActivityName: "rollback_activity2",
-		Args:         []byte(`{"id": "2"}`),
-	}
-
-	store.AddCompensation(ctx, comp1)
-	store.AddCompensation(ctx, comp2)
-
-	// Get compensations (should be in LIFO order)
-	comps, err := store.GetCompensations(ctx, "test-comp-1")
-	if err != nil {
-		t.Fatalf("GetCompensations failed: %v", err)
-	}
-
-	if len(comps) != 2 {
-		t.Fatalf("len(comps) = %d, want 2", len(comps))
-	}
-
-	// LIFO: comp2 should come first (most recently added)
-	if comps[0].ActivityID != "activity:2" {
-		t.Errorf("comps[0].ActivityID = %s, want activity:2 (LIFO)", comps[0].ActivityID)
-	}
-	if comps[1].ActivityID != "activity:1" {
-		t.Errorf("comps[1].ActivityID = %s, want activity:1 (LIFO)", comps[1].ActivityID)
-	}
-}
-
 func TestPostgresStorage_Transaction(t *testing.T) {
 	store := setupPostgresStorage(t)
 	defer store.Close()
@@ -474,54 +370,4 @@ func TestPostgresStorage_TransactionCommit(t *testing.T) {
 	if got == nil {
 		t.Error("Instance should exist after commit")
 	}
-}
-
-func TestPostgresStorage_SelectForUpdateSkipLocked(t *testing.T) {
-	store := setupPostgresStorage(t)
-	defer store.Close()
-
-	ctx := context.Background()
-
-	// Add multiple outbox events
-	for i := 1; i <= 3; i++ {
-		event := &OutboxEvent{
-			EventID:     fmt.Sprintf("event-%d", i),
-			EventType:   "order.created",
-			EventSource: "order-service",
-			EventData:   []byte(`{}`),
-			DataType:    "json",
-			ContentType: "application/json",
-			Status:      "pending",
-		}
-		store.AddOutboxEvent(ctx, event)
-	}
-
-	// Start transaction 1 and get pending events
-	ctx1, _ := store.BeginTransaction(ctx)
-
-	events1, err := store.GetPendingOutboxEvents(ctx1, 2)
-	if err != nil {
-		t.Fatalf("GetPendingOutboxEvents (tx1) failed: %v", err)
-	}
-	if len(events1) != 2 {
-		t.Errorf("tx1: len(events) = %d, want 2", len(events1))
-	}
-
-	// Start transaction 2 and get pending events
-	// With FOR UPDATE SKIP LOCKED, it should skip the locked rows
-	ctx2, _ := store.BeginTransaction(ctx)
-
-	events2, err := store.GetPendingOutboxEvents(ctx2, 2)
-	if err != nil {
-		t.Fatalf("GetPendingOutboxEvents (tx2) failed: %v", err)
-	}
-
-	// Should only get the remaining unlocked row
-	if len(events2) != 1 {
-		t.Errorf("tx2: len(events) = %d, want 1 (SKIP LOCKED)", len(events2))
-	}
-
-	// Cleanup transactions
-	store.RollbackTransaction(ctx1)
-	store.RollbackTransaction(ctx2)
 }

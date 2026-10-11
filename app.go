@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"math"
 	"math/rand"
-	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -21,7 +20,6 @@ import (
 	"github.com/CaliLuke/selvedge/internal/notify"
 	"github.com/CaliLuke/selvedge/internal/replay"
 	"github.com/CaliLuke/selvedge/internal/storage"
-	"github.com/CaliLuke/selvedge/outbox"
 )
 
 // App is the main entry point for Selvedge.
@@ -31,9 +29,6 @@ type App struct {
 	storage storage.Storage
 	hooks   hooks.WorkflowHooks
 	engine  *replay.Engine
-
-	// Outbox relayer (if enabled)
-	outboxRelayer *outbox.Relayer
 
 	// PostgreSQL LISTEN/NOTIFY listener (if enabled)
 	notifyListener *notify.Listener
@@ -45,10 +40,6 @@ type App struct {
 	// Workflow runners (workflow name → runner function)
 	workflowRunners   map[string]replay.WorkflowRunner
 	workflowRunnersMu sync.RWMutex
-
-	// Event handlers (workflow name → event type)
-	eventHandlers   map[string]string
-	eventHandlersMu sync.RWMutex
 
 	// Background task management
 	ctx    context.Context
@@ -62,7 +53,6 @@ type App struct {
 
 	// NOTIFY wake event channels for adaptive backoff
 	resumeWakeEvent chan struct{}
-	outboxWakeEvent chan struct{}
 
 	// Leader election state
 	isLeader           atomic.Bool
@@ -94,12 +84,10 @@ func NewApp(opts ...Option) *App {
 		hooks:           config.hooks,
 		workflows:       make(map[string]any),
 		workflowRunners: make(map[string]replay.WorkflowRunner),
-		eventHandlers:   make(map[string]string),
 		resumptionSem:   semaphore.NewWeighted(int64(config.maxConcurrentResumptions)),
 		timerSem:        semaphore.NewWeighted(int64(config.maxConcurrentTimers)),
 		messageSem:      semaphore.NewWeighted(int64(config.maxConcurrentMessages)),
 		resumeWakeEvent: make(chan struct{}, 1),
-		outboxWakeEvent: make(chan struct{}, 1),
 	}
 }
 
@@ -138,11 +126,6 @@ func (a *App) Shutdown(ctx context.Context) error {
 	a.running = false
 	a.mu.Unlock()
 
-	// Stop outbox relayer if enabled
-	if a.outboxRelayer != nil {
-		a.outboxRelayer.Stop()
-	}
-
 	// Stop LISTEN/NOTIFY listener if enabled
 	if a.notifyListener != nil {
 		if err := a.notifyListener.Stop(ctx); err != nil {
@@ -174,7 +157,7 @@ func (a *App) Shutdown(ctx context.Context) error {
 	// Release the leader lock if we held it. Without this, a fresh
 	// process starting after a graceful shutdown has to wait the full
 	// leader-lease TTL (default 45s) before it can become leader and
-	// resume timer / channel / recur checks. The TTL is the safety
+	// resume timer and event checks. The TTL is the safety
 	// net for crash scenarios; clean shutdowns should release the
 	// lock symmetrically with TryAcquireSystemLock.
 	//
@@ -223,13 +206,6 @@ func (a *App) initStorage() error {
 			pgStorage.SetNotifyEnabled(true)
 			a.initNotifyListener(url)
 		}
-	case len(url) >= 5 && url[:5] == "mysql":
-		// MySQL
-		mysqlStorage, err := storage.NewMySQLStorage(url)
-		if err != nil {
-			return fmt.Errorf("failed to create MySQL storage: %w", err)
-		}
-		a.storage = mysqlStorage
 	default:
 		// Default to SQLite
 		sqliteStorage, err := storage.NewSQLiteStorage(url)
@@ -267,15 +243,6 @@ func (a *App) initStorage() error {
 	// Create the replay engine
 	a.engine = replay.NewEngine(a.storage, a.hooks, a.config.workerID)
 
-	// Set up compensation runner to execute compensations via the global registry
-	a.engine.SetCompensationRunner(func(ctx context.Context, funcName string, arg []byte) error {
-		executor, ok := GetCompensationExecutor(funcName)
-		if !ok {
-			return fmt.Errorf("compensation executor not found for %s", funcName)
-		}
-		return executor(ctx, arg)
-	})
-
 	return nil
 }
 
@@ -302,7 +269,6 @@ func (a *App) initNotifyListener(connString string) {
 	a.notifyListener.OnNotification(notify.ChannelWorkflowResumable, a.handleWorkflowResumableNotify)
 	a.notifyListener.OnNotification(notify.ChannelTimerExpired, a.handleTimerExpiredNotify)
 	a.notifyListener.OnNotification(notify.ChannelChannelMessage, a.handleChannelMessageNotify)
-	a.notifyListener.OnNotification(notify.ChannelOutboxPending, a.handleOutboxPendingNotify)
 
 	slog.Info("PostgreSQL LISTEN/NOTIFY configured",
 		"reconnect_delay", a.config.notifyReconnectDelay)
@@ -356,17 +322,6 @@ func (a *App) handleChannelMessageNotify(ctx context.Context, channel notify.Not
 
 	// Trigger immediate message delivery
 	go a.wakeWaitingChannelSubscribersForNotify(ctx, n.ChannelName, n.TargetInstanceID)
-}
-
-// handleOutboxPendingNotify handles outbox pending notifications.
-func (a *App) handleOutboxPendingNotify(ctx context.Context, channel notify.NotifyChannel, payload string) {
-	slog.Debug("received outbox notification", "payload", payload)
-
-	// Signal wake channel for adaptive backoff reset
-	select {
-	case a.outboxWakeEvent <- struct{}{}:
-	default: // Non-blocking
-	}
 }
 
 // wakeWaitingChannelSubscribersForNotify triggers message delivery for waiting subscribers.
@@ -471,19 +426,8 @@ func (a *App) startBackgroundTasks() {
 	a.wg.Add(1)
 	go a.runWorkflowResumption()
 
-	// Outbox relayer (all workers - uses SKIP LOCKED for distributed coordination)
-	if a.config.outboxEnabled {
-		a.outboxRelayer = outbox.NewRelayer(a.storage, outbox.RelayerConfig{
-			TargetURL:    a.config.brokerURL,
-			PollInterval: a.config.outboxInterval,
-			BatchSize:    a.config.outboxBatchSize,
-			WakeEvent:    a.outboxWakeEvent,
-		})
-		a.outboxRelayer.Start(a.ctx)
-	}
-
 	// Note: Leader-only tasks (timer check, event timeout, channel timeout,
-	// recur check, stale lock cleanup, channel cleanup) are started dynamically
+	// stale lock cleanup, event cleanup) are started dynamically
 	// when this worker becomes the leader via runLeaderElection().
 }
 
@@ -565,10 +509,6 @@ func (a *App) startLeaderOnlyTasks() {
 	// Channel timeout check
 	a.wg.Add(1)
 	go a.runChannelTimeoutCheckWithContext(a.leaderCtx)
-
-	// Recurred workflow check
-	a.wg.Add(1)
-	go a.runRecurCheckWithContext(a.leaderCtx)
 
 	// Stale lock cleanup
 	a.wg.Add(1)
@@ -813,7 +753,7 @@ func (a *App) checkEventTimeouts() error {
 
 // registerWorkflowWithRunner registers a workflow with its runner function.
 // The runner bridges the generic workflow to the replay engine.
-func (a *App) registerWorkflowWithRunner(name string, workflow any, runner replay.WorkflowRunner, opts *workflowOptions) {
+func (a *App) registerWorkflowWithRunner(name string, workflow any, runner replay.WorkflowRunner) {
 	a.workflowsMu.Lock()
 	a.workflows[name] = workflow
 	a.workflowsMu.Unlock()
@@ -821,12 +761,6 @@ func (a *App) registerWorkflowWithRunner(name string, workflow any, runner repla
 	a.workflowRunnersMu.Lock()
 	a.workflowRunners[name] = runner
 	a.workflowRunnersMu.Unlock()
-
-	if opts != nil && opts.eventHandler {
-		a.eventHandlersMu.Lock()
-		a.eventHandlers[name] = name // Event type matches workflow name by default
-		a.eventHandlersMu.Unlock()
-	}
 }
 
 // startWorkflow starts a new workflow instance.
@@ -979,7 +913,7 @@ func (a *App) FindInstancesWithOptions(ctx context.Context, opts storage.ListIns
 	return result.Instances, nil
 }
 
-// cancelWorkflow cancels a running workflow and executes compensations.
+// cancelWorkflow cancels a running workflow.
 func (a *App) cancelWorkflow(ctx context.Context, instanceID, reason string) error {
 	if a.storage == nil {
 		return fmt.Errorf("storage not initialized")
@@ -1021,12 +955,6 @@ func (a *App) cancelWorkflow(ctx context.Context, instanceID, reason string) err
 
 	// Note: Event subscription cleanup is handled by CancelInstance
 
-	// Execute compensations in reverse order (LIFO)
-	if err := a.executeCompensations(ctx, instanceID); err != nil {
-		// Log compensation errors but continue with cancellation
-		slog.Error("error executing compensations", "instance_id", instanceID, "error", err)
-	}
-
 	// Mark the workflow as cancelled
 	if err := a.storage.CancelInstance(ctx, instanceID, reason); err != nil {
 		// Translate internal storage error to public API error
@@ -1047,315 +975,38 @@ func (a *App) cancelWorkflow(ctx context.Context, instanceID, reason string) err
 	return nil
 }
 
-// executeCompensations executes all pending compensations for a workflow in LIFO order.
-// Status is tracked via history events (CompensationExecuted, CompensationFailed).
-func (a *App) executeCompensations(ctx context.Context, instanceID string) error {
-	// Get pending compensations (ordered by created_at DESC - LIFO)
-	compensations, err := a.storage.GetCompensations(ctx, instanceID)
-	if err != nil {
-		return fmt.Errorf("failed to get compensations: %w", err)
-	}
+// DeliverEvent delivers an event to workflows waiting for eventType via WaitEvent.
+// It records the event in the existing envelope format and wakes waiting workflows.
+func (a *App) DeliverEvent(ctx context.Context, eventType, source string, data any) error {
+	eventID := uuid.New().String()
 
-	if len(compensations) == 0 {
-		return nil
-	}
-
-	// Get executed compensation IDs from history
-	executedIDs, err := a.getExecutedCompensationIDs(ctx, instanceID)
-	if err != nil {
-		return fmt.Errorf("failed to get executed compensations: %w", err)
-	}
-
-	var lastErr error
-	for _, comp := range compensations {
-		// Skip already executed compensations
-		if _, executed := executedIDs[comp.ID]; executed {
-			continue
-		}
-
-		// Get the compensation executor
-		executor, ok := GetCompensationExecutor(comp.ActivityName)
-		if !ok {
-			slog.Warn("compensation executor not found", "activity", comp.ActivityName)
-			_ = a.recordCompensationResult(ctx, instanceID, comp, false, "executor not found")
-			continue
-		}
-
-		// Execute the compensation
-		if err := executor(ctx, comp.Args); err != nil {
-			slog.Error("compensation failed", "activity", comp.ActivityName, "error", err)
-			_ = a.recordCompensationResult(ctx, instanceID, comp, false, err.Error())
-			lastErr = err
-			continue
-		}
-
-		// Record success in history
-		if err := a.recordCompensationResult(ctx, instanceID, comp, true, ""); err != nil {
-			slog.Error("failed to record compensation result", "error", err)
-		}
-	}
-
-	return lastErr
-}
-
-// getExecutedCompensationIDs returns a set of compensation IDs that have been executed.
-func (a *App) getExecutedCompensationIDs(ctx context.Context, instanceID string) (map[int64]bool, error) {
-	executed := make(map[int64]bool)
-
-	// Iterate through all history events to find compensation results
-	var afterID int64
-	const pageSize = 100
-	for {
-		events, hasMore, err := a.storage.GetHistoryPaginated(ctx, instanceID, afterID, pageSize)
-		if err != nil {
-			return nil, err
-		}
-		for _, event := range events {
-			if event.EventType == storage.HistoryCompensationExecuted ||
-				event.EventType == storage.HistoryCompensationFailed {
-				// Parse compensation_id from event data
-				var eventData map[string]any
-				if err := json.Unmarshal(event.EventData, &eventData); err == nil {
-					if id, ok := eventData["compensation_id"].(float64); ok {
-						executed[int64(id)] = true
-					}
-				}
-			}
-			afterID = event.ID
-		}
-		if !hasMore {
-			break
-		}
-	}
-	return executed, nil
-}
-
-// recordCompensationResult records a compensation execution result to history.
-func (a *App) recordCompensationResult(ctx context.Context, instanceID string, entry *storage.CompensationEntry, success bool, errorMsg string) error {
-	eventType := storage.HistoryCompensationExecuted
-	if !success {
-		eventType = storage.HistoryCompensationFailed
-	}
-
-	eventData := map[string]any{
-		"compensation_id": entry.ID,
-		"activity_id":     entry.ActivityID,
-		"activity_name":   entry.ActivityName,
-	}
-	if errorMsg != "" {
-		eventData["error"] = errorMsg
-	}
-
-	eventDataBytes, err := json.Marshal(eventData)
-	if err != nil {
-		return err
-	}
-
-	return a.storage.AppendHistory(ctx, &storage.HistoryEvent{
-		InstanceID: instanceID,
-		ActivityID: fmt.Sprintf("compensation:%d", entry.ID),
-		EventType:  eventType,
-		EventData:  eventDataBytes,
-		DataType:   "json",
-	})
-}
-
-// Handler returns an http.Handler for CloudEvents and health endpoints.
-// This allows integration with existing HTTP routers (gin, echo, chi, etc.).
-//
-// Example with chi:
-//
-//	r := chi.NewRouter()
-//	r.Mount("/selvedge", app.Handler())
-//	http.ListenAndServe(":8080", r)
-//
-// Example with standard http.ServeMux:
-//
-//	mux := http.NewServeMux()
-//	mux.Handle("/api/workflows/", app.Handler())
-//	http.ListenAndServe(":8080", mux)
-func (a *App) Handler() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", a.handleCloudEvent)
-	mux.HandleFunc("/health/live", a.handleLivenessProbe)
-	mux.HandleFunc("/health/ready", a.handleReadinessProbe)
-	mux.HandleFunc("/cancel/", a.handleCancel)
-	return mux
-}
-
-// ListenAndServe starts the HTTP server for CloudEvents.
-// For integration with existing HTTP routers, use Handler() instead.
-func (a *App) ListenAndServe(addr string) error {
-	return http.ListenAndServe(addr, a.Handler())
-}
-
-// CloudEvent represents a CloudEvents v1.0 event.
-type CloudEvent struct {
-	ID          string          `json:"id"`
-	Type        string          `json:"type"`
-	Source      string          `json:"source"`
-	SpecVersion string          `json:"specversion"`
-	Time        *time.Time      `json:"time,omitempty"`
-	DataSchema  string          `json:"dataschema,omitempty"`
-	Subject     string          `json:"subject,omitempty"`
-	Data        json.RawMessage `json:"data,omitempty"`
-	Extensions  map[string]any  `json:"-"` // CloudEvents extension attributes
-}
-
-// UnmarshalJSON implements custom JSON unmarshaling to capture extension attributes.
-func (e *CloudEvent) UnmarshalJSON(data []byte) error {
-	// First, unmarshal into a map to get all fields
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-
-	// Known standard fields
-	standardFields := map[string]bool{
-		"id": true, "type": true, "source": true, "specversion": true,
-		"time": true, "dataschema": true, "subject": true, "data": true,
-		"datacontenttype": true,
-	}
-
-	// Unmarshal standard fields
-	if v, ok := raw["id"]; ok {
-		_ = json.Unmarshal(v, &e.ID)
-	}
-	if v, ok := raw["type"]; ok {
-		_ = json.Unmarshal(v, &e.Type)
-	}
-	if v, ok := raw["source"]; ok {
-		_ = json.Unmarshal(v, &e.Source)
-	}
-	if v, ok := raw["specversion"]; ok {
-		_ = json.Unmarshal(v, &e.SpecVersion)
-	}
-	if v, ok := raw["time"]; ok {
-		_ = json.Unmarshal(v, &e.Time)
-	}
-	if v, ok := raw["dataschema"]; ok {
-		_ = json.Unmarshal(v, &e.DataSchema)
-	}
-	if v, ok := raw["subject"]; ok {
-		_ = json.Unmarshal(v, &e.Subject)
-	}
-	if v, ok := raw["data"]; ok {
-		e.Data = v
-	}
-
-	// Collect extension attributes (non-standard fields)
-	e.Extensions = make(map[string]any)
-	for key, val := range raw {
-		if !standardFields[key] {
-			var extVal any
-			if err := json.Unmarshal(val, &extVal); err == nil {
-				e.Extensions[key] = extVal
-			}
-		}
-	}
-
-	return nil
-}
-
-// handleCloudEvent handles incoming CloudEvents.
-func (a *App) handleCloudEvent(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Parse CloudEvent from request body
-	var event CloudEvent
-	if err := json.NewDecoder(r.Body).Decode(&event); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"error":      err.Error(),
-			"error_type": "ParseError",
-			"retryable":  "false",
-		})
-		return
-	}
-
-	// Validate required fields
-	if event.Type == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"error":      "missing required field: type",
-			"error_type": "ValidationError",
-			"retryable":  "false",
-		})
-		return
-	}
-
-	// Process the event asynchronously
-	// Use background context since HTTP request context is canceled after response
-	go a.processCloudEvent(context.Background(), &event)
-
-	// Return 202 Accepted (CloudEvents HTTP Protocol Binding)
-	w.WriteHeader(http.StatusAccepted)
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
-}
-
-// processCloudEvent processes an incoming CloudEvent.
-func (a *App) processCloudEvent(ctx context.Context, event *CloudEvent) {
 	// Call OnEventReceived hook
 	a.hooks.OnEventReceived(ctx, hooks.EventReceivedInfo{
-		EventType:   event.Type,
-		EventID:     event.ID,
-		EventSource: event.Source,
+		EventType:   eventType,
+		EventID:     eventID,
+		EventSource: source,
 		InstanceID:  "", // Not known at this point
 	})
 
-	// First, try to deliver to waiting workflows
-	if err := a.deliverEventToWaitingWorkflows(ctx, event); err != nil {
-		slog.Error("error delivering event to waiting workflows", "error", err)
-	}
-
-	// Then, check if this event type triggers a new workflow
-	a.eventHandlersMu.RLock()
-	workflowName, hasHandler := a.eventHandlers[event.Type]
-	a.eventHandlersMu.RUnlock()
-
-	if hasHandler {
-		// Start a new workflow with the event data as input
-		var inputData any
-		if event.Data != nil {
-			_ = json.Unmarshal(event.Data, &inputData)
-		}
-
-		_, err := a.startWorkflow(ctx, workflowName, inputData, &startOptions{})
-		if err != nil {
-			slog.Error("error starting workflow from event", "workflow", workflowName, "error", err)
-		}
-	}
+	return a.deliverEventToWaitingWorkflows(ctx, eventID, eventType, source, data)
 }
 
 // deliverEventToWaitingWorkflows delivers an event to workflows waiting for it.
-// Uses the unified channel system: event_type is used as the channel name.
-// Workflows waiting via WaitEvent (which internally uses Receive) are subscribed to the event_type channel.
-func (a *App) deliverEventToWaitingWorkflows(ctx context.Context, event *CloudEvent) error {
+// WaitEvent subscribes to the event type using the internal delivery primitive.
+func (a *App) deliverEventToWaitingWorkflows(ctx context.Context, eventID, eventType, source string, data any) error {
 	if a.storage == nil {
 		return nil
 	}
 
-	// Prepare CloudEvent data in ReceivedEvent format
+	// Prepare event data in ReceivedEvent format
 	eventData := map[string]any{
-		"id":          event.ID,
-		"type":        event.Type,
-		"source":      event.Source,
-		"specversion": event.SpecVersion,
+		"id":          eventID,
+		"type":        eventType,
+		"source":      source,
+		"specversion": "1.0",
 	}
-	if event.Time != nil {
-		eventData["time"] = event.Time
-	}
-	if event.Data != nil {
-		var data any
-		if err := json.Unmarshal(event.Data, &data); err == nil {
-			eventData["data"] = data
-		}
-	}
-	if len(event.Extensions) > 0 {
-		eventData["extensions"] = event.Extensions
+	if data != nil {
+		eventData["data"] = data
 	}
 
 	dataJSON, err := json.Marshal(eventData)
@@ -1363,19 +1014,9 @@ func (a *App) deliverEventToWaitingWorkflows(ctx context.Context, event *CloudEv
 		return fmt.Errorf("failed to serialize event data: %w", err)
 	}
 
-	// Check if a specific instance is targeted via selvedgeinstanceid extension
-	targetInstanceID := ""
-	if id, ok := event.Extensions["selvedgeinstanceid"].(string); ok && id != "" {
-		targetInstanceID = id
-	}
+	channelName := eventType
 
-	// Determine channel name: use dynamic channel name for targeted messages (Edda approach)
-	channelName := event.Type
-	if targetInstanceID != "" {
-		channelName = fmt.Sprintf("%s:%s", event.Type, targetInstanceID)
-	}
-
-	// Publish to channel using event.Type as channel name
+	// Publish to channel using eventType as channel name
 	messageID, err := a.storage.PublishToChannel(ctx, channelName, dataJSON, nil)
 	if err != nil {
 		return fmt.Errorf("failed to publish event to channel: %w", err)
@@ -1389,8 +1030,6 @@ func (a *App) deliverEventToWaitingWorkflows(ctx context.Context, event *CloudEv
 }
 
 // wakeWaitingChannelSubscribers delivers a message to waiting channel subscribers.
-// This is the App-level version of wakeWaitingSubscribers from channels.go.
-// Targeted delivery is handled via dynamic channel names (e.g., "channel:instance_id").
 func (a *App) wakeWaitingChannelSubscribers(
 	ctx context.Context,
 	channelName string,
@@ -1421,7 +1060,7 @@ func (a *App) wakeWaitingChannelSubscribers(
 
 	for _, sub := range waitingSubs {
 		// Deliver using Lock-First pattern
-		result, err := a.storage.DeliverChannelMessageWithLock(
+		_, err := a.storage.DeliverChannelMessageWithLock(
 			ctx,
 			sub.InstanceID,
 			channelName,
@@ -1433,64 +1072,7 @@ func (a *App) wakeWaitingChannelSubscribers(
 			slog.Error("error delivering message", "instance_id", sub.InstanceID, "error", err)
 			continue
 		}
-
-		// For competing mode, stop after first successful delivery
-		if result != nil && sub.Mode == storage.ChannelModeCompeting {
-			break
-		}
 	}
-}
-
-// handleLivenessProbe handles the liveness probe.
-func (a *App) handleLivenessProbe(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte("OK"))
-}
-
-// handleReadinessProbe handles the readiness probe.
-func (a *App) handleReadinessProbe(w http.ResponseWriter, r *http.Request) {
-	a.mu.Lock()
-	ready := a.running && a.initialized
-	a.mu.Unlock()
-
-	if ready {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("OK"))
-	} else {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_, _ = w.Write([]byte("Not Ready"))
-	}
-}
-
-// handleCancel handles workflow cancellation requests.
-func (a *App) handleCancel(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Extract instance ID from path
-	instanceID := r.URL.Path[len("/cancel/"):]
-	if instanceID == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "missing instance ID"})
-		return
-	}
-
-	// Parse reason from body
-	var body struct {
-		Reason string `json:"reason"`
-	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
-
-	if err := a.cancelWorkflow(r.Context(), instanceID, body.Reason); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "cancelled"})
 }
 
 // Storage returns the storage instance for advanced usage.
@@ -1635,97 +1217,6 @@ func (a *App) handleChannelTimeout(sub *storage.ChannelSubscription) error {
 	_ = a.storage.ReleaseLock(a.ctx, sub.InstanceID, a.config.workerID)
 
 	return err
-}
-
-// ========================================
-// Recur Handling
-// ========================================
-
-// runRecurCheckWithContext periodically checks for recurred workflows with a cancellable context.
-func (a *App) runRecurCheckWithContext(ctx context.Context) {
-	defer a.wg.Done()
-
-	ticker := time.NewTicker(addJitter(a.config.recurCheckInterval))
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if err := a.checkRecurredWorkflows(); err != nil {
-				slog.Error("error checking recurred workflows", "error", err)
-			}
-		}
-	}
-}
-
-// checkRecurredWorkflows restarts workflows that have been marked as recurred.
-func (a *App) checkRecurredWorkflows() error {
-	if a.storage == nil {
-		return nil
-	}
-
-	// Find recurred workflows
-	opts := storage.ListInstancesOptions{
-		StatusFilter: storage.StatusRecurred,
-		Limit:        50,
-	}
-	result, err := a.storage.ListInstances(a.ctx, opts)
-	if err != nil {
-		return fmt.Errorf("failed to find recurred workflows: %w", err)
-	}
-
-	var wg sync.WaitGroup
-	for _, instance := range result.Instances {
-		if a.ctx.Err() != nil {
-			break
-		}
-
-		if err := a.resumptionSem.Acquire(a.ctx, 1); err != nil {
-			break
-		}
-
-		wg.Add(1)
-		go func(instance *storage.WorkflowInstance) {
-			defer wg.Done()
-			defer a.resumptionSem.Release(1)
-
-			if err := a.handleRecurredWorkflow(instance); err != nil {
-				slog.Error("error handling recurred workflow", "instance_id", instance.InstanceID, "error", err)
-			}
-		}(instance)
-	}
-
-	wg.Wait()
-	return nil
-}
-
-// handleRecurredWorkflow restarts a recurred workflow.
-func (a *App) handleRecurredWorkflow(instance *storage.WorkflowInstance) error {
-	// Try to acquire lock
-	acquired, err := a.storage.TryAcquireLock(
-		a.ctx,
-		instance.InstanceID,
-		a.config.workerID,
-		int(a.config.staleLockTimeout.Seconds()),
-	)
-	if err != nil {
-		return err
-	}
-	if !acquired {
-		return nil
-	}
-
-	// Update status back to running
-	if err := a.storage.UpdateInstanceStatus(a.ctx, instance.InstanceID, storage.StatusRunning, ""); err != nil {
-		_ = a.storage.ReleaseLock(a.ctx, instance.InstanceID, a.config.workerID)
-		return fmt.Errorf("failed to update status: %w", err)
-	}
-
-	// Resume the workflow (it will replay from the recur event and continue)
-	_ = a.storage.ReleaseLock(a.ctx, instance.InstanceID, a.config.workerID)
-	return a.resumeWorkflow(a.ctx, instance.InstanceID)
 }
 
 // ========================================

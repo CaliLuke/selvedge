@@ -48,15 +48,6 @@ linters:
           - errcheck
           - unparam
           - gocritic
-      # Exclude some linters from running on examples
-      - path: examples/
-        linters:
-          - errcheck
-          - unparam
-      # Allow fmt.Print in examples and cmd
-      - path: (examples/|cmd/)
-        linters:
-          - forbidigo
       # Exclude "err" shadows declaration
       - linters:
           - govet

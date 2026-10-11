@@ -48,23 +48,11 @@ type Storage interface {
 	// Timer Subscription Operations
 	TimerSubscriptionManager
 
-	// Outbox Operations
-	OutboxManager
-
-	// Compensation Operations
-	CompensationManager
-
 	// Channel Operations
 	ChannelManager
 
-	// Group Operations
-	GroupManager
-
 	// System Lock Operations
 	SystemLockManager
-
-	// History Archive Operations
-	HistoryArchiveManager
 }
 
 // TransactionManager handles transaction operations.
@@ -200,38 +188,6 @@ type TimerSubscriptionManager interface {
 	RemoveTimerSubscription(ctx context.Context, instanceID, timerID string) error
 }
 
-// OutboxManager handles the transactional outbox.
-type OutboxManager interface {
-	// AddOutboxEvent adds an event to the outbox.
-	AddOutboxEvent(ctx context.Context, event *OutboxEvent) error
-
-	// GetPendingOutboxEvents retrieves pending events for sending.
-	// Uses SELECT FOR UPDATE SKIP LOCKED for concurrent workers.
-	GetPendingOutboxEvents(ctx context.Context, limit int) ([]*OutboxEvent, error)
-
-	// MarkOutboxEventSent marks an event as successfully sent.
-	MarkOutboxEventSent(ctx context.Context, eventID string) error
-
-	// MarkOutboxEventFailed marks an event as failed to send.
-	MarkOutboxEventFailed(ctx context.Context, eventID string) error
-
-	// IncrementOutboxAttempts increments the attempt count for an event.
-	IncrementOutboxAttempts(ctx context.Context, eventID string) error
-
-	// CleanupOldOutboxEvents removes old sent events.
-	CleanupOldOutboxEvents(ctx context.Context, olderThan time.Duration) error
-}
-
-// CompensationManager handles saga compensation.
-type CompensationManager interface {
-	// AddCompensation registers a compensation action.
-	AddCompensation(ctx context.Context, entry *CompensationEntry) error
-
-	// GetCompensations retrieves compensation entries in LIFO order (by created_at DESC).
-	// Status tracking is done via history events (CompensationExecuted, CompensationFailed).
-	GetCompensations(ctx context.Context, instanceID string) ([]*CompensationEntry, error)
-}
-
 // ========================================
 // Channel Manager
 // ========================================
@@ -239,14 +195,10 @@ type CompensationManager interface {
 // ChannelManager handles channel-based messaging operations.
 type ChannelManager interface {
 	// PublishToChannel publishes a message to a channel.
-	// For direct messages, use dynamic channel names (e.g., "channel:instance_id").
 	PublishToChannel(ctx context.Context, channelName string, dataJSON []byte, metadata []byte) (int64, error)
 
 	// SubscribeToChannel subscribes an instance to a channel.
 	SubscribeToChannel(ctx context.Context, instanceID, channelName string, mode ChannelMode) error
-
-	// UnsubscribeFromChannel unsubscribes an instance from a channel.
-	UnsubscribeFromChannel(ctx context.Context, instanceID, channelName string) error
 
 	// GetChannelSubscription retrieves a subscription for an instance and channel.
 	GetChannelSubscription(ctx context.Context, instanceID, channelName string) (*ChannelSubscription, error)
@@ -263,34 +215,18 @@ type ChannelManager interface {
 		timeoutAt *time.Time,
 	) error
 
-	// GetPendingChannelMessages retrieves pending messages for a channel after a given ID.
-	GetPendingChannelMessages(ctx context.Context, channelName string, afterID int64, limit int) ([]*ChannelMessage, error)
-
 	// GetPendingChannelMessagesForInstance gets pending messages for a specific subscriber.
 	// For broadcast mode: Returns messages with id > cursor (messages not yet seen by this instance)
-	// For competing mode: Returns unclaimed messages (not yet claimed by any instance)
 	GetPendingChannelMessagesForInstance(ctx context.Context, instanceID, channelName string) ([]*ChannelMessage, error)
-
-	// ClaimChannelMessage claims a message for competing mode (returns false if already claimed).
-	ClaimChannelMessage(ctx context.Context, messageID int64, instanceID string) (bool, error)
-
-	// DeleteChannelMessage deletes a message from the channel.
-	DeleteChannelMessage(ctx context.Context, messageID int64) error
 
 	// UpdateDeliveryCursor updates the delivery cursor for broadcast mode.
 	UpdateDeliveryCursor(ctx context.Context, instanceID, channelName string, lastMessageID int64) error
-
-	// GetDeliveryCursor gets the current delivery cursor for an instance and channel.
-	GetDeliveryCursor(ctx context.Context, instanceID, channelName string) (int64, error)
 
 	// GetChannelSubscribersWaiting finds subscribers waiting for messages on a channel.
 	GetChannelSubscribersWaiting(ctx context.Context, channelName string) ([]*ChannelSubscription, error)
 
 	// ClearChannelWaitingState clears the waiting state for an instance's channel subscription.
 	ClearChannelWaitingState(ctx context.Context, instanceID, channelName string) error
-
-	// DeliverChannelMessage delivers a message to a waiting subscriber (records in history).
-	DeliverChannelMessage(ctx context.Context, instanceID string, message *ChannelMessage) error
 
 	// DeliverChannelMessageWithLock delivers a message using Lock-First pattern.
 	// This is used for load balancing in multi-worker environments:
@@ -318,25 +254,6 @@ type ChannelManager interface {
 }
 
 // ========================================
-// Group Manager
-// ========================================
-
-// GroupManager handles Erlang pg-style group membership operations.
-type GroupManager interface {
-	// JoinGroup adds an instance to a group.
-	JoinGroup(ctx context.Context, instanceID, groupName string) error
-
-	// LeaveGroup removes an instance from a group.
-	LeaveGroup(ctx context.Context, instanceID, groupName string) error
-
-	// GetGroupMembers retrieves all instance IDs in a group.
-	GetGroupMembers(ctx context.Context, groupName string) ([]string, error)
-
-	// LeaveAllGroups removes an instance from all groups.
-	LeaveAllGroups(ctx context.Context, instanceID string) error
-}
-
-// ========================================
 // System Lock Manager
 // ========================================
 
@@ -351,21 +268,4 @@ type SystemLockManager interface {
 
 	// CleanupExpiredSystemLocks removes expired system locks.
 	CleanupExpiredSystemLocks(ctx context.Context) error
-}
-
-// ========================================
-// History Archive Manager
-// ========================================
-
-// HistoryArchiveManager handles history archival for the recur pattern.
-type HistoryArchiveManager interface {
-	// ArchiveHistory moves all history events for an instance to the archive table.
-	ArchiveHistory(ctx context.Context, instanceID string) error
-
-	// GetArchivedHistory retrieves archived history events for an instance.
-	GetArchivedHistory(ctx context.Context, instanceID string) ([]*ArchivedHistoryEvent, error)
-
-	// CleanupInstanceSubscriptions removes all subscriptions for an instance.
-	// This is used during recur to clean up stale subscriptions.
-	CleanupInstanceSubscriptions(ctx context.Context, instanceID string) error
 }

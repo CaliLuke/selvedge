@@ -16,10 +16,8 @@ type SuspendType int
 const (
 	// SuspendForTimer indicates the workflow is waiting for a timer to expire.
 	SuspendForTimer SuspendType = iota
-	// SuspendForChannelMessage indicates the workflow is waiting for a channel message (via Receive or WaitEvent).
+	// SuspendForChannelMessage indicates the workflow is waiting for a channel message (via WaitEvent).
 	SuspendForChannelMessage
-	// SuspendForRecur indicates the workflow is recursing with new input.
-	SuspendForRecur
 )
 
 func (t SuspendType) String() string {
@@ -28,8 +26,6 @@ func (t SuspendType) String() string {
 		return "timer"
 	case SuspendForChannelMessage:
 		return "channel_message"
-	case SuspendForRecur:
-		return "recur"
 	default:
 		return "unknown"
 	}
@@ -62,8 +58,6 @@ type SuspendSignal struct {
 	Timeout    *time.Duration // Optional timeout
 	ActivityID string         // Activity ID for replay matching (used for both channel and timer)
 
-	// For SuspendForRecur
-	NewInput any // New input for the next iteration
 }
 
 func (s *SuspendSignal) Error() string {
@@ -75,8 +69,6 @@ func (s *SuspendSignal) Error() string {
 			return fmt.Sprintf("workflow suspended: waiting for channel message on %q (timeout: %v)", s.Channel, *s.Timeout)
 		}
 		return fmt.Sprintf("workflow suspended: waiting for channel message on %q", s.Channel)
-	case SuspendForRecur:
-		return fmt.Sprintf("workflow suspended: recurring instance %s", s.InstanceID)
 	default:
 		return "workflow suspended"
 	}
@@ -109,7 +101,7 @@ func NewTimerSuspend(instanceID, timerID, activityID string, expiresAt time.Time
 	}
 }
 
-// NewChannelMessageSuspend creates a SuspendSignal for channel message waiting (via Receive or WaitEvent).
+// NewChannelMessageSuspend creates a SuspendSignal for channel message waiting (via WaitEvent).
 func NewChannelMessageSuspend(instanceID, channel, activityID string, timeout *time.Duration) *SuspendSignal {
 	return &SuspendSignal{
 		Type:       SuspendForChannelMessage,
@@ -117,14 +109,5 @@ func NewChannelMessageSuspend(instanceID, channel, activityID string, timeout *t
 		Channel:    channel,
 		ActivityID: activityID,
 		Timeout:    timeout,
-	}
-}
-
-// NewRecurSuspend creates a SuspendSignal for workflow recursion.
-func NewRecurSuspend(instanceID string, newInput any) *SuspendSignal {
-	return &SuspendSignal{
-		Type:       SuspendForRecur,
-		InstanceID: instanceID,
-		NewInput:   newInput,
 	}
 }

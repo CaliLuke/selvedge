@@ -178,49 +178,6 @@ func TestSQLiteStorage(t *testing.T) {
 		}
 	})
 
-	t.Run("Outbox", func(t *testing.T) {
-		event := &OutboxEvent{
-			EventID:     "event-1",
-			EventType:   "order.created",
-			EventSource: "/orders",
-			EventData:   []byte(`{"order_id":"123"}`),
-			DataType:    "json",
-			ContentType: "application/json",
-			Status:      "pending",
-		}
-		err := storage.AddOutboxEvent(ctx, event)
-		if err != nil {
-			t.Fatalf("failed to add outbox event: %v", err)
-		}
-
-		events, err := storage.GetPendingOutboxEvents(ctx, 10)
-		if err != nil {
-			t.Fatalf("failed to get pending outbox events: %v", err)
-		}
-
-		if len(events) != 1 {
-			t.Fatalf("expected 1 pending event, got %d", len(events))
-		}
-
-		if events[0].EventID != "event-1" {
-			t.Errorf("expected event_id 'event-1', got '%s'", events[0].EventID)
-		}
-
-		err = storage.MarkOutboxEventSent(ctx, "event-1")
-		if err != nil {
-			t.Fatalf("failed to mark event sent: %v", err)
-		}
-
-		events, err = storage.GetPendingOutboxEvents(ctx, 10)
-		if err != nil {
-			t.Fatalf("failed to get pending outbox events: %v", err)
-		}
-
-		if len(events) != 0 {
-			t.Errorf("expected 0 pending events after marking sent, got %d", len(events))
-		}
-	})
-
 	t.Run("GetNonExistentInstance", func(t *testing.T) {
 		got, err := storage.GetInstance(ctx, "non-existent")
 		if err != nil {
@@ -414,7 +371,8 @@ func TestSQLiteStorage(t *testing.T) {
 		}
 
 		// 7. Verify cursor was updated
-		cursor, err := storage.GetDeliveryCursor(ctx, instanceID, channelName)
+		var cursor int64
+		err = storage.db.QueryRowContext(ctx, "SELECT last_delivered_id FROM channel_delivery_cursors WHERE instance_id = ? AND channel = ?", instanceID, channelName).Scan(&cursor)
 		if err != nil {
 			t.Fatalf("failed to get delivery cursor: %v", err)
 		}

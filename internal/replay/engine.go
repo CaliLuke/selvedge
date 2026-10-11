@@ -20,10 +20,9 @@ type CachedResult struct {
 
 // Engine handles workflow execution with deterministic replay.
 type Engine struct {
-	storage            storage.Storage
-	hooks              hooks.WorkflowHooks
-	workerID           string
-	compensationRunner CompensationRunner
+	storage  storage.Storage
+	hooks    hooks.WorkflowHooks
+	workerID string
 }
 
 // NewEngine creates a new replay engine.
@@ -305,16 +304,6 @@ func (e *Engine) executeWorkflow(ctx context.Context, instanceID string, runner 
 			return e.handleSuspendSignal(ctx, instanceID, sig)
 		}
 
-		// Regular error - run compensations before marking as failed
-		if compErr := e.executeCompensations(ctx, instanceID); compErr != nil {
-			// Log compensation error but continue
-			e.hooks.OnWorkflowFailed(ctx, hooks.WorkflowFailedInfo{
-				InstanceID: instanceID,
-				Error:      fmt.Errorf("workflow failed: %w; compensation also failed: %v", err, compErr),
-				Duration:   duration,
-			})
-		}
-
 		// Record workflow failure in history
 		eventData, _ := json.Marshal(map[string]any{"error": err.Error()})
 		_ = e.storage.AppendHistory(ctx, &storage.HistoryEvent{
@@ -378,8 +367,6 @@ func (e *Engine) handleSuspendSignal(ctx context.Context, instanceID string, sig
 		return e.handleTimerSuspend(ctx, instanceID, sig)
 	case SuspendForChannelMessage:
 		return e.handleChannelMessageSuspend(ctx, instanceID, sig)
-	case SuspendForRecur:
-		return e.handleRecurSuspend(ctx, instanceID, sig)
 	default:
 		return fmt.Errorf("unknown suspend type: %v", sig.Type)
 	}
@@ -407,7 +394,7 @@ func (e *Engine) handleTimerSuspend(ctx context.Context, instanceID string, sig 
 	return nil
 }
 
-// handleChannelMessageSuspend handles the channel message suspension case (via Receive or WaitEvent).
+// handleChannelMessageSuspend handles the channel message suspension case (via WaitEvent).
 func (e *Engine) handleChannelMessageSuspend(ctx context.Context, instanceID string, sig *SuspendSignal) error {
 	// Register channel receive and set waiting=TRUE
 	var timeoutAt *time.Time
@@ -417,49 +404,6 @@ func (e *Engine) handleChannelMessageSuspend(ctx context.Context, instanceID str
 	}
 	if err := e.storage.RegisterChannelReceiveAndReleaseLock(ctx, instanceID, sig.Channel, e.workerID, sig.ActivityID, timeoutAt); err != nil {
 		return fmt.Errorf("failed to register channel receive: %w", err)
-	}
-
-	return nil
-}
-
-// handleRecurSuspend handles the Recur case (Erlang-style tail recursion).
-func (e *Engine) handleRecurSuspend(ctx context.Context, instanceID string, sig *SuspendSignal) error {
-	// 1. Archive current history
-	if err := e.storage.ArchiveHistory(ctx, instanceID); err != nil {
-		return fmt.Errorf("failed to archive history: %w", err)
-	}
-
-	// 2. Clean up all subscriptions
-	if err := e.storage.CleanupInstanceSubscriptions(ctx, instanceID); err != nil {
-		return fmt.Errorf("failed to cleanup subscriptions: %w", err)
-	}
-
-	// 3. Leave all groups
-	if err := e.storage.LeaveAllGroups(ctx, instanceID); err != nil {
-		return fmt.Errorf("failed to leave groups: %w", err)
-	}
-
-	// 4. Serialize new input
-	inputData, err := json.Marshal(sig.NewInput)
-	if err != nil {
-		return fmt.Errorf("failed to serialize recur input: %w", err)
-	}
-
-	// 5. Record the recur event in history (for the new iteration)
-	recurEvent := &storage.HistoryEvent{
-		InstanceID: instanceID,
-		ActivityID: "recur",
-		EventType:  storage.HistoryActivityCompleted,
-		EventData:  inputData,
-		DataType:   "json",
-	}
-	if err := e.storage.AppendHistory(ctx, recurEvent); err != nil {
-		return fmt.Errorf("failed to record recur event: %w", err)
-	}
-
-	// 6. Update status to recurred (will be picked up and restarted)
-	if err := e.storage.UpdateInstanceStatus(ctx, instanceID, storage.StatusRecurred, ""); err != nil {
-		return fmt.Errorf("failed to update status: %w", err)
 	}
 
 	return nil
@@ -493,123 +437,4 @@ func (e *Engine) RecordActivityResult(
 	}
 
 	return e.storage.AppendHistory(ctx, event)
-}
-
-// CompensationRunner is a function that executes a compensation.
-// It receives the function name and JSON-encoded argument.
-type CompensationRunner func(ctx context.Context, funcName string, arg []byte) error
-
-// SetCompensationRunner sets the compensation runner for the engine.
-func (e *Engine) SetCompensationRunner(runner CompensationRunner) {
-	e.compensationRunner = runner
-}
-
-// executeCompensations runs all pending compensations for a workflow in LIFO order.
-// Status is tracked via history events (CompensationExecuted, CompensationFailed).
-func (e *Engine) executeCompensations(ctx context.Context, instanceID string) error {
-	entries, err := e.storage.GetCompensations(ctx, instanceID)
-	if err != nil {
-		return fmt.Errorf("failed to get compensations: %w", err)
-	}
-
-	if len(entries) == 0 {
-		return nil
-	}
-
-	if e.compensationRunner == nil {
-		// No runner configured, skip compensation
-		return nil
-	}
-
-	// Get executed compensation IDs from history
-	executedIDs, err := e.getExecutedCompensationIDs(ctx, instanceID)
-	if err != nil {
-		return fmt.Errorf("failed to get executed compensations: %w", err)
-	}
-
-	var firstErr error
-	for _, entry := range entries {
-		// Skip already executed compensations
-		if _, executed := executedIDs[entry.ID]; executed {
-			continue
-		}
-
-		execErr := e.compensationRunner(ctx, entry.ActivityName, entry.Args)
-		if execErr != nil {
-			// Record failure in history
-			_ = e.recordCompensationResult(ctx, instanceID, entry, false, execErr.Error())
-			if firstErr == nil {
-				firstErr = fmt.Errorf("compensation %s failed: %w", entry.ActivityID, execErr)
-			}
-			// Continue with remaining compensations
-			continue
-		}
-
-		// Record success in history
-		_ = e.recordCompensationResult(ctx, instanceID, entry, true, "")
-	}
-
-	return firstErr
-}
-
-// getExecutedCompensationIDs returns a set of compensation IDs that have been executed.
-func (e *Engine) getExecutedCompensationIDs(ctx context.Context, instanceID string) (map[int64]bool, error) {
-	executed := make(map[int64]bool)
-
-	// Iterate through all history events to find compensation results
-	var afterID int64
-	const pageSize = 100
-	for {
-		events, hasMore, err := e.storage.GetHistoryPaginated(ctx, instanceID, afterID, pageSize)
-		if err != nil {
-			return nil, err
-		}
-		for _, event := range events {
-			if event.EventType == storage.HistoryCompensationExecuted ||
-				event.EventType == storage.HistoryCompensationFailed {
-				// Parse compensation_id from event data
-				var eventData map[string]any
-				if err := json.Unmarshal(event.EventData, &eventData); err == nil {
-					if id, ok := eventData["compensation_id"].(float64); ok {
-						executed[int64(id)] = true
-					}
-				}
-			}
-			afterID = event.ID
-		}
-		if !hasMore {
-			break
-		}
-	}
-	return executed, nil
-}
-
-// recordCompensationResult records a compensation execution result to history.
-func (e *Engine) recordCompensationResult(ctx context.Context, instanceID string, entry *storage.CompensationEntry, success bool, errorMsg string) error {
-	eventType := storage.HistoryCompensationExecuted
-	if !success {
-		eventType = storage.HistoryCompensationFailed
-	}
-
-	eventData := map[string]any{
-		"compensation_id": entry.ID,
-		"activity_id":     entry.ActivityID,
-		"activity_name":   entry.ActivityName,
-	}
-	if errorMsg != "" {
-		eventData["error"] = errorMsg
-	}
-
-	eventDataBytes, err := json.Marshal(eventData)
-	if err != nil {
-		return err
-	}
-
-	return e.storage.AppendHistory(ctx, &storage.HistoryEvent{
-		InstanceID: instanceID,
-		ActivityID: fmt.Sprintf("compensation:%d", entry.ID),
-		EventType:  eventType,
-		EventData:  eventDataBytes,
-		DataType:   "json",
-	})
 }

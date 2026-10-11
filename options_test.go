@@ -20,10 +20,6 @@ func TestDefaultConfig(t *testing.T) {
 	assert.Empty(t, cfg.workerID) // UUID generated at runtime
 
 	// Feature defaults
-	assert.False(t, cfg.outboxEnabled)
-	assert.Equal(t, 1*time.Second, cfg.outboxInterval)
-	assert.Equal(t, 100, cfg.outboxBatchSize)
-	assert.Empty(t, cfg.brokerURL)
 
 	// Background task interval defaults
 	assert.Equal(t, 60*time.Second, cfg.staleLockInterval)
@@ -31,7 +27,6 @@ func TestDefaultConfig(t *testing.T) {
 	assert.Equal(t, 10*time.Second, cfg.timerCheckInterval)
 	assert.Equal(t, 30*time.Second, cfg.eventTimeoutInterval)
 	assert.Equal(t, 5*time.Second, cfg.messageCheckInterval)
-	assert.Equal(t, 5*time.Second, cfg.recurCheckInterval)
 	assert.Equal(t, 300*time.Second, cfg.channelCleanupInterval)
 	assert.Equal(t, 24*time.Hour, cfg.channelMessageRetention)
 	assert.Equal(t, 1*time.Second, cfg.workflowResumptionInterval)
@@ -68,10 +63,6 @@ func TestWithDatabase(t *testing.T) {
 		{
 			name: "postgres",
 			url:  "postgres://user:pass@localhost:5432/dbname",
-		},
-		{
-			name: "mysql",
-			url:  "mysql://user:pass@localhost:3306/dbname",
 		},
 		{
 			name: "empty string",
@@ -149,122 +140,6 @@ func TestWithWorkerID(t *testing.T) {
 			cfg := defaultConfig()
 			WithWorkerID(tt.workerID)(cfg)
 			assert.Equal(t, tt.workerID, cfg.workerID)
-		})
-	}
-}
-
-func TestWithOutbox(t *testing.T) {
-	tests := []struct {
-		name    string
-		enabled bool
-	}{
-		{
-			name:    "enabled",
-			enabled: true,
-		},
-		{
-			name:    "disabled",
-			enabled: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := defaultConfig()
-			WithOutbox(tt.enabled)(cfg)
-			assert.Equal(t, tt.enabled, cfg.outboxEnabled)
-		})
-	}
-}
-
-func TestWithOutboxInterval(t *testing.T) {
-	tests := []struct {
-		name     string
-		interval time.Duration
-	}{
-		{
-			name:     "1 second",
-			interval: 1 * time.Second,
-		},
-		{
-			name:     "500 milliseconds",
-			interval: 500 * time.Millisecond,
-		},
-		{
-			name:     "5 seconds",
-			interval: 5 * time.Second,
-		},
-		{
-			name:     "zero duration",
-			interval: 0,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := defaultConfig()
-			WithOutboxInterval(tt.interval)(cfg)
-			assert.Equal(t, tt.interval, cfg.outboxInterval)
-		})
-	}
-}
-
-func TestWithOutboxBatchSize(t *testing.T) {
-	tests := []struct {
-		name string
-		size int
-	}{
-		{
-			name: "default size",
-			size: 100,
-		},
-		{
-			name: "small batch",
-			size: 10,
-		},
-		{
-			name: "large batch",
-			size: 1000,
-		},
-		{
-			name: "zero",
-			size: 0,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := defaultConfig()
-			WithOutboxBatchSize(tt.size)(cfg)
-			assert.Equal(t, tt.size, cfg.outboxBatchSize)
-		})
-	}
-}
-
-func TestWithBrokerURL(t *testing.T) {
-	tests := []struct {
-		name string
-		url  string
-	}{
-		{
-			name: "knative broker",
-			url:  "http://broker-ingress.knative-eventing.svc.cluster.local/default/default",
-		},
-		{
-			name: "local broker",
-			url:  "http://localhost:8080/events",
-		},
-		{
-			name: "empty string",
-			url:  "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := defaultConfig()
-			WithBrokerURL(tt.url)(cfg)
-			assert.Equal(t, tt.url, cfg.brokerURL)
 		})
 	}
 }
@@ -405,34 +280,6 @@ func TestWithMessageCheckInterval(t *testing.T) {
 			cfg := defaultConfig()
 			WithMessageCheckInterval(tt.interval)(cfg)
 			assert.Equal(t, tt.interval, cfg.messageCheckInterval)
-		})
-	}
-}
-
-func TestWithRecurCheckInterval(t *testing.T) {
-	tests := []struct {
-		name     string
-		interval time.Duration
-	}{
-		{
-			name:     "1 second",
-			interval: 1 * time.Second,
-		},
-		{
-			name:     "5 seconds",
-			interval: 5 * time.Second,
-		},
-		{
-			name:     "10 seconds",
-			interval: 10 * time.Second,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := defaultConfig()
-			WithRecurCheckInterval(tt.interval)(cfg)
-			assert.Equal(t, tt.interval, cfg.recurCheckInterval)
 		})
 	}
 }
@@ -725,21 +572,6 @@ func TestOptionChaining(t *testing.T) {
 			},
 		},
 		{
-			name: "outbox configuration",
-			options: []Option{
-				WithOutbox(true),
-				WithBrokerURL("http://broker:8080"),
-				WithOutboxInterval(2 * time.Second),
-				WithOutboxBatchSize(50),
-			},
-			check: func(t *testing.T, cfg *appConfig) {
-				assert.True(t, cfg.outboxEnabled)
-				assert.Equal(t, "http://broker:8080", cfg.brokerURL)
-				assert.Equal(t, 2*time.Second, cfg.outboxInterval)
-				assert.Equal(t, 50, cfg.outboxBatchSize)
-			},
-		},
-		{
 			name: "timing configuration",
 			options: []Option{
 				WithStaleLockInterval(2 * time.Minute),
@@ -770,21 +602,15 @@ func TestOptionChaining(t *testing.T) {
 		{
 			name: "full configuration",
 			options: []Option{
-				WithDatabase("mysql://localhost/db"),
-				WithAutoMigrate(false), // deprecated, but kept for backwards compatibility
+				WithAutoMigrate(false),
 				WithServiceName("test-service"),
 				WithWorkerID("worker-test"),
-				WithOutbox(true),
-				WithBrokerURL("http://broker"),
 				WithShutdownTimeout(1 * time.Minute),
 			},
 			check: func(t *testing.T, cfg *appConfig) {
-				assert.Equal(t, "mysql://localhost/db", cfg.databaseURL)
-				// autoMigrate is now a no-op, so we don't test it
+				assert.False(t, cfg.autoMigrate)
 				assert.Equal(t, "test-service", cfg.serviceName)
 				assert.Equal(t, "worker-test", cfg.workerID)
-				assert.True(t, cfg.outboxEnabled)
-				assert.Equal(t, "http://broker", cfg.brokerURL)
 				assert.Equal(t, 1*time.Minute, cfg.shutdownTimeout)
 			},
 		},

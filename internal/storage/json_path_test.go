@@ -84,26 +84,6 @@ func TestPostgresDriver_JSONExtract(t *testing.T) {
 	}
 }
 
-func TestMySQLDriver_JSONExtract(t *testing.T) {
-	driver := &MySQLDriver{}
-
-	tests := []struct {
-		column   string
-		path     string
-		expected string
-	}{
-		{"input_data", "name", "JSON_UNQUOTE(JSON_EXTRACT(input_data, '$.name'))"},
-		{"input_data", "order.customer.id", "JSON_UNQUOTE(JSON_EXTRACT(input_data, '$.order.customer.id'))"},
-	}
-
-	for _, tt := range tests {
-		result := driver.JSONExtract(tt.column, tt.path)
-		if result != tt.expected {
-			t.Errorf("JSONExtract(%q, %q) = %q, want %q", tt.column, tt.path, result, tt.expected)
-		}
-	}
-}
-
 func TestSQLiteDriver_JSONCompare(t *testing.T) {
 	driver := &SQLiteDriver{}
 	extractExpr := "json_extract(input_data, '$.name')"

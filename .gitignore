@@ -53,11 +53,6 @@ coverage.xml
 # SQLite temporary directories
 sqlite:/
 
-# Hugo output
-website/public/
-website/resources/
-website/.hugo_build.lock
-
 # MkDocs (legacy)
 site/
 
@@ -74,9 +69,6 @@ local-docs/
 
 # Ad-hoc test scripts (root directory only - tests/ is tracked)
 /test_*.sh
-
-# Built binaries (root directory only)
-/crosstest
 
 # Environment files
 .env

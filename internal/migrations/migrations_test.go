@@ -22,7 +22,6 @@ func TestDetectDBType(t *testing.T) {
 		{"sqlite with sqlite:// prefix", "sqlite://test.db", "sqlite", false},
 		{"postgres with postgres://", "postgres://user:pass@localhost/db", "postgresql", false},
 		{"postgres with postgresql://", "postgresql://user:pass@localhost/db", "postgresql", false},
-		{"mysql with mysql://", "mysql://user:pass@localhost/db", "mysql", false},
 		{"unknown database", "oracle://user:pass@localhost/db", "", true},
 	}
 

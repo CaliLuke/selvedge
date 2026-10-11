@@ -2,14 +2,10 @@ package selvedge
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"log/slog"
-	"sync"
 	"time"
 
 	"github.com/CaliLuke/selvedge/hooks"
-	"github.com/CaliLuke/selvedge/internal/storage"
 	"github.com/CaliLuke/selvedge/retry"
 )
 
@@ -21,10 +17,9 @@ type Activity[I, O any] struct {
 	fn   func(ctx context.Context, input I) (O, error)
 
 	// Configuration
-	retryPolicy    *retry.Policy
-	timeout        time.Duration
-	compensationFn func(ctx context.Context, input I) error
-	transactional  bool // Wrap execution in a transaction (default: true)
+	retryPolicy   *retry.Policy
+	timeout       time.Duration
+	transactional bool // Wrap execution in a transaction (default: true)
 }
 
 // ActivityOption configures an activity.
@@ -32,7 +27,7 @@ type ActivityOption[I, O any] func(*Activity[I, O])
 
 // DefineActivity creates a new activity.
 // By default, activities are wrapped in a transaction for atomicity with
-// history recording and outbox events.
+// history recording.
 func DefineActivity[I, O any](
 	name string,
 	fn func(ctx context.Context, input I) (O, error),
@@ -45,11 +40,6 @@ func DefineActivity[I, O any](
 	}
 	for _, opt := range opts {
 		opt(a)
-	}
-	// Auto-register compensation executor if compensation is set
-	// This makes the compensation function available for execution during rollback
-	if a.compensationFn != nil {
-		RegisterActivity(a)
 	}
 	return a
 }
@@ -73,25 +63,17 @@ func WithTimeout[I, O any](d time.Duration) ActivityOption[I, O] {
 	}
 }
 
-// WithCompensation sets the compensation function for the activity.
-// This function will be called during saga rollback.
-func WithCompensation[I, O any](fn func(ctx context.Context, input I) error) ActivityOption[I, O] {
-	return func(a *Activity[I, O]) {
-		a.compensationFn = fn
-	}
-}
-
 // WithTransactional sets whether the activity execution should be wrapped
 // in a database transaction. Default is true.
 //
 // When transactional=true (default):
-//   - Activity execution, history recording, and outbox events are atomic
+//   - Activity execution and history recording are atomic
 //   - Rollback occurs on failure
 //   - Use ctx.Storage() for database operations within the same transaction
 //
 // When transactional=false:
 //   - Useful for activities that call external APIs or don't need atomicity
-//   - History and outbox events are still recorded, but not atomically
+//   - History is still recorded, but not atomically
 func WithTransactional[I, O any](transactional bool) ActivityOption[I, O] {
 	return func(a *Activity[I, O]) {
 		a.transactional = transactional
@@ -101,8 +83,8 @@ func WithTransactional[I, O any](transactional bool) ActivityOption[I, O] {
 // Execute runs the activity within a workflow context.
 // If activityID is empty, it will be auto-generated.
 //
-// When transactional=true (default), the activity execution, history recording,
-// and outbox events are wrapped in a database transaction for atomicity.
+// When transactional=true (default), the activity execution and history recording
+// are wrapped in a database transaction for atomicity.
 func (a *Activity[I, O]) Execute(
 	ctx *WorkflowContext,
 	input I,
@@ -200,14 +182,6 @@ func (a *Activity[I, O]) executeInTransaction(
 	// Record activity ID for tracking
 	txWorkflowCtx.RecordActivityID(activityID)
 
-	// Register compensation if defined
-	if a.compensationFn != nil {
-		if compErr := a.registerCompensation(txWorkflowCtx, activityID, input); compErr != nil {
-			// Log but don't fail the activity
-			slog.Debug("failed to register compensation", "error", compErr, "activityID", activityID)
-		}
-	}
-
 	// Commit the transaction
 	if commitErr := ctx.Storage().CommitTransaction(txCtx); commitErr != nil {
 		return zero, fmt.Errorf("failed to commit transaction: %w", commitErr)
@@ -239,33 +213,7 @@ func (a *Activity[I, O]) executeWithoutTransaction(
 	// Record activity ID for tracking
 	ctx.RecordActivityID(activityID)
 
-	// Register compensation if defined and storage is available
-	if a.compensationFn != nil && ctx.Storage() != nil {
-		if compErr := a.registerCompensation(ctx, activityID, input); compErr != nil {
-			// Log but don't fail the activity
-			slog.Debug("failed to register compensation", "error", compErr, "activityID", activityID)
-		}
-	}
-
 	return result, nil
-}
-
-// registerCompensation registers a compensation action for the activity.
-func (a *Activity[I, O]) registerCompensation(ctx *WorkflowContext, activityID string, input I) error {
-	// JSON-encode the input for later use
-	inputData, err := json.Marshal(input)
-	if err != nil {
-		return fmt.Errorf("failed to encode compensation argument: %w", err)
-	}
-
-	entry := &storage.CompensationEntry{
-		InstanceID:   ctx.InstanceID(),
-		ActivityID:   activityID,
-		ActivityName: a.name, // Use activity name as the compensation function name
-		Args:         inputData,
-	}
-
-	return ctx.Storage().AddCompensation(ctx.Context(), entry)
 }
 
 // executeWithRetry executes the activity with retry logic.
@@ -399,55 +347,4 @@ func WithActivityID(id string) ExecuteOption {
 	return func(o *executeOptions) {
 		o.activityID = id
 	}
-}
-
-// Compensate executes the compensation function if defined.
-func (a *Activity[I, O]) Compensate(ctx context.Context, input I) error {
-	if a.compensationFn == nil {
-		return nil
-	}
-	return a.compensationFn(ctx, input)
-}
-
-// HasCompensation returns true if the activity has a compensation function.
-func (a *Activity[I, O]) HasCompensation() bool {
-	return a.compensationFn != nil
-}
-
-// CompensationExecutor is a function that executes a compensation.
-// It takes JSON-encoded input and returns an error.
-type CompensationExecutor func(ctx context.Context, input []byte) error
-
-// activityRegistry stores compensation executors by activity name.
-var (
-	activityRegistry   = make(map[string]CompensationExecutor)
-	activityRegistryMu sync.RWMutex
-)
-
-// RegisterActivity registers an activity's compensation function globally.
-// This is called automatically when an activity with compensation is created.
-func RegisterActivity[I, O any](activity *Activity[I, O]) {
-	if activity.compensationFn == nil {
-		return
-	}
-
-	activityRegistryMu.Lock()
-	defer activityRegistryMu.Unlock()
-
-	activityRegistry[activity.name] = func(ctx context.Context, inputData []byte) error {
-		var input I
-		if err := json.Unmarshal(inputData, &input); err != nil {
-			return fmt.Errorf("failed to unmarshal compensation input: %w", err)
-		}
-		return activity.compensationFn(ctx, input)
-	}
-}
-
-// GetCompensationExecutor returns the compensation executor for an activity.
-func GetCompensationExecutor(activityName string) (CompensationExecutor, bool) {
-	activityRegistryMu.RLock()
-	defer activityRegistryMu.RUnlock()
-
-	executor, ok := activityRegistry[activityName]
-	return executor, ok
 }

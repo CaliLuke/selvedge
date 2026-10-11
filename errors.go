@@ -134,10 +134,8 @@ type SuspendSignal = replay.SuspendSignal
 const (
 	// SuspendForTimer indicates the workflow is waiting for a timer to expire.
 	SuspendForTimer = replay.SuspendForTimer
-	// SuspendForChannelMessage indicates the workflow is waiting for a channel message (via Receive or WaitEvent).
+	// SuspendForChannelMessage indicates the workflow is waiting for a channel message (via WaitEvent).
 	SuspendForChannelMessage = replay.SuspendForChannelMessage
-	// SuspendForRecur indicates the workflow is recursing with new input.
-	SuspendForRecur = replay.SuspendForRecur
 )
 
 var (
@@ -147,10 +145,8 @@ var (
 	AsSuspendSignal = replay.AsSuspendSignal
 	// NewTimerSuspend creates a SuspendSignal for timer waiting.
 	NewTimerSuspend = replay.NewTimerSuspend
-	// NewChannelMessageSuspend creates a SuspendSignal for channel message waiting (via Receive or WaitEvent).
+	// NewChannelMessageSuspend creates a SuspendSignal for channel message waiting (via WaitEvent).
 	NewChannelMessageSuspend = replay.NewChannelMessageSuspend
-	// NewRecurSuspend creates a SuspendSignal for workflow recursion.
-	NewRecurSuspend = replay.NewRecurSuspend
 )
 
 // ========================================
@@ -168,23 +164,20 @@ func (e *ChannelMessageTimeoutError) Error() string {
 		e.ChannelName, e.InstanceID)
 }
 
-// ErrChannelNotSubscribed indicates an operation on a channel without subscription.
-var ErrChannelNotSubscribed = errors.New("not subscribed to channel")
+// errEventNotSubscribed indicates an operation on a channel without subscription.
+var errEventNotSubscribed = errors.New("not subscribed to channel")
 
-// ChannelModeConflictError indicates subscribing with a different mode than the channel's established mode.
-type ChannelModeConflictError struct {
+// eventModeConflictError indicates subscribing with a different mode than the channel's established mode.
+type eventModeConflictError struct {
 	Channel       string
 	ExistingMode  string
 	RequestedMode string
 }
 
-func (e *ChannelModeConflictError) Error() string {
+func (e *eventModeConflictError) Error() string {
 	return fmt.Sprintf("channel %q is already configured as %q mode; cannot subscribe with %q mode",
 		e.Channel, e.ExistingMode, e.RequestedMode)
 }
-
-// ErrGroupNotJoined indicates an operation on a group without membership.
-var ErrGroupNotJoined = errors.New("not a member of group")
 
 // ErrWorkflowNotCancellable indicates that the workflow cannot be cancelled.
 // This happens when the workflow is already completed, cancelled, failed, or does not exist.

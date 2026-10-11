@@ -69,9 +69,6 @@ type WorkflowContext struct {
 
 	// Reference to the App for accessing app-level configuration
 	app *App
-
-	// Direct subscriptions: channel name → true (for ModeDirect syntactic sugar)
-	directSubscriptions map[string]bool
 }
 
 // NewWorkflowContext creates a new WorkflowContext.
@@ -116,16 +113,15 @@ func (c *WorkflowContext) Context() context.Context {
 // This is useful for passing transaction contexts to storage operations.
 func (c *WorkflowContext) WithContext(ctx context.Context) *WorkflowContext {
 	return &WorkflowContext{
-		ctx:                 ctx,
-		cancel:              c.cancel,
-		instanceID:          c.instanceID,
-		workerID:            c.workerID,
-		workflowName:        c.workflowName,
-		isReplaying:         c.isReplaying,
-		historyCache:        c.historyCache,
-		activityCounts:      c.activityCounts,
-		execCtx:             c.execCtx,
-		directSubscriptions: c.directSubscriptions,
+		ctx:            ctx,
+		cancel:         c.cancel,
+		instanceID:     c.instanceID,
+		workerID:       c.workerID,
+		workflowName:   c.workflowName,
+		isReplaying:    c.isReplaying,
+		historyCache:   c.historyCache,
+		activityCounts: c.activityCounts,
+		execCtx:        c.execCtx,
 	}
 }
 
@@ -251,7 +247,7 @@ func (c *WorkflowContext) Done() <-chan struct{} {
 	return c.ctx.Done()
 }
 
-// Storage returns the storage interface for advanced operations like compensation.
+// Storage returns the storage interface for database operations.
 // Returns nil if not using the replay engine.
 func (c *WorkflowContext) Storage() storage.Storage {
 	if c.execCtx != nil {
@@ -263,7 +259,7 @@ func (c *WorkflowContext) Storage() storage.Storage {
 // Session returns the database executor for the current context.
 // When called within a transactional activity, this returns the transaction,
 // allowing you to execute custom SQL queries in the same transaction as
-// the activity execution, history recording, and outbox events.
+// the activity execution and history recording.
 //
 // Returns nil if storage is not available.
 //
@@ -308,25 +304,4 @@ func (c *WorkflowContext) SetApp(app *App) {
 // Returns nil if not set.
 func (c *WorkflowContext) App() *App {
 	return c.app
-}
-
-// recordDirectSubscription records that a channel was subscribed in ModeDirect.
-// This is used by Receive to automatically use the correct channel name.
-func (c *WorkflowContext) recordDirectSubscription(channelName string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.directSubscriptions == nil {
-		c.directSubscriptions = make(map[string]bool)
-	}
-	c.directSubscriptions[channelName] = true
-}
-
-// isDirectSubscription returns true if the channel was subscribed in ModeDirect.
-func (c *WorkflowContext) isDirectSubscription(channelName string) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.directSubscriptions == nil {
-		return false
-	}
-	return c.directSubscriptions[channelName]
 }

@@ -2,10 +2,10 @@ package selvedge
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 	"time"
 
+	"github.com/CaliLuke/selvedge/hooks"
 	"github.com/CaliLuke/selvedge/internal/storage"
 )
 
@@ -26,8 +26,14 @@ type OrderResult struct {
 
 // TestWorkflowWithWaitEvent tests a workflow that waits for an event.
 func TestWorkflowWithWaitEvent(t *testing.T) {
+	testWorkflowWithWaitEvent(t, createTestApp)
+}
+
+func testWorkflowWithWaitEvent(t *testing.T, createApp func(*testing.T, ...Option) (*App, func())) {
+	t.Helper()
+	received := &receivedEventHooks{}
 	// Create app with pre-initialized test database
-	app, cleanup := createTestApp(t, WithWorkflowResumptionInterval(100*time.Millisecond))
+	app, cleanup := createApp(t, WithWorkflowResumptionInterval(100*time.Millisecond), WithHooks(received))
 	defer cleanup()
 
 	// Define a workflow that waits for an event
@@ -38,6 +44,10 @@ func TestWorkflowWithWaitEvent(t *testing.T) {
 			event, err := WaitEvent[PaymentEvent](ctx, "payment.confirmed")
 			if err != nil {
 				return OrderResult{}, err
+			}
+
+			if event.ID == "" || event.Type != "payment.confirmed" || event.Source != "payment-service" || event.SpecVersion != "1.0" {
+				return OrderResult{Status: "invalid event envelope"}, nil
 			}
 
 			return OrderResult{
@@ -78,21 +88,17 @@ func TestWorkflowWithWaitEvent(t *testing.T) {
 		t.Errorf("expected status 'waiting_for_message', got '%s'", instance.Status)
 	}
 
-	// Simulate sending the payment event
-	paymentEvent := &CloudEvent{
-		ID:          "evt-1",
-		Type:        "payment.confirmed",
-		Source:      "payment-service",
-		SpecVersion: "1.0",
-		Data: mustMarshal(PaymentEvent{
-			TransactionID: "TXN-456",
-			Amount:        99.99,
-			Status:        "success",
-		}),
+	// Deliver the payment event through the public API.
+	if err := app.DeliverEvent(ctx, "payment.confirmed", "payment-service", PaymentEvent{
+		TransactionID: "TXN-456",
+		Amount:        99.99,
+		Status:        "success",
+	}); err != nil {
+		t.Fatalf("failed to deliver event: %v", err)
 	}
-
-	// Process the cloud event
-	app.processCloudEvent(ctx, paymentEvent)
+	if received.info.EventID == "" || received.info.EventType != "payment.confirmed" || received.info.EventSource != "payment-service" {
+		t.Errorf("unexpected received-event hook: %+v", received.info)
+	}
 
 	// Wait for the workflow to complete
 	time.Sleep(500 * time.Millisecond)
@@ -247,11 +253,11 @@ func waitForStatus(t *testing.T, ctx context.Context, app *App, instanceID strin
 	return false
 }
 
-// mustMarshal marshals data to JSON, panicking on error.
-func mustMarshal(v any) json.RawMessage {
-	data, err := json.Marshal(v)
-	if err != nil {
-		panic(err)
-	}
-	return data
+type receivedEventHooks struct {
+	hooks.NoOpHooks
+	info hooks.EventReceivedInfo
+}
+
+func (h *receivedEventHooks) OnEventReceived(ctx context.Context, info hooks.EventReceivedInfo) {
+	h.info = info
 }

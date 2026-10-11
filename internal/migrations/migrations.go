@@ -6,7 +6,7 @@
 // The migration system is compatible with dbmate:
 //   - Uses the same `schema_migrations` table for tracking applied migrations
 //   - Reads the same `-- migrate:up` / `-- migrate:down` SQL format
-//   - Supports SQLite, PostgreSQL, and MySQL
+//   - Supports SQLite and PostgreSQL
 package migrations
 
 import (
@@ -23,7 +23,7 @@ import (
 
 // DetectDBType detects database type from connection URL.
 //
-// Returns one of "sqlite", "postgresql", "mysql".
+// Returns one of "sqlite", "postgresql".
 func DetectDBType(url string) (string, error) {
 	url = strings.ToLower(url)
 
@@ -32,9 +32,6 @@ func DetectDBType(url string) (string, error) {
 	}
 	if strings.HasPrefix(url, "postgres") {
 		return "postgresql", nil
-	}
-	if strings.HasPrefix(url, "mysql") {
-		return "mysql", nil
 	}
 
 	return "", fmt.Errorf("cannot detect database type from URL: %s", url)
@@ -227,7 +224,7 @@ func splitSQLStatements(sqlContent string) []string {
 // Parameters:
 //   - ctx: Context for cancellation
 //   - db: Database connection
-//   - dbType: One of "sqlite", "postgresql", "mysql"
+//   - dbType: One of "sqlite", "postgresql"
 //   - migrationsFS: Filesystem containing migrations (expects dbType subdirectory)
 //
 // Returns list of applied migration versions.

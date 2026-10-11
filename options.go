@@ -19,12 +19,6 @@ type appConfig struct {
 	serviceName string
 	workerID    string
 
-	// Features
-	outboxEnabled   bool
-	outboxInterval  time.Duration
-	outboxBatchSize int
-	brokerURL       string
-
 	// PostgreSQL LISTEN/NOTIFY
 	useListenNotify      *bool         // nil = auto-detect, true = force enable, false = force disable
 	notifyReconnectDelay time.Duration // Delay before reconnecting after connection failure
@@ -35,7 +29,6 @@ type appConfig struct {
 	timerCheckInterval         time.Duration
 	eventTimeoutInterval       time.Duration
 	messageCheckInterval       time.Duration
-	recurCheckInterval         time.Duration
 	channelCleanupInterval     time.Duration
 	channelMessageRetention    time.Duration
 	workflowResumptionInterval time.Duration
@@ -70,9 +63,6 @@ func defaultConfig() *appConfig {
 	return &appConfig{
 		databaseURL:                "file:selvedge.db",
 		serviceName:                "selvedge-service",
-		outboxEnabled:              false,
-		outboxInterval:             1 * time.Second,
-		outboxBatchSize:            100,
 		useListenNotify:            nil, // auto-detect
 		notifyReconnectDelay:       60 * time.Second,
 		staleLockInterval:          60 * time.Second,
@@ -80,7 +70,6 @@ func defaultConfig() *appConfig {
 		timerCheckInterval:         10 * time.Second,
 		eventTimeoutInterval:       30 * time.Second,
 		messageCheckInterval:       5 * time.Second,
-		recurCheckInterval:         5 * time.Second,
 		channelCleanupInterval:     300 * time.Second,
 		channelMessageRetention:    24 * time.Hour,
 		workflowResumptionInterval: 1 * time.Second, // Same as Edda
@@ -133,7 +122,6 @@ func WithAutoMigrate(enabled bool) Option {
 // The filesystem should contain subdirectories for each database type:
 //   - sqlite/
 //   - postgresql/
-//   - mysql/
 //
 // Each subdirectory should contain .sql files in dbmate format with
 // -- migrate:up and -- migrate:down sections.
@@ -155,35 +143,6 @@ func WithServiceName(name string) Option {
 func WithWorkerID(id string) Option {
 	return func(c *appConfig) {
 		c.workerID = id
-	}
-}
-
-// WithOutbox enables the transactional outbox pattern.
-func WithOutbox(enabled bool) Option {
-	return func(c *appConfig) {
-		c.outboxEnabled = enabled
-	}
-}
-
-// WithOutboxInterval sets the interval for the outbox relayer.
-func WithOutboxInterval(d time.Duration) Option {
-	return func(c *appConfig) {
-		c.outboxInterval = d
-	}
-}
-
-// WithOutboxBatchSize sets the batch size for outbox processing.
-func WithOutboxBatchSize(size int) Option {
-	return func(c *appConfig) {
-		c.outboxBatchSize = size
-	}
-}
-
-// WithBrokerURL sets the CloudEvents broker URL for outbox event publishing.
-// Example: "http://broker-ingress.knative-eventing.svc.cluster.local/default/default"
-func WithBrokerURL(url string) Option {
-	return func(c *appConfig) {
-		c.brokerURL = url
 	}
 }
 
@@ -233,13 +192,6 @@ func WithShutdownTimeout(d time.Duration) Option {
 func WithMessageCheckInterval(d time.Duration) Option {
 	return func(c *appConfig) {
 		c.messageCheckInterval = d
-	}
-}
-
-// WithRecurCheckInterval sets the interval for checking recurred workflows.
-func WithRecurCheckInterval(d time.Duration) Option {
-	return func(c *appConfig) {
-		c.recurCheckInterval = d
 	}
 }
 

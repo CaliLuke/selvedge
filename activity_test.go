@@ -21,7 +21,6 @@ func TestDefineActivity(t *testing.T) {
 		wantTransactional bool
 		wantHasRetry      bool
 		wantHasTimeout    bool
-		wantHasComp       bool
 	}{
 		{
 			name:              "default options",
@@ -30,7 +29,6 @@ func TestDefineActivity(t *testing.T) {
 			wantTransactional: true,
 			wantHasRetry:      false,
 			wantHasTimeout:    false,
-			wantHasComp:       false,
 		},
 		{
 			name:         "transactional false",
@@ -41,7 +39,6 @@ func TestDefineActivity(t *testing.T) {
 			wantTransactional: false,
 			wantHasRetry:      false,
 			wantHasTimeout:    false,
-			wantHasComp:       false,
 		},
 		{
 			name:         "with retry policy",
@@ -52,7 +49,6 @@ func TestDefineActivity(t *testing.T) {
 			wantTransactional: true,
 			wantHasRetry:      true,
 			wantHasTimeout:    false,
-			wantHasComp:       false,
 		},
 		{
 			name:         "with timeout",
@@ -63,20 +59,6 @@ func TestDefineActivity(t *testing.T) {
 			wantTransactional: true,
 			wantHasRetry:      false,
 			wantHasTimeout:    true,
-			wantHasComp:       false,
-		},
-		{
-			name:         "with compensation",
-			activityName: "comp_activity",
-			opts: []ActivityOption[string, string]{
-				WithCompensation[string, string](func(ctx context.Context, input string) error {
-					return nil
-				}),
-			},
-			wantTransactional: true,
-			wantHasRetry:      false,
-			wantHasTimeout:    false,
-			wantHasComp:       true,
 		},
 		{
 			name:         "all options combined",
@@ -85,14 +67,10 @@ func TestDefineActivity(t *testing.T) {
 				WithTransactional[string, string](false),
 				WithRetryPolicy[string, string](retry.Fixed(3, 100*time.Millisecond)),
 				WithTimeout[string, string](10 * time.Second),
-				WithCompensation[string, string](func(ctx context.Context, input string) error {
-					return nil
-				}),
 			},
 			wantTransactional: false,
 			wantHasRetry:      true,
 			wantHasTimeout:    true,
-			wantHasComp:       true,
 		},
 	}
 
@@ -109,7 +87,6 @@ func TestDefineActivity(t *testing.T) {
 			assert.Equal(t, tt.wantTransactional, activity.transactional)
 			assert.Equal(t, tt.wantHasRetry, activity.retryPolicy != nil)
 			assert.Equal(t, tt.wantHasTimeout, activity.timeout > 0)
-			assert.Equal(t, tt.wantHasComp, activity.HasCompensation())
 		})
 	}
 }
@@ -376,237 +353,6 @@ func TestActivity_executeWithRetry_Timeout(t *testing.T) {
 	_, err := activity.executeWithRetry(wfCtx, "input", "test:1")
 
 	require.Error(t, err)
-}
-
-func TestActivity_Compensate(t *testing.T) {
-	tests := []struct {
-		name      string
-		hasCompFn bool
-		compErr   error
-		wantErr   bool
-	}{
-		{
-			name:      "no compensation function",
-			hasCompFn: false,
-			compErr:   nil,
-			wantErr:   false,
-		},
-		{
-			name:      "compensation success",
-			hasCompFn: true,
-			compErr:   nil,
-			wantErr:   false,
-		},
-		{
-			name:      "compensation fails",
-			hasCompFn: true,
-			compErr:   errors.New("compensation failed"),
-			wantErr:   true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var compensationCalled bool
-			var opts []ActivityOption[string, string]
-
-			if tt.hasCompFn {
-				opts = append(opts, WithCompensation[string, string](func(ctx context.Context, input string) error {
-					compensationCalled = true
-					return tt.compErr
-				}))
-			}
-
-			activity := DefineActivity("test",
-				func(ctx context.Context, input string) (string, error) {
-					return "result", nil
-				},
-				opts...,
-			)
-
-			err := activity.Compensate(context.Background(), "input")
-
-			if tt.hasCompFn {
-				assert.True(t, compensationCalled)
-			} else {
-				assert.False(t, compensationCalled)
-			}
-
-			if tt.wantErr {
-				require.Error(t, err)
-			} else {
-				require.NoError(t, err)
-			}
-		})
-	}
-}
-
-func TestActivity_HasCompensation(t *testing.T) {
-	tests := []struct {
-		name    string
-		hasComp bool
-	}{
-		{
-			name:    "with compensation",
-			hasComp: true,
-		},
-		{
-			name:    "without compensation",
-			hasComp: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var opts []ActivityOption[string, string]
-			if tt.hasComp {
-				opts = append(opts, WithCompensation[string, string](func(ctx context.Context, input string) error {
-					return nil
-				}))
-			}
-
-			activity := DefineActivity("test",
-				func(ctx context.Context, input string) (string, error) {
-					return "result", nil
-				},
-				opts...,
-			)
-
-			assert.Equal(t, tt.hasComp, activity.HasCompensation())
-		})
-	}
-}
-
-func TestRegisterActivity(t *testing.T) {
-	tests := []struct {
-		name           string
-		activityName   string
-		hasComp        bool
-		wantRegistered bool
-	}{
-		{
-			name:           "with compensation",
-			activityName:   "reg_test_with_comp",
-			hasComp:        true,
-			wantRegistered: true,
-		},
-		{
-			name:           "without compensation",
-			activityName:   "reg_test_no_comp",
-			hasComp:        false,
-			wantRegistered: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var opts []ActivityOption[string, string]
-			if tt.hasComp {
-				opts = append(opts, WithCompensation[string, string](func(ctx context.Context, input string) error {
-					return nil
-				}))
-			}
-
-			activity := DefineActivity(tt.activityName,
-				func(ctx context.Context, input string) (string, error) {
-					return "result", nil
-				},
-				opts...,
-			)
-
-			RegisterActivity(activity)
-
-			executor, found := GetCompensationExecutor(tt.activityName)
-			assert.Equal(t, tt.wantRegistered, found)
-			if tt.wantRegistered {
-				assert.NotNil(t, executor)
-			}
-		})
-	}
-}
-
-func TestGetCompensationExecutor(t *testing.T) {
-	activityName := "executor_test_activity"
-
-	activity := DefineActivity(activityName,
-		func(ctx context.Context, input string) (string, error) {
-			return "result", nil
-		},
-		WithCompensation[string, string](func(ctx context.Context, input string) error {
-			if input == "error" {
-				return errors.New("compensation error")
-			}
-			return nil
-		}),
-	)
-	RegisterActivity(activity)
-
-	tests := []struct {
-		name         string
-		activityName string
-		input        string
-		wantFound    bool
-		wantErr      bool
-	}{
-		{
-			name:         "registered activity - success",
-			activityName: activityName,
-			input:        `"success"`,
-			wantFound:    true,
-			wantErr:      false,
-		},
-		{
-			name:         "registered activity - error",
-			activityName: activityName,
-			input:        `"error"`,
-			wantFound:    true,
-			wantErr:      true,
-		},
-		{
-			name:         "unregistered activity",
-			activityName: "nonexistent_activity",
-			input:        `"input"`,
-			wantFound:    false,
-			wantErr:      false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			executor, found := GetCompensationExecutor(tt.activityName)
-			assert.Equal(t, tt.wantFound, found)
-
-			if found {
-				err := executor(context.Background(), []byte(tt.input))
-				if tt.wantErr {
-					require.Error(t, err)
-				} else {
-					require.NoError(t, err)
-				}
-			}
-		})
-	}
-}
-
-func TestGetCompensationExecutor_InvalidJSON(t *testing.T) {
-	activityName := "json_test_activity"
-
-	activity := DefineActivity(activityName,
-		func(ctx context.Context, input string) (string, error) {
-			return "result", nil
-		},
-		WithCompensation[string, string](func(ctx context.Context, input string) error {
-			return nil
-		}),
-	)
-	RegisterActivity(activity)
-
-	executor, found := GetCompensationExecutor(activityName)
-	require.True(t, found)
-
-	err := executor(context.Background(), []byte(`invalid json`))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unmarshal")
 }
 
 func TestWithActivityID_Option(t *testing.T) {

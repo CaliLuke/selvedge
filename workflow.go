@@ -52,32 +52,25 @@ var (
 
 // workflowEntry holds a registered workflow with its metadata.
 type workflowEntry struct {
-	name         string
-	workflow     any // The actual workflow (type-erased for storage)
-	inputType    string
-	outputType   string
-	eventHandler bool
+	name       string
+	workflow   any // The actual workflow (type-erased for storage)
+	inputType  string
+	outputType string
 }
 
 // RegisterWorkflow registers a workflow with the application.
 // The workflow can later be started by name or by type.
-func RegisterWorkflow[I, O any](app *App, workflow Workflow[I, O], opts ...WorkflowOption) {
-	options := &workflowOptions{}
-	for _, opt := range opts {
-		opt(options)
-	}
-
+func RegisterWorkflow[I, O any](app *App, workflow Workflow[I, O]) {
 	name := workflow.Name()
 
 	workflowRegistryMu.Lock()
 	defer workflowRegistryMu.Unlock()
 
 	workflowRegistry[name] = workflowEntry{
-		name:         name,
-		workflow:     workflow,
-		inputType:    fmt.Sprintf("%T", *new(I)),
-		outputType:   fmt.Sprintf("%T", *new(O)),
-		eventHandler: options.eventHandler,
+		name:       name,
+		workflow:   workflow,
+		inputType:  fmt.Sprintf("%T", *new(I)),
+		outputType: fmt.Sprintf("%T", *new(O)),
 	}
 
 	// Create a runner that bridges the generic workflow to the replay engine
@@ -99,30 +92,14 @@ func RegisterWorkflow[I, O any](app *App, workflow Workflow[I, O], opts ...Workf
 		// Create WorkflowContext from ExecutionContext
 		wfCtx := NewWorkflowContextFromExecution(execCtx)
 
-		// Set App reference for accessing app-level configuration (e.g., LLM defaults)
+		// Set App reference for accessing app-level configuration
 		wfCtx.SetApp(app)
 
 		// Execute the workflow
 		return workflow.Execute(wfCtx, input)
 	}
 
-	app.registerWorkflowWithRunner(name, workflow, runner, options)
-}
-
-// WorkflowOption configures workflow registration.
-type WorkflowOption func(*workflowOptions)
-
-type workflowOptions struct {
-	eventHandler bool
-}
-
-// WithEventHandler marks the workflow as an event handler.
-// When true, the workflow will be automatically started when
-// a CloudEvent with a matching type is received.
-func WithEventHandler(enabled bool) WorkflowOption {
-	return func(o *workflowOptions) {
-		o.eventHandler = enabled
-	}
+	app.registerWorkflowWithRunner(name, workflow, runner)
 }
 
 // GetWorkflow retrieves a registered workflow by name.

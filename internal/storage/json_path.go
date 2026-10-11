@@ -133,30 +133,3 @@ func (d *PostgresDriver) JSONCompare(extractExpr string, value any, placeholderN
 		return fmt.Sprintf("%s = $%d", extractExpr, placeholderNum), []any{fmt.Sprintf("%v", v)}
 	}
 }
-
-// JSONExtract for MySQLDriver returns the SQL expression to extract a value from a JSON column.
-func (d *MySQLDriver) JSONExtract(column, path string) string {
-	// MySQL uses JSON_UNQUOTE(JSON_EXTRACT(...)) with $ notation
-	return fmt.Sprintf("JSON_UNQUOTE(JSON_EXTRACT(%s, '$.%s'))", column, path)
-}
-
-// JSONCompare for MySQLDriver returns the SQL expression to compare a JSON-extracted value.
-func (d *MySQLDriver) JSONCompare(extractExpr string, value any, _ int) (expr string, compArgs []any) {
-	switch v := value.(type) {
-	case nil:
-		return fmt.Sprintf("(%s IS NULL OR %s = 'null')", extractExpr, extractExpr), nil
-	case bool:
-		if v {
-			return fmt.Sprintf("(%s = 'true' OR %s = '1')", extractExpr, extractExpr), nil
-		}
-		return fmt.Sprintf("(%s = 'false' OR %s = '0')", extractExpr, extractExpr), nil
-	case float64:
-		return fmt.Sprintf("CAST(%s AS DECIMAL(20,6)) = ?", extractExpr), []any{v}
-	case int:
-		return fmt.Sprintf("CAST(%s AS DECIMAL(20,6)) = ?", extractExpr), []any{float64(v)}
-	case int64:
-		return fmt.Sprintf("CAST(%s AS DECIMAL(20,6)) = ?", extractExpr), []any{float64(v)}
-	default:
-		return fmt.Sprintf("%s = ?", extractExpr), []any{fmt.Sprintf("%v", v)}
-	}
-}

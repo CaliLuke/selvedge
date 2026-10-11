@@ -147,47 +147,10 @@ func (d *PostgresDriver) ReturningClause(columns ...string) string {
 	return result
 }
 
-// MySQLDriver implements Driver for MySQL 8.0+.
-type MySQLDriver struct{}
-
-func (d *MySQLDriver) DriverName() string {
-	return "mysql"
-}
-
-func (d *MySQLDriver) GetCurrentTimeExpr() string {
-	return "NOW()"
-}
-
-func (d *MySQLDriver) MakeDatetimeComparable(column string) string {
-	// MySQL timestamps are directly comparable
-	return column
-}
-
-func (d *MySQLDriver) SelectForUpdateSkipLocked() string {
-	return "FOR UPDATE SKIP LOCKED"
-}
-
-func (d *MySQLDriver) Placeholder(n int) string {
-	return "?"
-}
-
-func (d *MySQLDriver) OnConflictDoNothing(conflictColumns ...string) string {
-	// MySQL doesn't support ON CONFLICT; use INSERT IGNORE instead
-	return ""
-}
-
-func (d *MySQLDriver) ReturningClause(columns ...string) string {
-	// MySQL doesn't support RETURNING clause; use LastInsertId() instead
-	return ""
-}
-
 // NewDriver creates a new driver based on the database URL.
 func NewDriver(dbURL string) Driver {
 	if len(dbURL) >= 8 && dbURL[:8] == "postgres" {
 		return &PostgresDriver{}
-	}
-	if len(dbURL) >= 5 && dbURL[:5] == "mysql" {
-		return &MySQLDriver{}
 	}
 	// Default to SQLite
 	return &SQLiteDriver{}

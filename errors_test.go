@@ -388,14 +388,9 @@ func TestSentinelErrors(t *testing.T) {
 			wantMsg: "determinism violation during replay",
 		},
 		{
-			name:    "ErrChannelNotSubscribed",
-			err:     ErrChannelNotSubscribed,
+			name:    "errEventNotSubscribed",
+			err:     errEventNotSubscribed,
 			wantMsg: "not subscribed to channel",
-		},
-		{
-			name:    "ErrGroupNotJoined",
-			err:     ErrGroupNotJoined,
-			wantMsg: "not a member of group",
 		},
 		{
 			name:    "ErrWorkflowNotCancellable",
@@ -428,9 +423,9 @@ func TestSentinelErrors_ErrorsIs(t *testing.T) {
 			wrappedIn: fmt.Errorf("failed: %w", ErrWorkflowAlreadyCancelled),
 		},
 		{
-			name:      "ErrChannelNotSubscribed wrapped",
-			err:       ErrChannelNotSubscribed,
-			wrappedIn: fmt.Errorf("operation failed: %w", ErrChannelNotSubscribed),
+			name:      "errEventNotSubscribed wrapped",
+			err:       errEventNotSubscribed,
+			wrappedIn: fmt.Errorf("operation failed: %w", errEventNotSubscribed),
 		},
 	}
 
@@ -444,7 +439,6 @@ func TestSentinelErrors_ErrorsIs(t *testing.T) {
 func TestSuspendType_Constants(t *testing.T) {
 	assert.Equal(t, SuspendType(0), SuspendForTimer)
 	assert.Equal(t, SuspendType(1), SuspendForChannelMessage)
-	assert.Equal(t, SuspendType(2), SuspendForRecur)
 }
 
 func TestIsSuspendSignal(t *testing.T) {
@@ -471,11 +465,6 @@ func TestIsSuspendSignal(t *testing.T) {
 		{
 			name: "channel message suspend signal",
 			err:  NewChannelMessageSuspend("inst-2", "events", "act-1", nil),
-			want: true,
-		},
-		{
-			name: "recur suspend signal",
-			err:  NewRecurSuspend("inst-3", map[string]int{"count": 5}),
 			want: true,
 		},
 		{
@@ -630,54 +619,6 @@ func TestNewChannelMessageSuspend(t *testing.T) {
 	}
 }
 
-func TestNewRecurSuspend(t *testing.T) {
-	tests := []struct {
-		name       string
-		instanceID string
-		newInput   any
-	}{
-		{
-			name:       "with int input",
-			instanceID: "inst-1",
-			newInput:   42,
-		},
-		{
-			name:       "with string input",
-			instanceID: "inst-2",
-			newInput:   "next-state",
-		},
-		{
-			name:       "with struct input",
-			instanceID: "inst-3",
-			newInput:   struct{ Count int }{Count: 10},
-		},
-		{
-			name:       "with map input",
-			instanceID: "inst-4",
-			newInput:   map[string]any{"iteration": 5, "data": "test"},
-		},
-		{
-			name:       "with nil input",
-			instanceID: "inst-5",
-			newInput:   nil,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			signal := NewRecurSuspend(tt.instanceID, tt.newInput)
-
-			require.NotNil(t, signal)
-			assert.Equal(t, SuspendForRecur, signal.Type)
-			assert.Equal(t, tt.instanceID, signal.InstanceID)
-			assert.Equal(t, tt.newInput, signal.NewInput)
-
-			assert.Contains(t, signal.Error(), "recurring instance")
-			assert.Contains(t, signal.Error(), tt.instanceID)
-		})
-	}
-}
-
 func TestSuspendSignal_Error(t *testing.T) {
 	timeout := 10 * time.Second
 
@@ -700,11 +641,6 @@ func TestSuspendSignal_Error(t *testing.T) {
 			name:         "channel message suspend with timeout",
 			signal:       NewChannelMessageSuspend("inst-3", "events", "act-2", &timeout),
 			wantContains: []string{"workflow suspended", "waiting for channel message", "events", "timeout"},
-		},
-		{
-			name:         "recur suspend",
-			signal:       NewRecurSuspend("inst-4", nil),
-			wantContains: []string{"workflow suspended", "recurring instance", "inst-4"},
 		},
 	}
 

@@ -16,8 +16,6 @@ const (
 	StatusWaitingForEvent   WorkflowStatus = "waiting_for_event"
 	StatusWaitingForTimer   WorkflowStatus = "waiting_for_timer"
 	StatusWaitingForMessage WorkflowStatus = "waiting_for_message"
-	StatusRecurred          WorkflowStatus = "recurred"
-	StatusCompensating      WorkflowStatus = "compensating"
 )
 
 // WorkflowInstance represents a single execution of a workflow.
@@ -31,7 +29,6 @@ type WorkflowInstance struct {
 	CurrentActivityID string         `json:"current_activity_id"` // Last executed activity ID
 	SourceHash        string         `json:"source_hash"`         // Source code hash (Edda compatibility)
 	OwnerService      string         `json:"owner_service"`       // Service that owns this workflow (Edda compatibility)
-	ContinuedFrom     string         `json:"continued_from"`      // Previous instance ID (for recur)
 	LockedBy          string         `json:"locked_by"`           // Worker ID holding the lock
 	LockedAt          *time.Time     `json:"locked_at"`           // When the lock was acquired
 	LockTimeoutSec    *int           `json:"lock_timeout_seconds"`
@@ -55,15 +52,11 @@ const (
 	// Timer expired (via Sleep/SleepUntil)
 	HistoryTimerExpired HistoryEventType = "TimerExpired"
 
-	// Channel message received (via Receive)
+	// Internal event delivery record (via WaitEvent)
 	HistoryChannelMessageReceived HistoryEventType = "ChannelMessageReceived"
 
 	// Message receive timeout
 	HistoryMessageTimeout HistoryEventType = "MessageTimeout"
-
-	// Compensation events
-	HistoryCompensationExecuted HistoryEventType = "CompensationExecuted"
-	HistoryCompensationFailed   HistoryEventType = "CompensationFailed"
 
 	// Workflow lifecycle events
 	HistoryWorkflowFailed    HistoryEventType = "WorkflowFailed"
@@ -90,36 +83,6 @@ type TimerSubscription struct {
 	ExpiresAt  time.Time `json:"expires_at"`
 	ActivityID string    `json:"activity_id"` // Activity ID for replay matching (Edda compatibility)
 	CreatedAt  time.Time `json:"created_at"`
-}
-
-// OutboxEvent represents an event in the transactional outbox.
-// Uses event_id (TEXT) as primary key for distributed DB compatibility (Spanner, CockroachDB).
-type OutboxEvent struct {
-	EventID         string     `json:"event_id"`          // CloudEvents ID (PRIMARY KEY)
-	EventType       string     `json:"event_type"`        // CloudEvents type
-	EventSource     string     `json:"event_source"`      // CloudEvents source
-	EventData       []byte     `json:"event_data"`        // JSON payload
-	EventDataBinary []byte     `json:"event_data_binary"` // Binary payload (Edda compatibility)
-	DataType        string     `json:"data_type"`         // "json" or "binary"
-	ContentType     string     `json:"content_type"`      // e.g., "application/json"
-	Status          string     `json:"status"`            // "pending", "processing", "published", "failed"
-	RetryCount      int        `json:"retry_count"`       // Number of retry attempts (unified with Edda)
-	LastError       string     `json:"last_error"`        // Last error message (Edda compatibility)
-	PublishedAt     *time.Time `json:"published_at"`      // When the event was published (Edda compatibility)
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
-}
-
-// CompensationEntry represents a registered compensation action.
-// Order is determined by created_at DESC (LIFO).
-// Status is tracked via history events (CompensationExecuted, CompensationFailed).
-type CompensationEntry struct {
-	ID           int64     `json:"id"`
-	InstanceID   string    `json:"instance_id"`
-	ActivityID   string    `json:"activity_id"`
-	ActivityName string    `json:"activity_name"` // Function name (unified with Edda)
-	Args         []byte    `json:"args"`          // JSON-encoded arguments (unified with Edda)
-	CreatedAt    time.Time `json:"created_at"`
 }
 
 // StaleWorkflowInfo contains information about a workflow with a stale lock.
@@ -155,12 +118,9 @@ type ChannelMode string
 
 const (
 	ChannelModeBroadcast ChannelMode = "broadcast" // All subscribers receive all messages
-	ChannelModeCompeting ChannelMode = "competing" // Each message goes to one subscriber
-	ChannelModeDirect    ChannelMode = "direct"    // Direct messages to specific instance (via SendTo)
 )
 
 // ChannelMessage represents a message in a channel.
-// SendTo uses dynamic channel names (e.g., "channel:instance_id") instead of target_instance_id.
 type ChannelMessage struct {
 	ID          int64     `json:"id"`
 	Channel     string    `json:"channel"`               // Channel name (unified with Edda)
@@ -185,58 +145,11 @@ type ChannelSubscription struct {
 	SubscribedAt    time.Time   `json:"subscribed_at"`         // When the subscription was created (unified with Edda)
 }
 
-// ChannelDeliveryCursor tracks message delivery progress for broadcast mode.
-type ChannelDeliveryCursor struct {
-	ID              int64     `json:"id"`
-	InstanceID      string    `json:"instance_id"`
-	Channel         string    `json:"channel"`           // Channel name (unified with Edda)
-	LastDeliveredID int64     `json:"last_delivered_id"` // Last delivered message ID (unified with Edda)
-	UpdatedAt       time.Time `json:"updated_at"`
-}
-
-// ChannelMessageClaim tracks which instance claimed a message in competing mode.
-type ChannelMessageClaim struct {
-	ID         int64     `json:"id"`
-	MessageID  int64     `json:"message_id"`
-	InstanceID string    `json:"instance_id"`
-	ClaimedAt  time.Time `json:"claimed_at"`
-}
-
 // ChannelDeliveryResult contains information about a successful message delivery.
 type ChannelDeliveryResult struct {
 	InstanceID   string `json:"instance_id"`
 	WorkflowName string `json:"workflow_name"`
 	ActivityID   string `json:"activity_id"`
-}
-
-// ========================================
-// History Archive (for Recur)
-// ========================================
-
-// ArchivedHistoryEvent represents an archived history event (from recur).
-type ArchivedHistoryEvent struct {
-	ID                int64            `json:"id"`
-	OriginalID        int64            `json:"original_id"`
-	InstanceID        string           `json:"instance_id"`
-	ActivityID        string           `json:"activity_id"`
-	EventType         HistoryEventType `json:"event_type"`
-	EventData         []byte           `json:"event_data"`
-	EventDataBinary   []byte           `json:"event_data_binary"`
-	DataType          string           `json:"data_type"`
-	OriginalCreatedAt time.Time        `json:"original_created_at"`
-	ArchivedAt        time.Time        `json:"archived_at"`
-}
-
-// ========================================
-// Group Memberships
-// ========================================
-
-// GroupMembership represents a workflow's membership in a group.
-type GroupMembership struct {
-	ID         int64     `json:"id"`
-	InstanceID string    `json:"instance_id"`
-	GroupName  string    `json:"group_name"`
-	JoinedAt   time.Time `json:"joined_at"` // When the instance joined the group (unified with Edda)
 }
 
 // ========================================

@@ -6,13 +6,11 @@ import (
 	"time"
 
 	"github.com/CaliLuke/selvedge/hooks"
-	"github.com/CaliLuke/selvedge/internal/storage"
-	"github.com/CaliLuke/selvedge/outbox"
 )
 
 // ReceivedEvent represents an event received by a workflow.
 type ReceivedEvent[T any] struct {
-	// CloudEvents metadata
+	// Event metadata
 	ID          string         `json:"id"`
 	Type        string         `json:"type"`
 	Source      string         `json:"source"`
@@ -26,9 +24,6 @@ type ReceivedEvent[T any] struct {
 
 // WaitEvent suspends the workflow until an event of the specified type is received.
 // The event data will be deserialized into type T.
-//
-// Internally, this uses the channel messaging system. The event_type is used as
-// the channel name, and the workflow subscribes in broadcast mode.
 //
 // During replay, if the event was already received, this returns immediately.
 // Otherwise, the workflow is suspended until an event arrives on the channel.
@@ -51,36 +46,36 @@ func WaitEvent[T any](ctx *WorkflowContext, eventType string, opts ...WaitEventO
 	}
 
 	// Subscribe to the event type channel (idempotent)
-	if err := Subscribe(ctx, eventType, ModeBroadcast); err != nil {
+	if err := subscribeEvent(ctx, eventType); err != nil {
 		return nil, fmt.Errorf("failed to subscribe to event channel: %w", err)
 	}
 
-	// Convert WaitEventOption to ReceiveOption
-	var receiveOpts []ReceiveOption
+	// Convert WaitEventOption to receiveEventOption
+	var receiveOpts []receiveEventOption
 	if options.timeout != nil {
-		receiveOpts = append(receiveOpts, WithReceiveTimeout(*options.timeout))
+		receiveOpts = append(receiveOpts, withReceiveEventTimeout(*options.timeout))
 	}
 
-	// Use Receive internally - the channel message contains CloudEvent data
-	msg, err := Receive[map[string]any](ctx, eventType, receiveOpts...)
+	// The internal receiver reads the stored event envelope.
+	msg, err := receiveEvent[map[string]any](ctx, eventType, receiveOpts...)
 	if err != nil {
 		return nil, err // SuspendSignal or other errors propagate
 	}
 
-	// Convert ReceivedMessage to ReceivedEvent
+	// Convert receivedEventMessage to ReceivedEvent
 	return convertToReceivedEvent[T](msg)
 }
 
-// convertToReceivedEvent converts a ReceivedMessage containing CloudEvent data
+// convertToReceivedEvent converts a receivedEventMessage containing event envelope data
 // to a ReceivedEvent with proper typing.
-func convertToReceivedEvent[T any](msg *ReceivedMessage[map[string]any]) (*ReceivedEvent[T], error) {
+func convertToReceivedEvent[T any](msg *receivedEventMessage[map[string]any]) (*ReceivedEvent[T], error) {
 	if msg == nil {
 		return nil, fmt.Errorf("nil message")
 	}
 
 	event := &ReceivedEvent[T]{}
 
-	// Extract CloudEvent metadata from the message data
+	// Extract event envelope metadata from the message data
 	if id, ok := msg.Data["id"].(string); ok {
 		event.ID = id
 	}
@@ -206,63 +201,4 @@ func SleepUntil(ctx *WorkflowContext, t time.Time, opts ...SleepOption) error {
 		return nil
 	}
 	return Sleep(ctx, duration, opts...)
-}
-
-// workflowContextAdapter adapts *WorkflowContext to outbox.WorkflowContext interface.
-type workflowContextAdapter struct {
-	ctx *WorkflowContext
-}
-
-func (a *workflowContextAdapter) Context() interface{ Done() <-chan struct{} } {
-	return a.ctx.Context()
-}
-
-func (a *workflowContextAdapter) InstanceID() string {
-	return a.ctx.InstanceID()
-}
-
-func (a *workflowContextAdapter) Storage() storage.Storage {
-	return a.ctx.Storage()
-}
-
-// SendEvent sends an event through the transactional outbox.
-// This is a convenience wrapper for outbox.SendEventTransactional.
-//
-// The event is stored in the database within the current transaction (if any)
-// and will be delivered asynchronously by the outbox relayer.
-//
-// This ensures that the event is only sent if the activity/transaction commits,
-// providing exactly-once delivery guarantees when combined with idempotent consumers.
-//
-// Example:
-//
-//	activity := selvedge.DefineActivity("process_order", func(ctx context.Context, input OrderInput) (OrderResult, error) {
-//	    wfCtx := selvedge.GetWorkflowContext(ctx)
-//	    if wfCtx == nil {
-//	        return OrderResult{}, fmt.Errorf("workflow context not available")
-//	    }
-//	    err := selvedge.SendEvent(wfCtx, "order.created", "order-service", map[string]any{
-//	        "order_id": input.OrderID,
-//	        "amount":   input.Amount,
-//	    })
-//	    if err != nil {
-//	        return OrderResult{}, err
-//	    }
-//	    return OrderResult{Status: "created"}, nil
-//	})
-func SendEvent[T any](ctx *WorkflowContext, eventType, source string, data T) error {
-	return outbox.SendEventTransactional(&workflowContextAdapter{ctx}, eventType, source, data)
-}
-
-// SendEventTransactional is an alias for outbox.SendEventTransactional.
-// Use this when you need more control over event options.
-//
-// Example:
-//
-//	err := selvedge.SendEventTransactional(wfCtx, "order.created", "order-service", orderData,
-//	    outbox.WithEventID("custom-event-id"),
-//	    outbox.WithContentType("application/json"),
-//	)
-func SendEventTransactional[T any](ctx *WorkflowContext, eventType, source string, data T, opts ...outbox.SendEventOption) error {
-	return outbox.SendEventTransactional(&workflowContextAdapter{ctx}, eventType, source, data, opts...)
 }

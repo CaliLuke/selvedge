@@ -292,7 +292,7 @@ func (s *PostgresStorage) CancelInstance(ctx context.Context, instanceID, reason
 	result, err := conn.ExecContext(ctx, `
 		UPDATE workflow_instances
 		SET status = 'cancelled', updated_at = NOW()
-		WHERE instance_id = $1 AND status IN ('pending', 'running', 'waiting_for_event', 'waiting_for_timer', 'waiting_for_message', 'recurred')
+		WHERE instance_id = $1 AND status IN ('pending', 'running', 'waiting_for_event', 'waiting_for_timer', 'waiting_for_message')
 	`, instanceID)
 	if err != nil {
 		return err
@@ -788,146 +788,6 @@ func (s *PostgresStorage) FindExpiredTimers(ctx context.Context, limit int) ([]*
 	return timers, rows.Err()
 }
 
-// --- Outbox Manager ---
-
-// AddOutboxEvent adds an event to the outbox.
-func (s *PostgresStorage) AddOutboxEvent(ctx context.Context, event *OutboxEvent) error {
-	conn := s.getConn(ctx)
-	_, err := conn.ExecContext(ctx, `
-		INSERT INTO outbox_events (event_id, event_type, event_source, event_data, data_type, content_type, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-	`, event.EventID, event.EventType, event.EventSource, string(event.EventData), event.DataType, event.ContentType, event.Status)
-	if err != nil {
-		return err
-	}
-
-	// Send notification for outbox pending
-	outboxPayload := map[string]string{"event_id": event.EventID}
-	if payloadBytes, err := json.Marshal(outboxPayload); err == nil {
-		s.sendNotify(ctx, notify.ChannelOutboxPending, string(payloadBytes))
-	}
-
-	return nil
-}
-
-// GetPendingOutboxEvents retrieves pending outbox events.
-// Uses SELECT FOR UPDATE SKIP LOCKED for concurrent workers.
-func (s *PostgresStorage) GetPendingOutboxEvents(ctx context.Context, limit int) ([]*OutboxEvent, error) {
-	conn := s.getConn(ctx)
-	rows, err := conn.QueryContext(ctx, `
-		SELECT event_id, event_type, event_source, event_data, data_type, content_type, status, retry_count, created_at
-		FROM outbox_events
-		WHERE status = 'pending'
-		ORDER BY created_at ASC
-		LIMIT $1
-		FOR UPDATE SKIP LOCKED
-	`, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-
-	var events []*OutboxEvent
-	for rows.Next() {
-		var e OutboxEvent
-		var eventData sql.NullString
-
-		if err := rows.Scan(&e.EventID, &e.EventType, &e.EventSource, &eventData, &e.DataType, &e.ContentType, &e.Status, &e.RetryCount, &e.CreatedAt); err != nil {
-			return nil, err
-		}
-		if eventData.Valid {
-			e.EventData = []byte(eventData.String)
-		}
-		events = append(events, &e)
-	}
-	return events, rows.Err()
-}
-
-// MarkOutboxEventSent marks an outbox event as published.
-func (s *PostgresStorage) MarkOutboxEventSent(ctx context.Context, eventID string) error {
-	conn := s.getConn(ctx)
-	_, err := conn.ExecContext(ctx, `
-		UPDATE outbox_events
-		SET status = 'published', published_at = NOW()
-		WHERE event_id = $1
-	`, eventID)
-	return err
-}
-
-// MarkOutboxEventFailed marks an outbox event as failed.
-func (s *PostgresStorage) MarkOutboxEventFailed(ctx context.Context, eventID string) error {
-	conn := s.getConn(ctx)
-	_, err := conn.ExecContext(ctx, `
-		UPDATE outbox_events
-		SET status = 'failed'
-		WHERE event_id = $1
-	`, eventID)
-	return err
-}
-
-// IncrementOutboxAttempts increments the attempt count for an event.
-func (s *PostgresStorage) IncrementOutboxAttempts(ctx context.Context, eventID string) error {
-	conn := s.getConn(ctx)
-	_, err := conn.ExecContext(ctx, `
-		UPDATE outbox_events
-		SET retry_count = retry_count + 1
-		WHERE event_id = $1
-	`, eventID)
-	return err
-}
-
-// CleanupOldOutboxEvents removes old published events.
-func (s *PostgresStorage) CleanupOldOutboxEvents(ctx context.Context, olderThan time.Duration) error {
-	conn := s.getConn(ctx)
-	threshold := time.Now().UTC().Add(-olderThan)
-	_, err := conn.ExecContext(ctx, `
-		DELETE FROM outbox_events
-		WHERE status = 'published' AND created_at < $1
-	`, threshold)
-	return err
-}
-
-// --- Compensation Manager ---
-
-// AddCompensation adds a compensation entry.
-func (s *PostgresStorage) AddCompensation(ctx context.Context, entry *CompensationEntry) error {
-	conn := s.getConn(ctx)
-	_, err := conn.ExecContext(ctx, `
-		INSERT INTO workflow_compensations (instance_id, activity_id, activity_name, args)
-		VALUES ($1, $2, $3, $4)
-	`, entry.InstanceID, entry.ActivityID, entry.ActivityName, string(entry.Args))
-	return err
-}
-
-// GetCompensations retrieves compensations for a workflow in LIFO order.
-func (s *PostgresStorage) GetCompensations(ctx context.Context, instanceID string) ([]*CompensationEntry, error) {
-	conn := s.getConn(ctx)
-	rows, err := conn.QueryContext(ctx, `
-		SELECT id, instance_id, activity_id, activity_name, args, created_at
-		FROM workflow_compensations
-		WHERE instance_id = $1
-		ORDER BY created_at DESC, id DESC
-	`, instanceID)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-
-	var comps []*CompensationEntry
-	for rows.Next() {
-		var c CompensationEntry
-		var args sql.NullString
-		if err := rows.Scan(&c.ID, &c.InstanceID, &c.ActivityID, &c.ActivityName, &args, &c.CreatedAt); err != nil {
-			return nil, err
-		}
-		if args.Valid {
-			c.Args = []byte(args.String)
-		}
-		comps = append(comps, &c)
-	}
-	return comps, rows.Err()
-}
-
 // ========================================
 // Channel Manager
 // ========================================
@@ -997,15 +857,6 @@ func (s *PostgresStorage) SubscribeToChannel(ctx context.Context, instanceID, ch
 	}
 
 	return nil
-}
-
-// UnsubscribeFromChannel unsubscribes an instance from a channel.
-func (s *PostgresStorage) UnsubscribeFromChannel(ctx context.Context, instanceID, channelName string) error {
-	conn := s.getConn(ctx)
-	_, err := conn.ExecContext(ctx, `
-		DELETE FROM channel_subscriptions WHERE instance_id = $1 AND channel = $2
-	`, instanceID, channelName)
-	return err
 }
 
 // GetChannelSubscription retrieves a subscription for an instance and channel.
@@ -1085,45 +936,8 @@ func (s *PostgresStorage) RegisterChannelReceiveAndReleaseLock(ctx context.Conte
 	return err
 }
 
-// GetPendingChannelMessages retrieves pending messages for a channel after a given ID.
-func (s *PostgresStorage) GetPendingChannelMessages(ctx context.Context, channelName string, afterID int64, limit int) ([]*ChannelMessage, error) {
-	conn := s.getConn(ctx)
-	rows, err := conn.QueryContext(ctx, `
-		SELECT id, channel, data, data_binary, metadata, published_at
-		FROM channel_messages
-		WHERE channel = $1 AND id > $2
-		ORDER BY id ASC
-		LIMIT $3
-	`, channelName, afterID, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-
-	var messages []*ChannelMessage
-	for rows.Next() {
-		var msg ChannelMessage
-		var data, metadata sql.NullString
-		var dataBinary []byte
-		err := rows.Scan(&msg.ID, &msg.Channel, &data, &dataBinary, &metadata, &msg.PublishedAt)
-		if err != nil {
-			return nil, err
-		}
-		if data.Valid {
-			msg.Data = []byte(data.String)
-		}
-		msg.DataBinary = dataBinary
-		if metadata.Valid {
-			msg.Metadata = []byte(metadata.String)
-		}
-		messages = append(messages, &msg)
-	}
-	return messages, rows.Err()
-}
-
 // GetPendingChannelMessagesForInstance gets pending messages for a specific subscriber.
 // For broadcast mode: Returns messages with id > cursor (messages not yet seen by this instance)
-// For competing mode: Returns unclaimed messages (not yet claimed by any instance)
 func (s *PostgresStorage) GetPendingChannelMessagesForInstance(ctx context.Context, instanceID, channelName string) ([]*ChannelMessage, error) {
 	conn := s.getConn(ctx)
 
@@ -1162,17 +976,6 @@ func (s *PostgresStorage) GetPendingChannelMessagesForInstance(ctx context.Conte
 			LIMIT 10
 		`
 		args = []any{channelName, cursorID}
-	} else {
-		// Competing mode: Get unclaimed messages
-		query = `
-			SELECT m.id, m.channel, m.data, m.data_binary, m.metadata, m.published_at
-			FROM channel_messages m
-			LEFT JOIN channel_message_claims c ON m.message_id = c.message_id
-			WHERE m.channel = $1 AND c.message_id IS NULL
-			ORDER BY m.id ASC
-			LIMIT 10
-		`
-		args = []any{channelName}
 	}
 
 	rows, err := conn.QueryContext(ctx, query, args...)
@@ -1202,31 +1005,6 @@ func (s *PostgresStorage) GetPendingChannelMessagesForInstance(ctx context.Conte
 	return messages, rows.Err()
 }
 
-// ClaimChannelMessage claims a message for competing mode.
-func (s *PostgresStorage) ClaimChannelMessage(ctx context.Context, messageID int64, instanceID string) (bool, error) {
-	conn := s.getConn(ctx)
-	result, err := conn.ExecContext(ctx, `
-		INSERT INTO channel_message_claims (message_id, instance_id)
-		VALUES ($1, $2)
-		ON CONFLICT (message_id) DO NOTHING
-	`, messageID, instanceID)
-	if err != nil {
-		return false, err
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-	return affected > 0, nil
-}
-
-// DeleteChannelMessage deletes a message from the channel.
-func (s *PostgresStorage) DeleteChannelMessage(ctx context.Context, messageID int64) error {
-	conn := s.getConn(ctx)
-	_, err := conn.ExecContext(ctx, `DELETE FROM channel_messages WHERE id = $1`, messageID)
-	return err
-}
-
 // UpdateDeliveryCursor updates the delivery cursor for broadcast mode.
 func (s *PostgresStorage) UpdateDeliveryCursor(ctx context.Context, instanceID, channelName string, lastMessageID int64) error {
 	conn := s.getConn(ctx)
@@ -1236,20 +1014,6 @@ func (s *PostgresStorage) UpdateDeliveryCursor(ctx context.Context, instanceID, 
 		ON CONFLICT (instance_id, channel) DO UPDATE SET last_delivered_id = EXCLUDED.last_delivered_id, updated_at = NOW()
 	`, instanceID, channelName, lastMessageID)
 	return err
-}
-
-// GetDeliveryCursor gets the current delivery cursor for an instance and channel.
-func (s *PostgresStorage) GetDeliveryCursor(ctx context.Context, instanceID, channelName string) (int64, error) {
-	conn := s.getConn(ctx)
-	var lastDeliveredID int64
-	err := conn.QueryRowContext(ctx, `
-		SELECT last_delivered_id FROM channel_delivery_cursors
-		WHERE instance_id = $1 AND channel = $2
-	`, instanceID, channelName).Scan(&lastDeliveredID)
-	if err == sql.ErrNoRows {
-		return 0, nil
-	}
-	return lastDeliveredID, err
 }
 
 // GetChannelSubscribersWaiting finds subscribers waiting for messages on a channel.
@@ -1295,23 +1059,6 @@ func (s *PostgresStorage) ClearChannelWaitingState(ctx context.Context, instance
 	return err
 }
 
-// DeliverChannelMessage delivers a message to a waiting subscriber.
-func (s *PostgresStorage) DeliverChannelMessage(ctx context.Context, instanceID string, message *ChannelMessage) error {
-	conn := s.getConn(ctx)
-
-	// Record message receipt in history
-	_, err := conn.ExecContext(ctx, `
-		INSERT INTO workflow_history (instance_id, activity_id, event_type, event_data, data_type)
-		VALUES ($1, $2, 'channel_message_received', $3, 'json')
-	`, instanceID, fmt.Sprintf("channel:%s:%d", message.Channel, message.ID), string(message.Data))
-	if err != nil {
-		return err
-	}
-
-	// Clear waiting state
-	return s.ClearChannelWaitingState(ctx, instanceID, message.Channel)
-}
-
 // DeliverChannelMessageWithLock delivers a message using Lock-First pattern.
 // Returns nil result if lock could not be acquired (another worker will handle it).
 func (s *PostgresStorage) DeliverChannelMessageWithLock(
@@ -1344,7 +1091,7 @@ func (s *PostgresStorage) DeliverChannelMessageWithLock(
 		return nil, fmt.Errorf("failed to get workflow info: %w", err)
 	}
 
-	// Get the activity ID and mode from the subscription (stored when Receive was called)
+	// Get the activity ID and mode from the event subscription.
 	var historyActivityID, subscriptionMode string
 	err = conn.QueryRowContext(ctx, `
 		SELECT COALESCE(activity_id, ''), mode FROM channel_subscriptions
@@ -1360,7 +1107,7 @@ func (s *PostgresStorage) DeliverChannelMessageWithLock(
 	}
 
 	// Step 3: Record message in history using the correct activity ID
-	// Wrap the message in ReceivedMessage format so Receive can unmarshal it correctly
+	// Wrap the event in the existing history format for WaitEvent replay.
 	wrappedData := map[string]any{
 		"id":           message.ID,
 		"channel_name": channelName,
@@ -1489,61 +1236,6 @@ func (s *PostgresStorage) FindExpiredChannelSubscriptions(ctx context.Context, l
 }
 
 // ========================================
-// Group Manager
-// ========================================
-
-// JoinGroup adds an instance to a group.
-func (s *PostgresStorage) JoinGroup(ctx context.Context, instanceID, groupName string) error {
-	conn := s.getConn(ctx)
-	_, err := conn.ExecContext(ctx, `
-		INSERT INTO workflow_group_memberships (instance_id, group_name)
-		VALUES ($1, $2)
-		ON CONFLICT (instance_id, group_name) DO NOTHING
-	`, instanceID, groupName)
-	return err
-}
-
-// LeaveGroup removes an instance from a group.
-func (s *PostgresStorage) LeaveGroup(ctx context.Context, instanceID, groupName string) error {
-	conn := s.getConn(ctx)
-	_, err := conn.ExecContext(ctx, `
-		DELETE FROM workflow_group_memberships WHERE instance_id = $1 AND group_name = $2
-	`, instanceID, groupName)
-	return err
-}
-
-// GetGroupMembers retrieves all instance IDs in a group.
-func (s *PostgresStorage) GetGroupMembers(ctx context.Context, groupName string) ([]string, error) {
-	conn := s.getConn(ctx)
-	rows, err := conn.QueryContext(ctx, `
-		SELECT instance_id FROM workflow_group_memberships WHERE group_name = $1
-	`, groupName)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-
-	var members []string
-	for rows.Next() {
-		var instanceID string
-		if err := rows.Scan(&instanceID); err != nil {
-			return nil, err
-		}
-		members = append(members, instanceID)
-	}
-	return members, rows.Err()
-}
-
-// LeaveAllGroups removes an instance from all groups.
-func (s *PostgresStorage) LeaveAllGroups(ctx context.Context, instanceID string) error {
-	conn := s.getConn(ctx)
-	_, err := conn.ExecContext(ctx, `
-		DELETE FROM workflow_group_memberships WHERE instance_id = $1
-	`, instanceID)
-	return err
-}
-
-// ========================================
 // System Lock Manager
 // ========================================
 
@@ -1590,95 +1282,4 @@ func (s *PostgresStorage) CleanupExpiredSystemLocks(ctx context.Context) error {
 		DELETE FROM system_locks WHERE lock_expires_at < NOW()
 	`)
 	return err
-}
-
-// ========================================
-// History Archive Manager
-// ========================================
-
-// ArchiveHistory moves all history events for an instance to the archive table.
-func (s *PostgresStorage) ArchiveHistory(ctx context.Context, instanceID string) error {
-	conn := s.getConn(ctx)
-
-	// Copy to archive
-	_, err := conn.ExecContext(ctx, `
-		INSERT INTO workflow_history_archive (original_id, instance_id, activity_id, event_type, event_data, event_data_binary, data_type, original_created_at)
-		SELECT id, instance_id, activity_id, event_type, event_data, event_data_binary, data_type, created_at
-		FROM workflow_history
-		WHERE instance_id = $1
-	`, instanceID)
-	if err != nil {
-		return err
-	}
-
-	// Delete from original
-	_, err = conn.ExecContext(ctx, `
-		DELETE FROM workflow_history WHERE instance_id = $1
-	`, instanceID)
-	return err
-}
-
-// GetArchivedHistory retrieves archived history events for an instance.
-func (s *PostgresStorage) GetArchivedHistory(ctx context.Context, instanceID string) ([]*ArchivedHistoryEvent, error) {
-	conn := s.getConn(ctx)
-	rows, err := conn.QueryContext(ctx, `
-		SELECT id, original_id, instance_id, activity_id, event_type, event_data, event_data_binary, data_type, original_created_at, archived_at
-		FROM workflow_history_archive
-		WHERE instance_id = $1
-		ORDER BY original_id ASC
-	`, instanceID)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-
-	var events []*ArchivedHistoryEvent
-	for rows.Next() {
-		var e ArchivedHistoryEvent
-		var eventData sql.NullString
-		var originalID sql.NullInt64
-		var originalCreatedAt sql.NullTime
-		err := rows.Scan(&e.ID, &originalID, &e.InstanceID, &e.ActivityID, &e.EventType, &eventData, &e.EventDataBinary, &e.DataType, &originalCreatedAt, &e.ArchivedAt)
-		if err != nil {
-			return nil, err
-		}
-		if originalID.Valid {
-			e.OriginalID = originalID.Int64
-		}
-		if eventData.Valid {
-			e.EventData = []byte(eventData.String)
-		}
-		if originalCreatedAt.Valid {
-			e.OriginalCreatedAt = originalCreatedAt.Time
-		}
-		events = append(events, &e)
-	}
-	return events, rows.Err()
-}
-
-// CleanupInstanceSubscriptions removes all subscriptions for an instance.
-// Note: workflow_event_subscriptions was removed in schema unification;
-// events now use channel subscriptions.
-func (s *PostgresStorage) CleanupInstanceSubscriptions(ctx context.Context, instanceID string) error {
-	conn := s.getConn(ctx)
-
-	// Remove timer subscriptions
-	_, err := conn.ExecContext(ctx, `DELETE FROM workflow_timer_subscriptions WHERE instance_id = $1`, instanceID)
-	if err != nil {
-		return fmt.Errorf("failed to delete timer subscriptions: %w", err)
-	}
-
-	// Remove channel subscriptions (includes event subscriptions since WaitEvent uses channels)
-	_, err = conn.ExecContext(ctx, `DELETE FROM channel_subscriptions WHERE instance_id = $1`, instanceID)
-	if err != nil {
-		return fmt.Errorf("failed to delete channel subscriptions: %w", err)
-	}
-
-	// Remove group memberships
-	_, err = conn.ExecContext(ctx, `DELETE FROM workflow_group_memberships WHERE instance_id = $1`, instanceID)
-	if err != nil {
-		return fmt.Errorf("failed to delete group memberships: %w", err)
-	}
-
-	return nil
 }

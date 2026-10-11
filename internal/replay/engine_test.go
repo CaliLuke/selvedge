@@ -453,21 +453,6 @@ func TestExecutionContext_Storage(t *testing.T) {
 	assert.Equal(t, store, execCtx.Storage())
 }
 
-func TestEngine_SetCompensationRunner(t *testing.T) {
-	store := setupTestStorage(t)
-	engine := NewEngine(store, &hooks.NoOpHooks{}, "worker-1")
-
-	assert.Nil(t, engine.compensationRunner)
-
-	runner := func(ctx context.Context, funcName string, arg []byte) error {
-		return nil
-	}
-
-	engine.SetCompensationRunner(runner)
-
-	assert.NotNil(t, engine.compensationRunner)
-}
-
 func TestEngine_StartWorkflow(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -547,29 +532,6 @@ func TestEngine_StartWorkflow_TimerSuspend(t *testing.T) {
 	assert.Equal(t, storage.StatusWaitingForTimer, gotInstance.Status)
 }
 
-func TestEngine_StartWorkflow_RecurSuspend(t *testing.T) {
-	store := setupTestStorage(t)
-	engine := NewEngine(store, &hooks.NoOpHooks{}, "worker-1")
-
-	instance := &storage.WorkflowInstance{
-		InstanceID:   "inst-recur",
-		WorkflowName: "test_workflow",
-		Status:       storage.StatusRunning,
-	}
-	require.NoError(t, store.CreateInstance(context.Background(), instance))
-
-	runner := func(execCtx *ExecutionContext) (any, error) {
-		return nil, NewRecurSuspend(execCtx.InstanceID(), map[string]int{"count": 5})
-	}
-
-	err := engine.StartWorkflow(context.Background(), instance.InstanceID, "test_workflow", nil, runner)
-	require.NoError(t, err)
-
-	gotInstance, err := store.GetInstance(context.Background(), instance.InstanceID)
-	require.NoError(t, err)
-	assert.Equal(t, storage.StatusRecurred, gotInstance.Status)
-}
-
 func TestEngine_RecordActivityResult(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -623,103 +585,6 @@ func TestEngine_RecordActivityResult(t *testing.T) {
 			assert.Equal(t, tt.activityID, history[0].ActivityID)
 		})
 	}
-}
-
-func TestEngine_executeCompensations(t *testing.T) {
-	tests := []struct {
-		name          string
-		compensations []string
-		runnerError   error
-		wantErr       bool
-		wantExecuted  int
-	}{
-		{
-			name:          "no compensations",
-			compensations: nil,
-			runnerError:   nil,
-			wantErr:       false,
-			wantExecuted:  0,
-		},
-		{
-			name:          "all success",
-			compensations: []string{"comp1", "comp2"},
-			runnerError:   nil,
-			wantErr:       false,
-			wantExecuted:  2,
-		},
-		{
-			name:          "runner fails",
-			compensations: []string{"comp1"},
-			runnerError:   errors.New("compensation failed"),
-			wantErr:       true,
-			wantExecuted:  1,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			store := setupTestStorage(t)
-			engine := NewEngine(store, &hooks.NoOpHooks{}, "worker-1")
-
-			instance := &storage.WorkflowInstance{
-				InstanceID:   "inst-" + tt.name,
-				WorkflowName: "test_workflow",
-				Status:       storage.StatusRunning,
-			}
-			require.NoError(t, store.CreateInstance(context.Background(), instance))
-
-			for _, compName := range tt.compensations {
-				entry := &storage.CompensationEntry{
-					InstanceID:   instance.InstanceID,
-					ActivityID:   compName,
-					ActivityName: compName,
-					Args:         []byte(`"arg"`),
-				}
-				require.NoError(t, store.AddCompensation(context.Background(), entry))
-				// Small delay to ensure different millisecond timestamps for ordering
-				time.Sleep(2 * time.Millisecond)
-			}
-
-			var executedCount int
-			engine.SetCompensationRunner(func(ctx context.Context, funcName string, arg []byte) error {
-				executedCount++
-				return tt.runnerError
-			})
-
-			err := engine.executeCompensations(context.Background(), instance.InstanceID)
-
-			if tt.wantErr {
-				require.Error(t, err)
-			} else {
-				require.NoError(t, err)
-			}
-
-			assert.Equal(t, tt.wantExecuted, executedCount)
-		})
-	}
-}
-
-func TestEngine_executeCompensations_NoRunner(t *testing.T) {
-	store := setupTestStorage(t)
-	engine := NewEngine(store, &hooks.NoOpHooks{}, "worker-1")
-
-	instance := &storage.WorkflowInstance{
-		InstanceID:   "inst-no-runner",
-		WorkflowName: "test_workflow",
-		Status:       storage.StatusRunning,
-	}
-	require.NoError(t, store.CreateInstance(context.Background(), instance))
-
-	entry := &storage.CompensationEntry{
-		InstanceID:   instance.InstanceID,
-		ActivityID:   "comp1",
-		ActivityName: "comp1",
-		Args:         []byte(`"arg"`),
-	}
-	require.NoError(t, store.AddCompensation(context.Background(), entry))
-
-	err := engine.executeCompensations(context.Background(), instance.InstanceID)
-	require.NoError(t, err)
 }
 
 func TestCachedResult_Structure(t *testing.T) {
