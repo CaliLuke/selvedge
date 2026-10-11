@@ -11,19 +11,24 @@ import (
 	"github.com/CaliLuke/selvedge/internal/storage"
 )
 
+// ErrorCodec encodes workflow failures without depending on public error types.
+type ErrorCodec interface{ Encode(error) []byte }
+
 // Engine handles workflow execution with deterministic replay.
 type Engine struct {
 	storage  storage.Storage
 	hooks    hooks.WorkflowHooks
 	workerID string
+	codec    ErrorCodec
 }
 
 // NewEngine creates a new replay engine.
-func NewEngine(s storage.Storage, h hooks.WorkflowHooks, workerID string) *Engine {
+func NewEngine(s storage.Storage, h hooks.WorkflowHooks, workerID string, codec ErrorCodec) *Engine {
 	return &Engine{
 		storage:  s,
 		hooks:    h,
 		workerID: workerID,
+		codec:    codec,
 	}
 }
 
@@ -111,26 +116,12 @@ func (ec *ExecutionContext) RecordActivityID(activityID string) {
 	// This is called after activity execution to track which activities have run
 }
 
-// RecordActivityResult records an activity result to storage.
-// This delegates to the engine's RecordActivityResult method.
-func (ec *ExecutionContext) RecordActivityResult(activityID string, result any, activityErr error) (*storage.HistoryEvent, error) {
+// RecordActivityResultWithContext records an already-encoded activity outcome.
+func (ec *ExecutionContext) RecordActivityResultWithContext(ctx context.Context, key string, eventType storage.HistoryEventType, payload []byte) (*storage.HistoryEvent, error) {
 	ec.counterMu.Lock()
 	ec.newActivities++
 	ec.counterMu.Unlock()
-	return ec.recordActivityResult(ec.ctx, activityID, result, activityErr)
-}
-
-// RecordActivityResultWithContext records an activity result to storage using the provided context.
-// This is useful when recording within a transaction where the transaction context should be used.
-func (ec *ExecutionContext) RecordActivityResultWithContext(ctx context.Context, activityID string, result any, activityErr error) (*storage.HistoryEvent, error) {
-	ec.counterMu.Lock()
-	ec.newActivities++
-	ec.counterMu.Unlock()
-	return ec.recordActivityResult(ctx, activityID, result, activityErr)
-}
-
-func (ec *ExecutionContext) recordActivityResult(ctx context.Context, key string, result any, activityErr error) (*storage.HistoryEvent, error) {
-	event, err := ec.engine.RecordActivityResult(ctx, ec.instanceID, key, result, activityErr)
+	event, err := ec.engine.recordActivityPayload(ctx, ec.instanceID, key, eventType, payload)
 	if err != nil {
 		return nil, err
 	}
@@ -277,10 +268,11 @@ func (e *Engine) executeWorkflow(ctx context.Context, instanceID string, runner 
 		}
 
 		// Record workflow failure in history
-		eventData, _ := json.Marshal(map[string]any{"error": err.Error()})
+		eventData := e.codec.Encode(err)
 		_ = e.storage.AppendHistory(ctx, &storage.HistoryEvent{
 			InstanceID: instanceID,
 			EventType:  storage.HistoryWorkflowFailed,
+			ActivityID: "$workflow_failed",
 			EventData:  eventData,
 			DataType:   "json",
 		})
@@ -389,24 +381,23 @@ func (e *Engine) RecordActivityResult(
 	result any,
 	activityErr error,
 ) (*storage.HistoryEvent, error) {
-	event := &storage.HistoryEvent{
-		InstanceID: instanceID,
-		ActivityID: activityID,
-		DataType:   "json",
-	}
-
+	eventType := storage.HistoryActivityCompleted
+	var payload []byte
 	if activityErr != nil {
-		event.EventType = storage.HistoryActivityFailed
-		errData, _ := json.Marshal(activityErr.Error())
-		event.EventData = errData
+		eventType = storage.HistoryActivityFailed
+		payload = e.codec.Encode(activityErr)
 	} else {
-		event.EventType = storage.HistoryActivityCompleted
-		resultData, err := json.Marshal(result)
+		var err error
+		payload, err = json.Marshal(result)
 		if err != nil {
 			return nil, fmt.Errorf("failed to serialize result: %w", err)
 		}
-		event.EventData = resultData
 	}
+	return e.recordActivityPayload(ctx, instanceID, activityID, eventType, payload)
+}
+
+func (e *Engine) recordActivityPayload(ctx context.Context, instanceID, activityID string, eventType storage.HistoryEventType, payload []byte) (*storage.HistoryEvent, error) {
+	event := &storage.HistoryEvent{InstanceID: instanceID, ActivityID: activityID, EventType: eventType, EventData: payload, DataType: "json"}
 
 	if err := e.storage.AppendHistory(ctx, event); err != nil {
 		return nil, err

@@ -18,26 +18,22 @@ type Activity[I, O any] struct {
 	fn   func(ctx context.Context, input I) (O, error)
 
 	// Configuration
-	retryPolicy   *retry.Policy
-	timeout       time.Duration
-	transactional bool // Wrap execution in a transaction (default: true)
+	retryPolicy *retry.Policy
+	timeout     time.Duration
 }
 
 // ActivityOption configures an activity.
 type ActivityOption[I, O any] func(*Activity[I, O])
 
 // DefineActivity creates a new activity.
-// By default, activities are wrapped in a transaction for atomicity with
-// history recording.
 func DefineActivity[I, O any](
 	name string,
 	fn func(ctx context.Context, input I) (O, error),
 	opts ...ActivityOption[I, O],
 ) *Activity[I, O] {
 	a := &Activity[I, O]{
-		name:          name,
-		fn:            fn,
-		transactional: true, // Default: wrap in transaction
+		name: name,
+		fn:   fn,
 	}
 	for _, opt := range opts {
 		opt(a)
@@ -64,28 +60,8 @@ func WithTimeout[I, O any](d time.Duration) ActivityOption[I, O] {
 	}
 }
 
-// WithTransactional sets whether the activity execution should be wrapped
-// in a database transaction. Default is true.
-//
-// When transactional=true (default):
-//   - Activity execution and history recording are atomic
-//   - Rollback occurs on failure
-//   - Use ctx.Storage() for database operations within the same transaction
-//
-// When transactional=false:
-//   - Useful for activities that call external APIs or don't need atomicity
-//   - History is still recorded, but not atomically
-func WithTransactional[I, O any](transactional bool) ActivityOption[I, O] {
-	return func(a *Activity[I, O]) {
-		a.transactional = transactional
-	}
-}
-
 // Execute runs the activity within a workflow context.
 // If activityID is empty, it will be auto-generated.
-//
-// When transactional=true (default), the activity execution and history recording
-// are wrapped in a database transaction for atomicity.
 func (a *Activity[I, O]) Execute(
 	ctx *WorkflowContext,
 	input I,
@@ -124,7 +100,7 @@ func (a *Activity[I, O]) Execute(
 	if event, ok := ctx.lookupRecorded(activityID); ok {
 		if event.EventType == storage.HistoryActivityFailed || event.EventType == storage.HistoryMessageTimeout {
 			var zero O
-			return zero, replayRecordedError(event)
+			return zero, replayRecordedError(ctx, event)
 		}
 		result, err := decodeActivityRecorded[O](ctx, event)
 		if err != nil {
@@ -142,65 +118,6 @@ func (a *Activity[I, O]) Execute(
 		return result, nil
 	}
 
-	// Execute with or without transaction based on configuration
-	if a.transactional && ctx.Storage() != nil {
-		return a.executeInTransaction(ctx, input, activityID)
-	}
-
-	return a.executeWithoutTransaction(ctx, input, activityID)
-}
-
-// executeInTransaction runs the activity within a database transaction.
-func (a *Activity[I, O]) executeInTransaction(
-	ctx *WorkflowContext,
-	input I,
-	activityID string,
-) (O, error) {
-	var zero O
-
-	// Begin transaction
-	txCtx, err := ctx.Storage().BeginTransaction(ctx.Context())
-	if err != nil {
-		return zero, fmt.Errorf("failed to begin transaction: %w", err)
-	}
-
-	// Create a new context with the transaction
-	txWorkflowCtx := ctx.WithContext(txCtx)
-
-	// Execute the activity
-	result, execErr := a.executeWithRetry(txWorkflowCtx, input, activityID)
-
-	// Record the serialized result before committing.
-	stored, recordErr := txWorkflowCtx.recordActivityResult(activityID, result, execErr)
-	if recordErr != nil {
-		// Rollback on record failure
-		_ = ctx.Storage().RollbackTransaction(txCtx)
-		return zero, fmt.Errorf("failed to record activity result: %w", recordErr)
-	}
-
-	if execErr != nil {
-		// Rollback on execution failure
-		_ = ctx.Storage().RollbackTransaction(txCtx)
-		return zero, execErr
-	}
-
-	// Record activity ID for tracking
-	txWorkflowCtx.RecordActivityID(activityID)
-
-	// Commit the transaction
-	if commitErr := ctx.Storage().CommitTransaction(txCtx); commitErr != nil {
-		return zero, fmt.Errorf("failed to commit transaction: %w", commitErr)
-	}
-
-	return decodeActivityRecorded[O](ctx, stored)
-}
-
-// executeWithoutTransaction runs the activity without a transaction wrapper.
-func (a *Activity[I, O]) executeWithoutTransaction(
-	ctx *WorkflowContext,
-	input I,
-	activityID string,
-) (O, error) {
 	// Execute the activity
 	result, err := a.executeWithRetry(ctx, input, activityID)
 
@@ -209,11 +126,6 @@ func (a *Activity[I, O]) executeWithoutTransaction(
 	if recordErr != nil {
 		var zero O
 		return zero, fmt.Errorf("failed to record activity result: %w", recordErr)
-	}
-
-	if err != nil {
-		var zero O
-		return zero, err
 	}
 
 	// Record activity ID for tracking
@@ -273,7 +185,7 @@ func (a *Activity[I, O]) executeWithRetry(ctx *WorkflowContext, input I, activit
 		lastErr = err
 
 		// Check if error is terminal (should not retry)
-		if IsTerminalError(err) {
+		if IsTerminalError(err) || nonRetryableApplication(err) {
 			// Call OnActivityFailed hook
 			if h := ctx.Hooks(); h != nil {
 				h.OnActivityFailed(ctx.Context(), hooks.ActivityFailedInfo{

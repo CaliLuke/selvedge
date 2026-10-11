@@ -241,7 +241,7 @@ func (a *App) initStorage() error {
 	}
 
 	// Create the replay engine
-	a.engine = replay.NewEngine(a.storage, a.hooks, a.config.workerID)
+	a.engine = replay.NewEngine(a.storage, a.hooks, a.config.workerID, errorCodec{})
 
 	return nil
 }

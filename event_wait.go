@@ -102,7 +102,7 @@ func receiveEvent[T any](ctx *WorkflowContext, channelName string, opts ...recei
 	}
 	if event, ok := ctx.lookupRecorded(activityID); ok {
 		if event.EventType == storage.HistoryActivityFailed || event.EventType == storage.HistoryMessageTimeout {
-			err := replayRecordedError(event)
+			err := replayRecordedError(ctx, event)
 			if strings.Contains(err.Error(), "timeout waiting for channel message") {
 				return nil, &ChannelMessageTimeoutError{InstanceID: ctx.InstanceID(), ChannelName: channelName}
 			}

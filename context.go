@@ -20,23 +20,8 @@ func ContextWithWorkflowContext(ctx context.Context, wfCtx *WorkflowContext) con
 	return context.WithValue(ctx, workflowContextKey{}, wfCtx)
 }
 
-// GetWorkflowContext retrieves the WorkflowContext from a context.Context.
-// This is useful in activities to access workflow-level features like Session()
-// for database operations within the same transaction.
-//
+// GetWorkflowContext retrieves workflow metadata from an activity context.
 // Returns nil if the context does not contain a WorkflowContext.
-//
-// Example:
-//
-//	activity := selvedge.DefineActivity("process_order", func(ctx context.Context, input OrderInput) (OrderResult, error) {
-//	    wfCtx := selvedge.GetWorkflowContext(ctx)
-//	    if wfCtx == nil {
-//	        return OrderResult{}, fmt.Errorf("workflow context not available")
-//	    }
-//	    session := wfCtx.Session()
-//	    // Use session for database operations...
-//	    return OrderResult{}, nil
-//	})
 func GetWorkflowContext(ctx context.Context) *WorkflowContext {
 	if v := ctx.Value(workflowContextKey{}); v != nil {
 		if wfCtx, ok := v.(*WorkflowContext); ok {
@@ -108,7 +93,6 @@ func (c *WorkflowContext) Context() context.Context {
 }
 
 // WithContext returns a copy of the WorkflowContext with a new underlying context.
-// This is useful for passing transaction contexts to storage operations.
 func (c *WorkflowContext) WithContext(ctx context.Context) *WorkflowContext {
 	return &WorkflowContext{
 		ctx:            ctx,
@@ -169,21 +153,21 @@ func (c *WorkflowContext) RecordActivityResult(activityID string, result any, ac
 }
 
 func (c *WorkflowContext) recordActivityResult(activityID string, result any, activityErr error) (*storage.HistoryEvent, error) {
-	if c.execCtx != nil {
-		return c.execCtx.RecordActivityResultWithContext(c.ctx, activityID, result, activityErr)
-	}
-	// Standalone contexts have no durable store. Still use the JSON codec so
-	// that activity values have the same representation as an engine run.
 	event := &storage.HistoryEvent{InstanceID: c.instanceID, ActivityID: activityID, DataType: "json", EventType: storage.HistoryActivityCompleted}
 	if activityErr != nil {
 		event.EventType = storage.HistoryActivityFailed
-		result = activityErr.Error()
+		event.EventData = encodeError(activityErr)
+	} else {
+		data, err := json.Marshal(result)
+		if err != nil {
+			return nil, fmt.Errorf("failed to serialize result: %w", err)
+		}
+		event.EventData = data
 	}
-	data, err := json.Marshal(result)
-	if err != nil {
-		return nil, fmt.Errorf("failed to serialize result: %w", err)
+	if c.execCtx != nil {
+		return c.execCtx.RecordActivityResultWithContext(c.ctx, activityID, event.EventType, event.EventData)
 	}
-	event.EventData = data
+	// Standalone contexts use the same JSON representation as engine runs.
 	return event, nil
 }
 
@@ -216,35 +200,6 @@ func (c *WorkflowContext) Done() <-chan struct{} {
 func (c *WorkflowContext) Storage() storage.Storage {
 	if c.execCtx != nil {
 		return c.execCtx.Storage()
-	}
-	return nil
-}
-
-// Session returns the database executor for the current context.
-// When called within a transactional activity, this returns the transaction,
-// allowing you to execute custom SQL queries in the same transaction as
-// the activity execution and history recording.
-//
-// Returns nil if storage is not available.
-//
-// Example:
-//
-//	activity := selvedge.DefineActivity("process_order", func(ctx context.Context, input OrderInput) (OrderResult, error) {
-//	    // Get the database session (transaction if in transactional activity)
-//	    wfCtx := selvedge.GetWorkflowContext(ctx)
-//	    session := wfCtx.Session()
-//	    if session != nil {
-//	        // Execute custom SQL in the same transaction
-//	        _, err := session.ExecContext(ctx, "INSERT INTO orders ...", input.OrderID)
-//	        if err != nil {
-//	            return OrderResult{}, err
-//	        }
-//	    }
-//	    return OrderResult{Status: "completed"}, nil
-//	})
-func (c *WorkflowContext) Session() storage.Executor {
-	if s := c.Storage(); s != nil {
-		return s.Conn(c.ctx)
 	}
 	return nil
 }

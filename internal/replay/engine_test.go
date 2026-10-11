@@ -2,6 +2,7 @@ package replay
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
@@ -46,7 +47,7 @@ func TestNewEngine(t *testing.T) {
 			store := setupTestStorage(t)
 			hooks := &hooks.NoOpHooks{}
 
-			engine := NewEngine(store, hooks, tt.workerID)
+			engine := NewEngine(store, hooks, tt.workerID, testErrorCodec{})
 
 			require.NotNil(t, engine)
 			assert.Equal(t, store, engine.storage)
@@ -210,7 +211,7 @@ func TestExecutionContext_GenerateActivityID_Concurrency(t *testing.T) {
 
 func TestExecutionContext_Storage(t *testing.T) {
 	store := setupTestStorage(t)
-	engine := NewEngine(store, &hooks.NoOpHooks{}, "worker-1")
+	engine := NewEngine(store, &hooks.NoOpHooks{}, "worker-1", testErrorCodec{})
 
 	execCtx := &ExecutionContext{
 		ctx:             context.Background(),
@@ -250,7 +251,7 @@ func TestEngine_StartWorkflow(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			store := setupTestStorage(t)
-			engine := NewEngine(store, &hooks.NoOpHooks{}, "worker-1")
+			engine := NewEngine(store, &hooks.NoOpHooks{}, "worker-1", testErrorCodec{})
 
 			instance := &storage.WorkflowInstance{
 				InstanceID:   "inst-" + tt.name,
@@ -280,7 +281,7 @@ func TestEngine_StartWorkflow(t *testing.T) {
 
 func TestEngine_StartWorkflow_TimerSuspend(t *testing.T) {
 	store := setupTestStorage(t)
-	engine := NewEngine(store, &hooks.NoOpHooks{}, "worker-1")
+	engine := NewEngine(store, &hooks.NoOpHooks{}, "worker-1", testErrorCodec{})
 
 	instance := &storage.WorkflowInstance{
 		InstanceID:   "inst-timer",
@@ -336,7 +337,7 @@ func TestEngine_RecordActivityResult(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			store := setupTestStorage(t)
-			engine := NewEngine(store, &hooks.NoOpHooks{}, "worker-1")
+			engine := NewEngine(store, &hooks.NoOpHooks{}, "worker-1", testErrorCodec{})
 
 			instance := &storage.WorkflowInstance{
 				InstanceID:   "inst-" + tt.name,
@@ -372,4 +373,12 @@ func TestExecutionContext_Lookup(t *testing.T) {
 	require.False(t, found)
 	require.Nil(t, got)
 	require.Equal(t, 3, ec.cacheHits)
+}
+
+// The engine only encodes opaque error payloads; root tests exercise the full codec.
+type testErrorCodec struct{}
+
+func (testErrorCodec) Encode(err error) []byte {
+	data, _ := json.Marshal(map[string]any{"v": 1, "kind": "generic", "Message": err.Error()})
+	return data
 }

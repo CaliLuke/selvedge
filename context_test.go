@@ -314,13 +314,6 @@ func TestWorkflowContext_Storage_NilWithoutExecCtx(t *testing.T) {
 	assert.Nil(t, wfCtx.Storage())
 }
 
-func TestWorkflowContext_Session_NilWithoutStorage(t *testing.T) {
-	ctx := context.Background()
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", false)
-
-	assert.Nil(t, wfCtx.Session())
-}
-
 func TestWorkflowContext_IsReplaying_Values(t *testing.T) {
 	tests := []struct {
 		name        string

@@ -182,3 +182,46 @@ func (e *eventModeConflictError) Error() string {
 // ErrWorkflowNotCancellable indicates that the workflow cannot be cancelled.
 // This happens when the workflow is already completed, cancelled, failed, or does not exist.
 var ErrWorkflowNotCancellable = errors.New("workflow cannot be cancelled")
+
+// ApplicationError carries a portable activity or workflow failure.
+// Details must be JSON-serializable and is returned as JSON-decoded data.
+type ApplicationError struct {
+	Type         string
+	Message      string
+	NonRetryable bool
+	Details      any
+	Cause        error
+}
+
+// Error returns the message, followed by the cause when one is set.
+func (e *ApplicationError) Error() string {
+	if e.Cause != nil {
+		return fmt.Sprintf("%s: %v", e.Message, e.Cause)
+	}
+	return e.Message
+}
+
+// Unwrap returns the cause, so errors.Is and errors.As see through the error.
+func (e *ApplicationError) Unwrap() error {
+	return e.Cause
+}
+
+// NewApplicationError constructs a retryable application failure.
+func NewApplicationError(message, errType string, details any, cause error) *ApplicationError {
+	return &ApplicationError{Type: errType, Message: message, Details: details, Cause: cause}
+}
+
+// NewNonRetryableApplicationError constructs a failure that must not be retried.
+func NewNonRetryableApplicationError(message, errType string, details any, cause error) *ApplicationError {
+	return &ApplicationError{Type: errType, Message: message, NonRetryable: true, Details: details, Cause: cause}
+}
+
+func nonRetryableApplication(err error) bool {
+	for err != nil {
+		if app, ok := err.(*ApplicationError); ok && app.NonRetryable {
+			return true
+		}
+		err = errors.Unwrap(err)
+	}
+	return false
+}

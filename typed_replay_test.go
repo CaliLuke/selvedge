@@ -69,30 +69,26 @@ func addTypedReplayWorkflow[O any](t *testing.T, h *typedReplayHarness, activity
 
 func assertTypedReplay[O any](t *testing.T, factory replayAppFactory, live, expected O) {
 	t.Helper()
-	for _, transactional := range []bool{true, false} {
-		t.Run(map[bool]string{true: "transactional", false: "nontransactional"}[transactional], func(t *testing.T) {
-			observed := &typedReplayHooks{}
-			h := newTypedReplayHarness(t, factory, WithHooks(observed))
-			calls := 0
-			activity := DefineActivity("typed", func(context.Context, string) (O, error) {
-				calls++
-				return live, nil
-			}, WithTransactional[string, O](transactional))
-			var values []O
-			instanceID := addTypedReplayWorkflow(t, h, activity, &values)
-			require.NoError(t, h.RunOnce(instanceID))
-			require.Equal(t, []O{expected}, values, "first execution must use recorded JSON")
-			require.NoError(t, h.RunOnce(instanceID))
-			h.forceFire(t, instanceID)
-			require.NoError(t, h.RunOnce(instanceID))
-			require.Equal(t, []O{expected, expected, expected}, values)
-			require.Equal(t, []any{expected, expected}, observed.cached, "cache-hit hooks must receive the decoded output type")
-			require.Equal(t, 1, calls)
-			instance, err := h.app.storage.GetInstance(h.app.ctx, instanceID)
-			require.NoError(t, err)
-			require.Equal(t, storage.StatusCompleted, instance.Status)
-		})
-	}
+	observed := &typedReplayHooks{}
+	h := newTypedReplayHarness(t, factory, WithHooks(observed))
+	calls := 0
+	activity := DefineActivity("typed", func(context.Context, string) (O, error) {
+		calls++
+		return live, nil
+	})
+	var values []O
+	instanceID := addTypedReplayWorkflow(t, h, activity, &values)
+	require.NoError(t, h.RunOnce(instanceID))
+	require.Equal(t, []O{expected}, values, "first execution must use recorded JSON")
+	require.NoError(t, h.RunOnce(instanceID))
+	h.forceFire(t, instanceID)
+	require.NoError(t, h.RunOnce(instanceID))
+	require.Equal(t, []O{expected, expected, expected}, values)
+	require.Equal(t, []any{expected, expected}, observed.cached, "cache-hit hooks must receive the decoded output type")
+	require.Equal(t, 1, calls)
+	instance, err := h.app.storage.GetInstance(h.app.ctx, instanceID)
+	require.NoError(t, err)
+	require.Equal(t, storage.StatusCompleted, instance.Status)
 }
 
 func TestTypedReplayStructResult(t *testing.T) { testTypedReplayStructResult(t, createTestApp) }
@@ -236,39 +232,35 @@ func TestLiveDecodeErrorFailsRunEvenWhenCaught(t *testing.T) {
 
 func testLiveDecodeErrorFailsRunEvenWhenCaught(t *testing.T, factory replayAppFactory) {
 	t.Helper()
-	for _, transactional := range []bool{true, false} {
-		t.Run(map[bool]string{true: "transactional", false: "nontransactional"}[transactional], func(t *testing.T) {
-			h := newTypedReplayHarness(t, factory)
-			calls := 0
-			activity := DefineActivity("undecodable", func(context.Context, string) (undecodableReplayValue, error) {
-				calls++
-				return undecodableReplayValue{Value: "live"}, nil
-			}, WithTransactional[string, undecodableReplayValue](transactional),
-				WithRetryPolicy[string, undecodableReplayValue](retry.Fixed(3, time.Millisecond)))
-			workflow := DefineWorkflow("caught_decode", func(ctx *WorkflowContext, input string) (string, error) {
-				_, err := activity.Execute(ctx, input, WithActivityID("result"))
-				var decodeErr *ReplayDecodeError
-				require.ErrorAs(t, err, &decodeErr)
-				return "caught", nil
-			})
-			RegisterWorkflow(h.app, workflow)
-			const instanceID = "caught-decode-instance"
-			require.NoError(t, h.app.storage.CreateInstance(h.app.ctx, &storage.WorkflowInstance{
-				InstanceID: instanceID, WorkflowName: workflow.Name(), Status: storage.StatusRunning, InputData: []byte(`"input"`),
-			}))
-			err := h.RunOnce(instanceID)
-			var decodeErr *ReplayDecodeError
-			require.ErrorAs(t, err, &decodeErr, "catching a decode error must not turn the run into a success")
-			require.Equal(t, instanceID, decodeErr.InstanceID)
-			require.Equal(t, "result", decodeErr.Key)
-			require.Equal(t, "selvedge.undecodableReplayValue", decodeErr.GoType)
-			instance, getErr := h.app.storage.GetInstance(h.app.ctx, instanceID)
-			require.NoError(t, getErr)
-			require.Equal(t, storage.StatusFailed, instance.Status)
-			// The success row must remain durable even when decoding on first execution fails.
-			err = h.RunOnce(instanceID)
-			require.ErrorAs(t, err, &decodeErr)
-			require.Equal(t, 1, calls)
-		})
-	}
+	h := newTypedReplayHarness(t, factory)
+	calls := 0
+	activity := DefineActivity("undecodable", func(context.Context, string) (undecodableReplayValue, error) {
+		calls++
+		return undecodableReplayValue{Value: "live"}, nil
+	},
+		WithRetryPolicy[string, undecodableReplayValue](retry.Fixed(3, time.Millisecond)))
+	workflow := DefineWorkflow("caught_decode", func(ctx *WorkflowContext, input string) (string, error) {
+		_, err := activity.Execute(ctx, input, WithActivityID("result"))
+		var decodeErr *ReplayDecodeError
+		require.ErrorAs(t, err, &decodeErr)
+		return "caught", nil
+	})
+	RegisterWorkflow(h.app, workflow)
+	const instanceID = "caught-decode-instance"
+	require.NoError(t, h.app.storage.CreateInstance(h.app.ctx, &storage.WorkflowInstance{
+		InstanceID: instanceID, WorkflowName: workflow.Name(), Status: storage.StatusRunning, InputData: []byte(`"input"`),
+	}))
+	err := h.RunOnce(instanceID)
+	var decodeErr *ReplayDecodeError
+	require.ErrorAs(t, err, &decodeErr, "catching a decode error must not turn the run into a success")
+	require.Equal(t, instanceID, decodeErr.InstanceID)
+	require.Equal(t, "result", decodeErr.Key)
+	require.Equal(t, "selvedge.undecodableReplayValue", decodeErr.GoType)
+	instance, getErr := h.app.storage.GetInstance(h.app.ctx, instanceID)
+	require.NoError(t, getErr)
+	require.Equal(t, storage.StatusFailed, instance.Status)
+	// The success row must remain durable even when decoding on first execution fails.
+	err = h.RunOnce(instanceID)
+	require.ErrorAs(t, err, &decodeErr)
+	require.Equal(t, 1, calls)
 }

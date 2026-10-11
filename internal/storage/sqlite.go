@@ -157,8 +157,7 @@ func (s *SQLiteStorage) InTransaction(ctx context.Context) bool {
 
 // Conn returns the database executor for the current context.
 // If a transaction is active, returns the transaction; otherwise, returns the database.
-// This allows users to execute custom SQL queries within the same transaction
-// as the workflow activity when using transactional activities.
+// This allows storage operations to share an explicitly opened transaction.
 //
 // Example:
 //

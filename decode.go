@@ -2,6 +2,7 @@ package selvedge
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 
@@ -36,6 +37,10 @@ func decodeRecorded[O any](event *storage.HistoryEvent) (O, error) {
 }
 
 func decodeActivityRecorded[O any](ctx *WorkflowContext, event *storage.HistoryEvent) (O, error) {
+	if event.EventType == storage.HistoryActivityFailed || event.EventType == storage.HistoryMessageTimeout {
+		var zero O
+		return zero, replayRecordedError(ctx, event)
+	}
 	value, err := decodeRecorded[O](event)
 	if err != nil && ctx.execCtx != nil {
 		ctx.execCtx.Fail(err)
@@ -43,9 +48,28 @@ func decodeActivityRecorded[O any](ctx *WorkflowContext, event *storage.HistoryE
 	return value, err
 }
 
-// Preserve the existing string-only error replay until S2 introduces envelopes.
-func replayRecordedError(event *storage.HistoryEvent) error {
-	var message string
-	_ = json.Unmarshal(event.EventData, &message)
-	return fmt.Errorf("%s", message)
+// replayRecordedError attaches row identity to corrupt payloads and uses the
+// execution's existing sticky failure mechanism.
+func replayRecordedError(ctx *WorkflowContext, event *storage.HistoryEvent) error {
+	var err error
+	if event.EventType == storage.HistoryMessageTimeout {
+		// Channel timeout rows still use the channel protocol's JSON string.
+		var message string
+		if decodeErr := json.Unmarshal(event.EventData, &message); decodeErr != nil {
+			err = &ReplayDecodeError{GoType: "string", Err: decodeErr}
+		} else {
+			err = errors.New(message)
+		}
+	} else {
+		err = decodeError(event.EventData)
+	}
+	var decodeErr *ReplayDecodeError
+	if errors.As(err, &decodeErr) {
+		decodeErr.InstanceID = event.InstanceID
+		decodeErr.Key = event.ActivityID
+		if ctx.execCtx != nil {
+			ctx.execCtx.Fail(err)
+		}
+	}
+	return err
 }

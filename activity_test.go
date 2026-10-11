@@ -15,30 +15,18 @@ import (
 
 func TestDefineActivity(t *testing.T) {
 	tests := []struct {
-		name              string
-		activityName      string
-		opts              []ActivityOption[string, string]
-		wantTransactional bool
-		wantHasRetry      bool
-		wantHasTimeout    bool
+		name           string
+		activityName   string
+		opts           []ActivityOption[string, string]
+		wantHasRetry   bool
+		wantHasTimeout bool
 	}{
 		{
-			name:              "default options",
-			activityName:      "test_activity",
-			opts:              nil,
-			wantTransactional: true,
-			wantHasRetry:      false,
-			wantHasTimeout:    false,
-		},
-		{
-			name:         "transactional false",
-			activityName: "non_tx_activity",
-			opts: []ActivityOption[string, string]{
-				WithTransactional[string, string](false),
-			},
-			wantTransactional: false,
-			wantHasRetry:      false,
-			wantHasTimeout:    false,
+			name:           "default options",
+			activityName:   "test_activity",
+			opts:           nil,
+			wantHasRetry:   false,
+			wantHasTimeout: false,
 		},
 		{
 			name:         "with retry policy",
@@ -46,9 +34,8 @@ func TestDefineActivity(t *testing.T) {
 			opts: []ActivityOption[string, string]{
 				WithRetryPolicy[string, string](retry.DefaultPolicy()),
 			},
-			wantTransactional: true,
-			wantHasRetry:      true,
-			wantHasTimeout:    false,
+			wantHasRetry:   true,
+			wantHasTimeout: false,
 		},
 		{
 			name:         "with timeout",
@@ -56,21 +43,18 @@ func TestDefineActivity(t *testing.T) {
 			opts: []ActivityOption[string, string]{
 				WithTimeout[string, string](5 * time.Second),
 			},
-			wantTransactional: true,
-			wantHasRetry:      false,
-			wantHasTimeout:    true,
+			wantHasRetry:   false,
+			wantHasTimeout: true,
 		},
 		{
 			name:         "all options combined",
 			activityName: "full_activity",
 			opts: []ActivityOption[string, string]{
-				WithTransactional[string, string](false),
 				WithRetryPolicy[string, string](retry.Fixed(3, 100*time.Millisecond)),
 				WithTimeout[string, string](10 * time.Second),
 			},
-			wantTransactional: false,
-			wantHasRetry:      true,
-			wantHasTimeout:    true,
+			wantHasRetry:   true,
+			wantHasTimeout: true,
 		},
 	}
 
@@ -84,7 +68,6 @@ func TestDefineActivity(t *testing.T) {
 			)
 
 			assert.Equal(t, tt.activityName, activity.Name())
-			assert.Equal(t, tt.wantTransactional, activity.transactional)
 			assert.Equal(t, tt.wantHasRetry, activity.retryPolicy != nil)
 			assert.Equal(t, tt.wantHasTimeout, activity.timeout > 0)
 		})

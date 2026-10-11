@@ -14,8 +14,8 @@ Removed from Romancy: LLM and MCP integrations, public channels and groups, Saga
 
 - `App` manages workflow execution, storage, and background tasks.
 - `DefineWorkflow` and `RegisterWorkflow` define and register typed workflows.
-- `DefineActivity` creates activities with retry, timeout, and transaction options.
-- `WorkflowContext` provides execution state, activity identifiers, and access to the current database session.
+- `DefineActivity` creates activities with retry and timeout options.
+- `WorkflowContext` provides execution state and activity identifiers.
 - The replay engine reads stored history and returns recorded results.
 - `WaitEvent`, `Sleep`, and `SleepUntil` provide event and timer waits.
 - `CancelWorkflow` cancels an instance. `GetWorkflowResult` reads its status and output.
@@ -96,9 +96,7 @@ func main() {
 }
 ```
 
-Activities use database transactions by default. Use `WithTransactional(false)` for activities that do not need a database transaction around their execution.
-
-Inside an activity, `GetWorkflowContext(ctx).Session()` returns the database executor for the current transaction.
+Activities run without a database transaction around user code. Their results and failures are recorded in history before being returned to the workflow. `GetWorkflowContext(ctx)` provides workflow metadata inside an activity.
 
 Workflow code must return suspension signals from event and timer waits so that the replay engine can suspend the instance.
 
