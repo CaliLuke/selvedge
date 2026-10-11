@@ -4,12 +4,14 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // txKey is the context key for transactions.
@@ -36,11 +38,11 @@ func NewSQLiteStorage(dbPath string) (*SQLiteStorage, error) {
 	if dbPath == ":memory:" {
 		connStr = "file::memory:?cache=shared"
 	}
-	connStr += "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+	connStr += "?_pragma=busy_timeout(5000)"
 
 	// For shared memory, the connection string already has query params, so use & instead of ?
 	if dbPath == ":memory:" {
-		connStr = "file::memory:?cache=shared&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+		connStr = "file::memory:?cache=shared&_pragma=busy_timeout(5000)"
 	}
 
 	connStr += "&_txlock=immediate"
@@ -48,11 +50,37 @@ func NewSQLiteStorage(dbPath string) (*SQLiteStorage, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
+	// WAL persists on disk. Set it once per pool, rather than on every new
+	// connection. Concurrent journal-mode changes can return BUSY immediately
+	// even with busy_timeout set, so retry the pragma within the same budget.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := enableSQLiteWAL(ctx, db); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("failed to enable SQLite WAL: %w", err)
+	}
 
 	return &SQLiteStorage{
 		db:     db,
 		driver: &SQLiteDriver{},
 	}, nil
+}
+
+func enableSQLiteWAL(ctx context.Context, db *sql.DB) error {
+	for {
+		_, err := db.ExecContext(ctx, "PRAGMA journal_mode=WAL")
+		var sqliteErr *sqlite.Error
+		if !errors.As(err, &sqliteErr) || sqliteErr.Code()&0xff != sqlite3.SQLITE_BUSY {
+			return err
+		}
+		timer := time.NewTimer(10 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 // Initialize is deprecated. Use dbmate for migrations:

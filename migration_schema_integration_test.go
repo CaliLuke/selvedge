@@ -34,7 +34,7 @@ func postgresSchemaBackend(t *testing.T) schemaBackend {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	return schemaBackend{
-		store: store, db: store.DB(), dialect: "postgresql",
+		store: store, db: store.DB(), dialect: "postgresql", dsn: url,
 		open: func() (*sql.DB, error) {
 			s, err := storage.NewPostgresStorage(url)
 			if err != nil {

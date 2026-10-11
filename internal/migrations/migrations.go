@@ -12,6 +12,7 @@ package migrations
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -20,6 +21,9 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // DetectDBType detects database type from connection URL.
@@ -168,7 +172,7 @@ func withMigrationTransaction(ctx context.Context, db *sql.DB, dbType string, ap
 		return err
 	}
 	defer func() { _ = conn.Close() }()
-	if _, err := conn.ExecContext(ctx, begin); err != nil {
+	if err := beginMigrationTransaction(ctx, conn, begin); err != nil {
 		return err
 	}
 	committed := false
@@ -195,7 +199,31 @@ func withMigrationTransaction(ctx context.Context, db *sql.DB, dbType string, ap
 	return nil
 }
 
+func beginMigrationTransaction(ctx context.Context, conn *sql.Conn, begin string) error {
+	for {
+		_, err := conn.ExecContext(ctx, begin)
+		var sqliteErr *sqlite.Error
+		if !errors.As(err, &sqliteErr) || sqliteErr.Code()&0xff != sqlite3.SQLITE_BUSY {
+			return err
+		}
+		// Another worker's migration can outlast SQLite's busy_timeout.
+		// Wait for the startup context instead, retrying only lock acquisition:
+		// no migration SQL has run, so there are no effects to replay.
+		timer := time.NewTimer(10 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
 // ApplyMigrations applies dbmate migration files automatically.
+//
+// Migration lock waits use ctx, which App.Start passes through from its caller.
+// Without a deadline, startup can wait indefinitely unless that context is canceled.
+// This applies to SQLite writer locks and PostgreSQL advisory locks.
 //
 // This function:
 //  1. Finds migration files for the given database type

@@ -19,6 +19,7 @@ type schemaBackend struct {
 	store      storage.Storage
 	db         *sql.DB
 	dialect    string
+	dsn        string
 	open       func() (*sql.DB, error)
 	initialize func(context.Context) error
 }
@@ -35,6 +36,7 @@ func sqliteSchemaBackend(t *testing.T) schemaBackend {
 	t.Cleanup(func() { _ = store.Close() })
 	return schemaBackend{
 		store: store, db: store.DB(), dialect: "sqlite",
+		dsn: path + "?_pragma=busy_timeout(5000)&_txlock=immediate",
 		open: func() (*sql.DB, error) {
 			s, err := storage.NewSQLiteStorage(path)
 			if err != nil {
@@ -136,12 +138,11 @@ func testMigrationsApplyCleanAndIdempotent(t *testing.T, factory schemaBackendFa
 			t.Fatal(err)
 		}
 		pending := pendingProbeSchema(t, b.dialect)
+		probe := newMigrationProbe()
+		defer probe.resume()
 		workers := make([]*sql.DB, 4)
 		for i := range workers {
-			db, err := b.open()
-			if err != nil {
-				t.Fatal(err)
-			}
+			db := sql.OpenDB(&migrationProbeConnector{base: b.db.Driver(), dsn: b.dsn, probe: probe})
 			workers[i] = db
 			t.Cleanup(func() { _ = db.Close() })
 			// Open each pool before the race so the test exercises the
@@ -164,6 +165,13 @@ func testMigrationsApplyCleanAndIdempotent(t *testing.T, factory schemaBackendFa
 			}()
 		}
 		close(start)
+		select {
+		case <-probe.entered:
+			assertMigrationLockHeld(t, ctx, b)
+		case <-ctx.Done():
+			t.Fatal("migration did not reach the probe: ", ctx.Err())
+		}
+		probe.resume()
 		total := 0
 		for range workers {
 			r := <-results
@@ -361,10 +369,8 @@ func testMigrationsSQLLiterals(t *testing.T, factory schemaBackendFactory) {
 	}
 }
 
-// Copy the real schemas and add only a test-local pending migration. Its
-// read-only prefix widens the interval between version lookup and the first
-// write. Without BEGIN IMMEDIATE, SQLite workers hold competing read snapshots;
-// without the advisory lock, PostgreSQL workers race to create the same table.
+// Copy the real schemas and add only a test-local pending migration. The test
+// driver pauses at the marker after version lookup and before the first write.
 func pendingProbeSchema(t *testing.T, dialect string) fs.FS {
 	t.Helper()
 	real := EmbeddedMigrationsFS()
@@ -380,14 +386,8 @@ func pendingProbeSchema(t *testing.T, dialect string) fs.FS {
 		}
 		pending[name] = &fstest.MapFile{Data: content}
 	}
-	readSQL := `WITH RECURSIVE numbers(n) AS (
-  VALUES (1) UNION ALL SELECT n + 1 FROM numbers WHERE n < 1000000
- ) SELECT SUM(n) FROM numbers;`
-	if dialect == "postgresql" {
-		readSQL = "SELECT pg_sleep(0.25);"
-	}
 	pending[dialect+"/20261011000000_s0c_concurrency_probe.sql"] = &fstest.MapFile{Data: []byte(`-- migrate:up
-` + readSQL + `
+-- migration concurrency probe
 CREATE TABLE migration_concurrency_probe (id INTEGER PRIMARY KEY);
 INSERT INTO migration_concurrency_probe (id) VALUES (1);
 -- migrate:down

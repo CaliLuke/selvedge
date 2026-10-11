@@ -3,12 +3,46 @@ package migrations
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"io/fs"
+	"path/filepath"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
+
+func TestApplyMigrations_SQLiteWaitsForWriterUntilDeadline(t *testing.T) {
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "locked.db")+"?_pragma=busy_timeout(1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	writer, err := db.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	if _, err := writer.ExecContext(context.Background(), "BEGIN IMMEDIATE"); err != nil {
+		t.Fatal(err)
+	}
+	defer writer.ExecContext(context.Background(), "ROLLBACK")
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	testFS := fstest.MapFS{
+		"sqlite/20261011000000_probe.sql": &fstest.MapFile{
+			Data: []byte("-- migrate:up\nCREATE TABLE probe (id INTEGER PRIMARY KEY);"),
+		},
+	}
+	applied, err := ApplyMigrations(ctx, db, "sqlite", testFS)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("waiting for writer: got %v, want context deadline exceeded", err)
+	}
+	if len(applied) != 0 {
+		t.Fatalf("applied migrations while writer was locked: %v", applied)
+	}
+}
 
 func TestDetectDBType(t *testing.T) {
 	tests := []struct {

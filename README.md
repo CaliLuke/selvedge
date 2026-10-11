@@ -112,6 +112,8 @@ SQLite and PostgreSQL are the supported storage backends. PostgreSQL also suppor
 
 Schema application is transactional: SQLite uses `BEGIN IMMEDIATE`; PostgreSQL takes a transaction-scoped advisory lock before checking `schema_migrations`. SQL errors abort and roll back the schema application.
 
+Migration lock waits use the context passed to `App.Start`. Without a deadline, startup can wait indefinitely unless that context is canceled. This applies to SQLite writer locks and PostgreSQL advisory locks.
+
 ## Development
 
 ```sh
