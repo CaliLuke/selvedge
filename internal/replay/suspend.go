@@ -16,16 +16,16 @@ type SuspendType int
 const (
 	// SuspendForTimer indicates the workflow is waiting for a timer to expire.
 	SuspendForTimer SuspendType = iota
-	// SuspendForChannelMessage indicates the workflow is waiting for a channel message (via WaitEvent).
-	SuspendForChannelMessage
+	// SuspendForSignal indicates the workflow is waiting for a signal.
+	SuspendForSignal
 )
 
 func (t SuspendType) String() string {
 	switch t {
 	case SuspendForTimer:
 		return "timer"
-	case SuspendForChannelMessage:
-		return "channel_message"
+	case SuspendForSignal:
+		return "signal"
 	default:
 		return "unknown"
 	}
@@ -53,22 +53,17 @@ type SuspendSignal struct {
 	TimerID   string
 	ExpiresAt time.Time
 
-	// For SuspendForChannelMessage (channel/event waiting) or Timer
-	Channel    string         // Channel or event type name
-	Timeout    *time.Duration // Optional timeout
-	ActivityID string         // Activity ID for replay matching (used for both channel and timer)
-
+	// For SuspendForSignal (signal waiting) or Timer
+	Channel    string // Signal channel name
+	ActivityID string // Activity ID for replay matching (used for both signal and timer)
 }
 
 func (s *SuspendSignal) Error() string {
 	switch s.Type {
 	case SuspendForTimer:
 		return fmt.Sprintf("workflow suspended: waiting for timer %q until %v", s.TimerID, s.ExpiresAt)
-	case SuspendForChannelMessage:
-		if s.Timeout != nil {
-			return fmt.Sprintf("workflow suspended: waiting for channel message on %q (timeout: %v)", s.Channel, *s.Timeout)
-		}
-		return fmt.Sprintf("workflow suspended: waiting for channel message on %q", s.Channel)
+	case SuspendForSignal:
+		return fmt.Sprintf("workflow suspended: waiting for signal on %q", s.Channel)
 	default:
 		return "workflow suspended"
 	}
@@ -101,13 +96,12 @@ func NewTimerSuspend(instanceID, timerID, activityID string, expiresAt time.Time
 	}
 }
 
-// NewChannelMessageSuspend creates a SuspendSignal for channel message waiting (via WaitEvent).
-func NewChannelMessageSuspend(instanceID, channel, activityID string, timeout *time.Duration) *SuspendSignal {
+// NewSignalSuspend creates a SuspendSignal for signal waiting.
+func NewSignalSuspend(instanceID, channel, activityID string) *SuspendSignal {
 	return &SuspendSignal{
-		Type:       SuspendForChannelMessage,
+		Type:       SuspendForSignal,
 		InstanceID: instanceID,
 		Channel:    channel,
 		ActivityID: activityID,
-		Timeout:    timeout,
 	}
 }

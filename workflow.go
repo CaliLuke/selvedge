@@ -211,7 +211,9 @@ func getWorkflowErrorFromHistory(ctx context.Context, s storage.Storage, instanc
 	return failure, nil
 }
 
-// CancelWorkflow cancels a running workflow instance.
+// CancelWorkflow durably requests cancellation and wakes a running instance.
+// Sleep and Receive observe the request at their next yield. Activities already
+// in progress continue. A workflow that catches cancellation can complete.
 func CancelWorkflow(ctx context.Context, app *App, instanceID, reason string) error {
 	return app.cancelWorkflow(ctx, instanceID, reason)
 }

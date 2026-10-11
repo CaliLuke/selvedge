@@ -2,7 +2,7 @@
 
 Selvedge is an embedded durable-execution engine for Go. It runs inside your application and stores workflow state in a database.
 
-Workflows coordinate activities. Activities perform I/O and record their results for replay. Event and timer waits suspend execution until work can resume.
+Workflows coordinate activities. Activities perform I/O and record their results for replay. Signal and timer waits suspend execution until work can resume.
 
 ## Derived from Romancy
 
@@ -17,15 +17,35 @@ Removed from Romancy: LLM and MCP integrations, public channels and groups, Saga
 - `DefineActivity` creates activities with retry and timeout options.
 - `WorkflowContext` provides execution state and activity identifiers.
 - The replay engine reads stored history and returns recorded results.
-- `WaitEvent`, `Sleep`, and `SleepUntil` provide event and timer waits.
-- `CancelWorkflow` cancels an instance. `GetWorkflowResult` reads its status and output.
+- `Receive`, `Sleep`, and `SleepUntil` provide signal and timer waits.
+- `CancelWorkflow` requests cancellation of an instance. `GetWorkflowResult` reads its status and output.
 - Workflow hooks and `hooks/otel` provide observability.
 
-The retained engine is a development baseline. Its current replay, locking, cancellation, and event-wait behavior still needs further work.
+## Signals and cancellation
 
-`App.DeliverEvent(ctx, eventType, source, data)` delivers events to workflows that use `WaitEvent` for that event type.
+`App.Signal(ctx, instanceID, channel, payload)` stores a JSON payload for one workflow instance. The inbox accepts signals immediately after instance creation.
 
-The method preserves the existing event envelope, history, and replay format. `WaitEvent` retains the database subscription and delivery primitives internally.
+`Receive[T](ctx, channel)` consumes the oldest pending signal from that channel. Each channel has its own sequence. Replay reads the recorded payload from history.
+
+```go
+// Outside the workflow:
+err := app.Signal(ctx, instanceID, "confirmation", true)
+
+// Inside the workflow:
+confirmed, err := selvedge.Receive[bool](workflowCtx, "confirmation")
+if err != nil {
+    return false, err
+}
+return confirmed, nil
+```
+
+Channel names pass through unchanged and contain 1–255 bytes. Every signal wakes its instance, including during an active execution. Unknown instances return `ErrInstanceNotFound`. Closed instances return `*InstanceClosedError`, which also matches `ErrInstanceClosed` through `errors.Is`.
+
+`CancelWorkflow` stores a durable request and wakes the instance. `Sleep` and `Receive` observe cancellation at their next yield. Activities already in progress continue. A recorded result takes precedence during replay. At a new receive, cancellation takes precedence over a pending signal.
+
+An uncaught `WorkflowCancelledError` closes the instance as cancelled. A workflow that catches cancellation and returns successfully completes normally. Cancellation does not immediately change the instance status.
+
+Signals have no idempotency key. Receive timeouts, asynchronous receive, and pending-signal inspection are not available.
 
 ## Install
 
@@ -98,11 +118,11 @@ func main() {
 
 Activities run without a database transaction around user code. Their results and failures are recorded in history before being returned to the workflow. `GetWorkflowContext(ctx)` provides workflow metadata inside an activity.
 
-Workflow code must return suspension signals from event and timer waits so that the replay engine can suspend the instance.
+Workflow code must return suspension signals from signal and timer waits so that the replay engine can suspend the instance.
 
 ## Storage and migrations
 
-SQLite and PostgreSQL are the supported storage backends. PostgreSQL also supports LISTEN/NOTIFY for workflow wakeups and internal event delivery.
+SQLite and PostgreSQL are the supported storage backends. PostgreSQL also supports LISTEN/NOTIFY for workflow wakeups.
 
 `WithDatabase` accepts a SQLite path, a `file:` URL, a `sqlite://` URL, or a PostgreSQL connection URL.
 

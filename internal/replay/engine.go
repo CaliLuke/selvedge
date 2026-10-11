@@ -108,21 +108,6 @@ func (ec *ExecutionContext) Claim(key, cmd string) (*storage.HistoryEvent, bool,
 	return event, found, nil
 }
 
-// Reserve records a command with no value, as required before parking a sleep.
-func (ec *ExecutionContext) Reserve(key, cmd string) (*storage.HistoryEvent, error) {
-	if err := ec.Check(); err != nil {
-		return nil, err
-	}
-	if ec.engine == nil {
-		return nil, nil
-	}
-	event, err := ec.engine.storage.ReserveHistory(ec.ctx, &ec.fence, ec.instanceID, key, cmd)
-	if errors.Is(err, storage.ErrHistoryKeyConflict) || errors.Is(err, storage.ErrFenced) || errors.Is(err, ErrLeaseLost) {
-		ec.Fail(err)
-	}
-	return event, err
-}
-
 // Context returns the underlying context.Context.
 func (ec *ExecutionContext) Context() context.Context {
 	return ec.ctx
@@ -338,7 +323,7 @@ func (e *Engine) executeWorkflow(ctx context.Context, instanceID string, runner 
 	}
 
 	if sig := AsSuspendSignal(err); sig != nil {
-		return e.handleSuspendSignal(ctx, instanceID, sig)
+		return validateSuspendSignal(sig)
 	}
 	var resultData []byte
 	if err == nil {
@@ -407,38 +392,15 @@ func (e *Engine) executeWorkflow(ctx context.Context, instanceID string, runner 
 	return nil
 }
 
-// handleSuspendSignal handles all workflow suspension cases.
-func (e *Engine) handleSuspendSignal(ctx context.Context, instanceID string, sig *SuspendSignal) error {
+// validateSuspendSignal accepts the supported durable waits.
+func validateSuspendSignal(sig *SuspendSignal) error {
 	switch sig.Type {
-	case SuspendForTimer:
-		return e.handleTimerSuspend(ctx, instanceID, sig)
-	case SuspendForChannelMessage:
-		return e.handleChannelMessageSuspend(ctx, instanceID, sig)
+	case SuspendForTimer, SuspendForSignal:
+		// Waits are durable already. Run releases the lease without setting runnable.
+		return nil
 	default:
 		return fmt.Errorf("unknown suspend type: %v", sig.Type)
 	}
-}
-
-// handleTimerSuspend handles the timer suspension case.
-func (e *Engine) handleTimerSuspend(ctx context.Context, instanceID string, sig *SuspendSignal) error {
-	// Sleep already reserved and armed the timer in one fenced transaction.
-
-	return nil
-}
-
-// handleChannelMessageSuspend handles the channel message suspension case (via WaitEvent).
-func (e *Engine) handleChannelMessageSuspend(ctx context.Context, instanceID string, sig *SuspendSignal) error {
-	// Register channel receive and set waiting=TRUE
-	var timeoutAt *time.Time
-	if sig.Timeout != nil {
-		t := time.Now().Add(*sig.Timeout)
-		timeoutAt = &t
-	}
-	if err := e.storage.RegisterChannelReceive(ctx, instanceID, sig.Channel, sig.ActivityID, timeoutAt); err != nil {
-		return fmt.Errorf("failed to register channel receive: %w", err)
-	}
-
-	return nil
 }
 
 // RecordActivityResult records an activity result in history.

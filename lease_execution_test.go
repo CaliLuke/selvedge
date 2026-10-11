@@ -364,16 +364,17 @@ func testSwallowedFenceRejectionStopsExecution(t *testing.T, factory replayAppFa
 	h, _, fs := leaseHarness(t, factory)
 	calls := 0
 	a := DefineActivity("forbidden", func(context.Context, string) (string, error) { calls++; return "", nil })
-	w := DefineWorkflow("rejected_subscription", func(ctx *WorkflowContext, input string) (string, error) {
-		_, err := WaitEvent[string](ctx, "messages")
+	w := DefineWorkflow("rejected_signal", func(ctx *WorkflowContext, input string) (string, error) {
+		_, err := Receive[string](ctx, "messages")
 		require.ErrorIs(t, err, storage.ErrFenced)
 		_, err = a.Execute(ctx, input)
 		require.ErrorIs(t, err, storage.ErrFenced)
 		return "caught", nil
 	})
 	id := seedErrorWorkflow(t, h, w)
+	require.NoError(t, h.app.Signal(h.app.ctx, id, "messages", "payload"))
 	fs.Before = func(ctx context.Context, method string) error {
-		if method == "SubscribeToChannel" {
+		if method == "ConsumeSignal" {
 			setStoreClock(t, h, 2001)
 			_, ok, err := fs.Storage.AcquireLease(ctx, id, "other/owner", time.Second)
 			require.NoError(t, err)
@@ -428,7 +429,7 @@ func runCrashScenario(t *testing.T, factory replayAppFactory, crashAt int, after
 	id := seedErrorWorkflow(t, h, w)
 	inject := func(_ context.Context, method string) error {
 		switch method {
-		case "AcquireLease", "SetHistoryValueIfNull", "ReserveTimer", "RegisterTimerSubscription", "ReleaseLease", "FireTimer", "CloseInstance":
+		case "AcquireLease", "SetHistoryValueIfNull", "ReserveTimer", "ReleaseLease", "FireTimer", "CloseInstance":
 			writeIndex++
 		}
 		if !crashed && crashAt > 0 && writeIndex == crashAt {
@@ -485,16 +486,16 @@ func testMessageDuringSuspendIsNotLost(t *testing.T, factory replayAppFactory) {
 	h, _, fs := leaseHarness(t, factory)
 	var once sync.Once
 	w := DefineWorkflow("message_suspend", func(ctx *WorkflowContext, _ string) (string, error) {
-		ev, err := WaitEvent[string](ctx, "messages")
+		ev, err := Receive[string](ctx, "messages")
 		if err != nil {
 			return "", err
 		}
-		return ev.Data, nil
+		return ev, nil
 	})
 	id := seedErrorWorkflow(t, h, w)
 	fs.Before = func(ctx context.Context, method string) error {
-		if method == "RegisterChannelReceive" {
-			once.Do(func() { require.NoError(t, h.app.DeliverEvent(ctx, "messages", "test", "payload")) })
+		if method == "ReleaseLease" {
+			once.Do(func() { require.NoError(t, h.app.Signal(ctx, id, "messages", "payload")) })
 		}
 		return nil
 	}
@@ -574,7 +575,7 @@ func executionWrites(s *faultstore.Store) []string {
 	var writes []string
 	for _, method := range s.Calls() {
 		switch method {
-		case "AcquireLease", "RenewLease", "ReleaseLease", "ReserveHistory", "ReserveTimer", "RecordHistory", "SetHistoryValueIfNull", "CloseInstance", "UpdateInstanceActivity", "RegisterTimerSubscription", "SubscribeToChannel", "RegisterChannelReceive", "ConsumeChannelMessage":
+		case "AcquireLease", "RenewLease", "ReleaseLease", "ReserveHistory", "ReserveTimer", "RecordHistory", "SetHistoryValueIfNull", "CloseInstance", "UpdateInstanceActivity", "ConsumeSignal":
 			writes = append(writes, method)
 		}
 	}

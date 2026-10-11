@@ -44,8 +44,8 @@ type Storage interface {
 	// Timer Subscription Operations
 	TimerSubscriptionManager
 
-	// Channel Operations
-	ChannelManager
+	// Per-instance signal inbox
+	SignalManager
 
 	// System Lock Operations
 	SystemLockManager
@@ -160,8 +160,6 @@ type TimerSubscriptionManager interface {
 	ReserveTimer(context.Context, *Fence, *TimerSubscription) (*HistoryEvent, error)
 	// FireTimer atomically records a timer result, wakes its instance, and removes the subscription.
 	FireTimer(context.Context, *TimerSubscription) error
-	// RegisterTimerSubscription registers a workflow to wait for a timer.
-	RegisterTimerSubscription(ctx context.Context, sub *TimerSubscription) error
 
 	// FindExpiredTimers finds timers that have expired.
 	// limit specifies the maximum number of timers to return (0 = default 100).
@@ -169,55 +167,6 @@ type TimerSubscriptionManager interface {
 
 	// RemoveTimerSubscription removes a timer subscription.
 	RemoveTimerSubscription(ctx context.Context, instanceID, timerID string) error
-}
-
-// ========================================
-// Channel Manager
-// ========================================
-
-// ChannelManager handles channel-based messaging operations.
-type ChannelManager interface {
-	// ConsumeChannelMessage records a fenced observation and advances its cursor atomically.
-	ConsumeChannelMessage(context.Context, *Fence, string, int64, *HistoryEvent) (*HistoryEvent, error)
-	// PublishToChannel publishes a message to a channel.
-	PublishToChannel(ctx context.Context, channelName string, dataJSON []byte, metadata []byte) (int64, error)
-
-	// SubscribeToChannel subscribes an instance to a channel.
-	SubscribeToChannel(ctx context.Context, instanceID, channelName string, mode ChannelMode) error
-
-	// GetChannelSubscription retrieves a subscription for an instance and channel.
-	GetChannelSubscription(ctx context.Context, instanceID, channelName string) (*ChannelSubscription, error)
-
-	// GetChannelMode retrieves the mode for a channel (from any existing subscription).
-	// Returns empty string if no subscriptions exist.
-	GetChannelMode(ctx context.Context, channelName string) (ChannelMode, error)
-
-	// RegisterChannelReceive records a fenced wait before the separate lease release.
-	RegisterChannelReceive(
-		ctx context.Context,
-		instanceID, channelName, activityID string,
-		timeoutAt *time.Time,
-	) error
-
-	// GetPendingChannelMessagesForInstance gets pending messages for a specific subscriber.
-	// For broadcast mode: Returns messages with id > cursor (messages not yet seen by this instance)
-	GetPendingChannelMessagesForInstance(ctx context.Context, instanceID, channelName string) ([]*ChannelMessage, error)
-
-	// UpdateDeliveryCursor updates the delivery cursor for broadcast mode.
-	UpdateDeliveryCursor(ctx context.Context, instanceID, channelName string, lastMessageID int64) error
-
-	// GetChannelSubscribersWaiting finds subscribers waiting for messages on a channel.
-	GetChannelSubscribersWaiting(ctx context.Context, channelName string) ([]*ChannelSubscription, error)
-
-	// ClearChannelWaitingState clears the waiting state for an instance's channel subscription.
-	ClearChannelWaitingState(ctx context.Context, instanceID, channelName string) error
-
-	// CleanupOldChannelMessages removes old channel messages.
-	CleanupOldChannelMessages(ctx context.Context, olderThan time.Duration) error
-
-	// FindExpiredChannelSubscriptions finds channel subscriptions that have timed out.
-	// limit specifies the maximum number of subscriptions to return (0 = default 100).
-	FindExpiredChannelSubscriptions(ctx context.Context, limit int) ([]*ChannelSubscription, error)
 }
 
 // ========================================

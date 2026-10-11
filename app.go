@@ -49,7 +49,6 @@ type App struct {
 	// Concurrency control semaphores
 	resumptionSem *semaphore.Weighted
 	timerSem      *semaphore.Weighted
-	messageSem    *semaphore.Weighted
 
 	// NOTIFY wake event channels for adaptive backoff
 	resumeWakeEvent chan struct{}
@@ -86,7 +85,6 @@ func NewApp(opts ...Option) *App {
 		workflowRunners: make(map[string]replay.WorkflowRunner),
 		resumptionSem:   semaphore.NewWeighted(int64(config.maxConcurrentResumptions)),
 		timerSem:        semaphore.NewWeighted(int64(config.maxConcurrentTimers)),
-		messageSem:      semaphore.NewWeighted(int64(config.maxConcurrentMessages)),
 		resumeWakeEvent: make(chan struct{}, 1),
 	}
 }
@@ -163,7 +161,7 @@ func (a *App) Shutdown(ctx context.Context) error {
 	// Release the leader lock if we held it. Without this, a fresh
 	// process starting after a graceful shutdown has to wait the full
 	// leader-lease TTL (default 45s) before it can become leader and
-	// resume timer and event checks. The TTL is the safety
+	// resume timer checks. The TTL is the safety
 	// net for crash scenarios; clean shutdowns should release the
 	// lock symmetrically with TryAcquireSystemLock.
 	//
@@ -280,7 +278,6 @@ func (a *App) initNotifyListener(connString string) {
 	// Register notification handlers
 	a.notifyListener.OnNotification(notify.ChannelWorkflowResumable, a.handleWorkflowResumableNotify)
 	a.notifyListener.OnNotification(notify.ChannelTimerExpired, a.handleTimerExpiredNotify)
-	a.notifyListener.OnNotification(notify.ChannelChannelMessage, a.handleChannelMessageNotify)
 
 	slog.Info("PostgreSQL LISTEN/NOTIFY configured",
 		"reconnect_delay", a.config.notifyReconnectDelay)
@@ -304,56 +301,6 @@ func (a *App) handleTimerExpiredNotify(ctx context.Context, channel notify.Notif
 	// Timer notifications are informational - the timer check loop will pick them up
 	// We just log for debugging
 	slog.Debug("received timer notification", "payload", payload)
-}
-
-// handleChannelMessageNotify handles channel message notifications.
-func (a *App) handleChannelMessageNotify(ctx context.Context, channel notify.NotifyChannel, payload string) {
-	n, err := notify.ParseChannelMessageNotification(payload)
-	if err != nil {
-		slog.Debug("failed to parse channel message notification", "payload", payload, "error", err)
-		return
-	}
-
-	slog.Debug("received channel message notification",
-		"channel_name", n.ChannelName, "message_id", n.MessageID, "target", n.TargetInstanceID)
-
-	// Trigger immediate message delivery
-	a.wakeWaitingChannelSubscribersForNotify(ctx, n.ChannelName, n.TargetInstanceID)
-}
-
-// wakeWaitingChannelSubscribersForNotify triggers message delivery for waiting subscribers.
-func (a *App) wakeWaitingChannelSubscribersForNotify(ctx context.Context, channelName, targetInstanceID string) {
-	if a.storage == nil {
-		return
-	}
-
-	// If targeted message, only wake the target subscriber
-	if targetInstanceID != "" {
-		a.deliverToWaitingSubscriber(ctx, targetInstanceID)
-		return
-	}
-
-	// Get waiting subscribers for this channel
-	subs, err := a.storage.GetChannelSubscribersWaiting(ctx, channelName)
-	if err != nil {
-		slog.Debug("error getting waiting subscribers", "channel", channelName, "error", err)
-		return
-	}
-
-	for _, sub := range subs {
-		if ctx.Err() != nil {
-			break
-		}
-		a.deliverToWaitingSubscriber(ctx, sub.InstanceID)
-	}
-}
-
-// deliverToWaitingSubscriber attempts to deliver messages to a single waiting subscriber.
-func (a *App) deliverToWaitingSubscriber(ctx context.Context, instanceID string) {
-	if err := a.storage.MarkRunnable(ctx, instanceID); err != nil {
-		slog.Debug("failed to wake subscriber", "error", err)
-	}
-	a.wakeDispatcher()
 }
 
 // addJitter adds random jitter (±25%) to a duration to prevent thundering herd.
@@ -403,8 +350,7 @@ func (a *App) startBackgroundTasks() {
 	a.wg.Add(1)
 	go a.runWorkflowResumption()
 
-	// Note: Leader-only tasks (timer check, event timeout, channel timeout,
-	// event cleanup) are started dynamically
+	// Leader-only timer checks are started dynamically
 	// when this worker becomes the leader via runLeaderElection().
 }
 
@@ -478,18 +424,6 @@ func (a *App) startLeaderOnlyTasks() {
 	// Timer check
 	a.wg.Add(1)
 	go a.runTimerCheckWithContext(a.leaderCtx)
-
-	// Event timeout check
-	a.wg.Add(1)
-	go a.runEventTimeoutCheckWithContext(a.leaderCtx)
-
-	// Channel timeout check
-	a.wg.Add(1)
-	go a.runChannelTimeoutCheckWithContext(a.leaderCtx)
-
-	// Channel message cleanup
-	a.wg.Add(1)
-	go a.runChannelCleanupWithContext(a.leaderCtx)
 
 	slog.Debug("started leader-only tasks")
 }
@@ -585,34 +519,6 @@ func (a *App) handleExpiredTimer(timer *storage.TimerSubscription) error {
 	})
 	a.wakeDispatcher()
 	return nil
-}
-
-// runEventTimeoutCheckWithContext periodically checks for event timeouts with a cancellable context.
-func (a *App) runEventTimeoutCheckWithContext(ctx context.Context) {
-	defer a.wg.Done()
-
-	ticker := time.NewTicker(addJitter(a.config.eventTimeoutInterval))
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if err := a.checkEventTimeouts(); err != nil {
-				slog.Error("error checking event timeouts", "error", err)
-			}
-		}
-	}
-}
-
-// checkEventTimeouts is deprecated - event timeouts are now handled through
-// the channel subscription system via checkChannelTimeouts.
-// This function now delegates to checkChannelTimeouts for backward compatibility.
-func (a *App) checkEventTimeouts() error {
-	// Events are now delivered via the channel system.
-	// Timeouts are handled by checkChannelTimeouts.
-	return a.checkChannelTimeouts()
 }
 
 // registerWorkflowWithRunner registers a workflow with its runner function.
@@ -775,71 +681,6 @@ func (a *App) cancelWorkflow(ctx context.Context, instanceID, reason string) err
 	return nil
 }
 
-// DeliverEvent delivers an event to workflows waiting for eventType via WaitEvent.
-// It records the event in the existing envelope format and wakes waiting workflows.
-func (a *App) DeliverEvent(ctx context.Context, eventType, source string, data any) error {
-	eventID := uuid.New().String()
-
-	// Call OnEventReceived hook
-	a.hooks.OnEventReceived(ctx, hooks.EventReceivedInfo{
-		EventType:   eventType,
-		EventID:     eventID,
-		EventSource: source,
-		InstanceID:  "", // Not known at this point
-	})
-
-	return a.deliverEventToWaitingWorkflows(ctx, eventID, eventType, source, data)
-}
-
-// deliverEventToWaitingWorkflows delivers an event to workflows waiting for it.
-// WaitEvent subscribes to the event type using the internal delivery primitive.
-func (a *App) deliverEventToWaitingWorkflows(ctx context.Context, eventID, eventType, source string, data any) error {
-	if a.storage == nil {
-		return nil
-	}
-
-	// Prepare event data in ReceivedEvent format
-	eventData := map[string]any{
-		"id":          eventID,
-		"type":        eventType,
-		"source":      source,
-		"specversion": "1.0",
-	}
-	if data != nil {
-		eventData["data"] = data
-	}
-
-	dataJSON, err := json.Marshal(eventData)
-	if err != nil {
-		return fmt.Errorf("failed to serialize event data: %w", err)
-	}
-
-	channelName := eventType
-
-	// Publish to channel using eventType as channel name
-	_, err = a.storage.PublishToChannel(ctx, channelName, dataJSON, nil)
-	if err != nil {
-		return fmt.Errorf("failed to publish event to channel: %w", err)
-	}
-
-	// Wake up waiting subscribers using the unified channel system
-	// The durable input has already marked subscribers runnable.
-	a.wakeWaitingChannelSubscribers(ctx, channelName)
-
-	return nil
-}
-
-// wakeWaitingChannelSubscribers delivers a message to waiting channel subscribers.
-func (a *App) wakeWaitingChannelSubscribers(ctx context.Context, channelName string) {
-	subs, err := a.storage.GetChannelSubscribersWaiting(ctx, channelName)
-	if err != nil {
-		return
-	}
-	for _, sub := range subs {
-		a.deliverToWaitingSubscriber(ctx, sub.InstanceID)
-	}
-}
-
 // Storage returns the storage instance for advanced usage.
 func (a *App) Storage() storage.Storage {
 	return a.storage
@@ -848,111 +689,6 @@ func (a *App) Storage() storage.Storage {
 // WorkerID returns the worker ID.
 func (a *App) WorkerID() string {
 	return a.config.workerID
-}
-
-// ========================================
-// Channel Message Handling
-// ========================================
-
-// runChannelTimeoutCheckWithContext periodically checks for channel subscription timeouts with a cancellable context.
-func (a *App) runChannelTimeoutCheckWithContext(ctx context.Context) {
-	defer a.wg.Done()
-
-	ticker := time.NewTicker(addJitter(a.config.messageCheckInterval))
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if err := a.checkChannelTimeouts(); err != nil {
-				slog.Error("error checking channel timeouts", "error", err)
-			}
-		}
-	}
-}
-
-// checkChannelTimeouts handles expired channel subscriptions.
-func (a *App) checkChannelTimeouts() error {
-	if a.storage == nil {
-		return nil
-	}
-
-	// Check for expired channel subscriptions
-	expiredSubs, err := a.storage.FindExpiredChannelSubscriptions(a.ctx, a.config.maxMessagesPerBatch)
-	if err != nil {
-		return fmt.Errorf("failed to find expired channel subscriptions: %w", err)
-	}
-
-	var wg sync.WaitGroup
-	for _, sub := range expiredSubs {
-		if a.ctx.Err() != nil {
-			break
-		}
-
-		if err := a.messageSem.Acquire(a.ctx, 1); err != nil {
-			break
-		}
-
-		wg.Add(1)
-		go func(sub *storage.ChannelSubscription) {
-			defer wg.Done()
-			defer a.messageSem.Release(1)
-
-			if err := a.handleChannelTimeout(sub); err != nil {
-				slog.Error("error handling channel timeout", "instance_id", sub.InstanceID, "error", err)
-			}
-		}(sub)
-	}
-
-	wg.Wait()
-	return nil
-}
-
-// handleChannelTimeout handles a timed-out channel subscription.
-// Instead of failing the workflow directly, we record the timeout error in history
-// and set the workflow to 'running' so it can be resumed and handle the error gracefully.
-func (a *App) handleChannelTimeout(sub *storage.ChannelSubscription) error {
-	// Call OnEventTimeout hook
-	instance, _ := a.storage.GetInstance(a.ctx, sub.InstanceID)
-	workflowName := ""
-	if instance != nil {
-		workflowName = instance.WorkflowName
-	}
-	a.hooks.OnEventTimeout(a.ctx, hooks.EventTimeoutInfo{
-		InstanceID:   sub.InstanceID,
-		WorkflowName: workflowName,
-		EventType:    sub.Channel,
-	})
-
-	// Record timeout error in history using the activity_id from the subscription
-	// This allows Receive to return the timeout error when the workflow resumes
-	activityID := sub.ActivityID
-	if activityID == "" {
-		activityID = fmt.Sprintf("receive_%s:timeout", sub.Channel)
-	}
-
-	timeoutErr := &ChannelMessageTimeoutError{
-		InstanceID:  sub.InstanceID,
-		ChannelName: sub.Channel,
-	}
-	errJSON, _ := json.Marshal(timeoutErr.Error())
-
-	historyEvent := &storage.HistoryEvent{
-		InstanceID: sub.InstanceID,
-		ActivityID: activityID,
-		EventType:  storage.HistoryMessageTimeout,
-		Command:    "receive:" + sub.Channel,
-		EventData:  errJSON,
-		DataType:   "json",
-	}
-	if _, err := a.storage.RecordHistory(a.ctx, nil, historyEvent); err != nil {
-		return fmt.Errorf("failed to record timeout error: %w", err)
-	}
-
-	a.wakeDispatcher()
-	return a.storage.MarkRunnable(a.ctx, sub.InstanceID)
 }
 
 // ========================================
@@ -1055,43 +791,6 @@ func (a *App) resumeResumableWorkflows() (int, error) {
 	}
 
 	return dispatched, nil
-}
-
-// ========================================
-// Channel Message Cleanup
-// ========================================
-
-// runChannelCleanupWithContext periodically cleans up old channel messages with a cancellable context.
-func (a *App) runChannelCleanupWithContext(ctx context.Context) {
-	defer a.wg.Done()
-
-	ticker := time.NewTicker(addJitter(a.config.channelCleanupInterval))
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			// Leader runs directly (no singleton runner needed when using leader election)
-			if err := a.cleanupChannelMessages(); err != nil {
-				slog.Error("error cleaning up channel messages", "error", err)
-			}
-		}
-	}
-}
-
-// cleanupChannelMessages removes old channel messages.
-func (a *App) cleanupChannelMessages() error {
-	if a.storage == nil {
-		return nil
-	}
-
-	if err := a.storage.CleanupOldChannelMessages(a.ctx, a.config.channelMessageRetention); err != nil {
-		return fmt.Errorf("failed to cleanup channel messages: %w", err)
-	}
-
-	return nil
 }
 
 func (a *App) wakeDispatcher() {

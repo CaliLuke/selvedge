@@ -118,7 +118,7 @@ func TestReplayCommandMismatchFailsFast(t *testing.T) {
 func testReplayCommandMismatchFailsFast(t *testing.T, factory replayAppFactory) {
 	t.Helper()
 	for _, tc := range []struct{ name, key, command string }{
-		{"activity", "x", "activity:A"}, {"empty_command", "x", ""}, {"sleep", "x", "activity:A"}, {"receive", "receive_messages:1", "activity:A"},
+		{"activity", "x", "activity:A"}, {"empty_command", "x", ""}, {"sleep", "x", "activity:A"}, {"receive", "receive:messages:1", "activity:A"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			observed := &historyMismatchHooks{}
@@ -130,7 +130,7 @@ func testReplayCommandMismatchFailsFast(t *testing.T, factory replayAppFactory) 
 				case "sleep":
 					require.ErrorIs(t, Sleep(ctx, time.Hour, WithSleepID(tc.key)), ErrDeterminismViolation)
 				case "receive":
-					_, err := WaitEvent[string](ctx, "messages")
+					_, err := Receive[string](ctx, "messages")
 					require.ErrorIs(t, err, ErrDeterminismViolation)
 				default:
 					_, err := b.Execute(ctx, input, WithActivityID(tc.key))
@@ -152,9 +152,6 @@ func testReplayCommandMismatchFailsFast(t *testing.T, factory replayAppFactory) 
 			require.False(t, more)
 			require.Len(t, rows, 2)
 			require.Equal(t, original, rows[0])
-			sub, err := h.app.storage.GetChannelSubscription(h.app.ctx, id, "messages")
-			require.NoError(t, err)
-			require.Nil(t, sub, "mismatch must precede subscription writes")
 		})
 	}
 }
@@ -185,7 +182,7 @@ func testHistoryWriteClassesStorageConformance(t *testing.T, factory replayAppFa
 	require.ErrorIs(t, err, ErrHistoryKeyConflict)
 	_, err = fixtureRecord(ctx, s, &storage.HistoryEvent{InstanceID: "classes", ActivityID: "k", Command: "activity:A", EventType: storage.HistoryActivityCompleted, EventData: []byte(`1`), DataType: "json"})
 	require.ErrorIs(t, err, ErrHistoryKeyConflict)
-	_, err = s.SetHistoryValueIfNull(ctx, f, "classes", "k", "receive:x", storage.HistoryChannelMessageReceived, []byte(`2`))
+	_, err = s.SetHistoryValueIfNull(ctx, f, "classes", "k", "receive:x", storage.HistorySignalReceived, []byte(`2`))
 	require.ErrorIs(t, err, ErrHistoryKeyConflict)
 	unchanged, err := s.GetHistoryEvent(ctx, "classes", "k")
 	require.NoError(t, err)
@@ -234,7 +231,7 @@ func testReservedActivityIDsRejected(t *testing.T, factory replayAppFactory) {
 	for _, command := range []string{"activity", "sleep"} {
 		for _, tc := range []struct{ key, prefix string }{
 			{"$workflow_failed", "$"}, {"$future_runtime", "$"}, {"sleep:1", "sleep:"},
-			{"receive_messages:1", "receive_"}, {"channel:messages:1", "channel:"},
+			{"receive:messages:1", "receive:"},
 		} {
 			t.Run(command+"/"+tc.key, func(t *testing.T) {
 				h := newTypedReplayHarness(t, factory)

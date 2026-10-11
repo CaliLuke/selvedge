@@ -272,8 +272,8 @@ func requireRecordedHistory(t *testing.T, s storage.Storage, ctx context.Context
 }
 
 func fixtureCommand(key string) string {
-	if strings.HasPrefix(key, "receive_") {
-		return "receive:" + strings.TrimPrefix(key[:strings.LastIndex(key, ":")], "receive_")
+	if strings.HasPrefix(key, "receive:") {
+		return key[:strings.LastIndex(key, ":")]
 	}
 	return "activity:" + strings.Split(key, ":")[0]
 }

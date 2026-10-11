@@ -18,7 +18,6 @@ func TestReviewRegressionsPostgres(t *testing.T) {
 		"schema idempotence": testDispatchIndexCreationIsIdempotent,
 		"terminal timer":     testTerminalTimerIsRemoved,
 		"timer hook":         testTimerHookAfterCommit,
-		"timeout round trip": testChannelTimeoutRoundTrip,
 		"context fences":     testContextWritesRequireMatchingFence,
 		"final check":        testFinalCheckStopsBeforeCommitAttempt,
 		"commit check":       testCommitCheckStopsBeforeSQL,
@@ -35,22 +34,17 @@ func TestRunnableNotificationsAfterCommitPostgres(t *testing.T) {
 	f, ok, err := s.AcquireLease(h.app.ctx, "lease", "worker", time.Minute)
 	require.NoError(t, err)
 	require.True(t, ok)
-	require.NoError(t, pg.SubscribeToChannel(storage.ContextWithFence(h.app.ctx, f), "lease", "messages", storage.ChannelModeBroadcast))
 	writes := map[string]func(context.Context) error{
 		"mark": func(ctx context.Context) error { return pg.MarkRunnable(ctx, "lease") },
 		"timer": func(ctx context.Context) error {
 			return pg.FireTimer(ctx, &storage.TimerSubscription{InstanceID: "lease", TimerID: "pause", ExpiresAt: time.Now()})
 		},
-		"publish": func(ctx context.Context) error {
-			_, err := pg.PublishToChannel(ctx, "messages", []byte(`1`), nil)
+		"signal": func(ctx context.Context) error {
+			_, err := pg.AppendSignal(ctx, "lease", "messages", []byte(`1`))
 			return err
 		},
 		"result": func(ctx context.Context) error {
 			_, err := pg.SetHistoryValueIfNull(ctx, nil, "lease", "activity", "activity:A", storage.HistoryActivityCompleted, []byte(`1`))
-			return err
-		},
-		"timeout": func(ctx context.Context) error {
-			_, err := pg.RecordHistory(ctx, nil, &storage.HistoryEvent{InstanceID: "lease", ActivityID: "timeout", Command: "receive:messages", EventType: storage.HistoryMessageTimeout, EventData: []byte(`1`), DataType: "json"})
 			return err
 		},
 		"create": func(ctx context.Context) error {

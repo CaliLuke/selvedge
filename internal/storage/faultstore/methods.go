@@ -88,15 +88,6 @@ func (s *Store) UpdateInstanceActivity(ctx context.Context, id, key string) erro
 	return s.after(ctx, "UpdateInstanceActivity", err)
 }
 
-// RegisterTimerSubscription delegates to storage with before/after fault hooks and call recording.
-func (s *Store) RegisterTimerSubscription(ctx context.Context, sub *storage.TimerSubscription) error {
-	if err := s.before(ctx, "RegisterTimerSubscription"); err != nil {
-		return err
-	}
-	err := s.Storage.RegisterTimerSubscription(ctx, sub)
-	return s.after(ctx, "RegisterTimerSubscription", err)
-}
-
 // RemoveTimerSubscription delegates to storage with before/after fault hooks and call recording.
 func (s *Store) RemoveTimerSubscription(ctx context.Context, id, key string) error {
 	if err := s.before(ctx, "RemoveTimerSubscription"); err != nil {
@@ -113,60 +104,6 @@ func (s *Store) FireTimer(ctx context.Context, sub *storage.TimerSubscription) e
 	}
 	err := s.Storage.FireTimer(ctx, sub)
 	return s.after(ctx, "FireTimer", err)
-}
-
-// SubscribeToChannel delegates to storage with before/after fault hooks and call recording.
-func (s *Store) SubscribeToChannel(ctx context.Context, id, channel string, mode storage.ChannelMode) error {
-	if err := s.before(ctx, "SubscribeToChannel"); err != nil {
-		return err
-	}
-	err := s.Storage.SubscribeToChannel(ctx, id, channel, mode)
-	return s.after(ctx, "SubscribeToChannel", err)
-}
-
-// RegisterChannelReceive delegates to storage with before/after fault hooks and call recording.
-func (s *Store) RegisterChannelReceive(ctx context.Context, id, channel, key string, timeout *time.Time) error {
-	if err := s.before(ctx, "RegisterChannelReceive"); err != nil {
-		return err
-	}
-	err := s.Storage.RegisterChannelReceive(ctx, id, channel, key, timeout)
-	return s.after(ctx, "RegisterChannelReceive", err)
-}
-
-// UpdateDeliveryCursor delegates to storage with before/after fault hooks and call recording.
-func (s *Store) UpdateDeliveryCursor(ctx context.Context, id, channel string, msg int64) error {
-	if err := s.before(ctx, "UpdateDeliveryCursor"); err != nil {
-		return err
-	}
-	err := s.Storage.UpdateDeliveryCursor(ctx, id, channel, msg)
-	return s.after(ctx, "UpdateDeliveryCursor", err)
-}
-
-// ClearChannelWaitingState delegates to storage with before/after fault hooks and call recording.
-func (s *Store) ClearChannelWaitingState(ctx context.Context, id, channel string) error {
-	if err := s.before(ctx, "ClearChannelWaitingState"); err != nil {
-		return err
-	}
-	err := s.Storage.ClearChannelWaitingState(ctx, id, channel)
-	return s.after(ctx, "ClearChannelWaitingState", err)
-}
-
-// ConsumeChannelMessage delegates to storage with before/after fault hooks and call recording.
-func (s *Store) ConsumeChannelMessage(ctx context.Context, f *storage.Fence, channel string, id int64, ev *storage.HistoryEvent) (*storage.HistoryEvent, error) {
-	if err := s.before(ctx, "ConsumeChannelMessage"); err != nil {
-		return nil, err
-	}
-	v0, err := s.Storage.ConsumeChannelMessage(ctx, f, channel, id, ev)
-	return v0, s.after(ctx, "ConsumeChannelMessage", err)
-}
-
-// PublishToChannel delegates to storage with before/after fault hooks and call recording.
-func (s *Store) PublishToChannel(ctx context.Context, channel string, data, metadata []byte) (int64, error) {
-	if err := s.before(ctx, "PublishToChannel"); err != nil {
-		return 0, err
-	}
-	v0, err := s.Storage.PublishToChannel(ctx, channel, data, metadata)
-	return v0, s.after(ctx, "PublishToChannel", err)
 }
 
 // CommitTransaction delegates to storage with before/after fault hooks and call recording.
@@ -277,60 +214,6 @@ func (s *Store) FindExpiredTimers(ctx context.Context, limit int) ([]*storage.Ti
 	return v0, s.after(ctx, "FindExpiredTimers", err)
 }
 
-// GetChannelSubscription delegates to storage with before/after fault hooks and call recording.
-func (s *Store) GetChannelSubscription(ctx context.Context, id, channel string) (*storage.ChannelSubscription, error) {
-	if err := s.before(ctx, "GetChannelSubscription"); err != nil {
-		return nil, err
-	}
-	v0, err := s.Storage.GetChannelSubscription(ctx, id, channel)
-	return v0, s.after(ctx, "GetChannelSubscription", err)
-}
-
-// GetChannelMode delegates to storage with before/after fault hooks and call recording.
-func (s *Store) GetChannelMode(ctx context.Context, channel string) (storage.ChannelMode, error) {
-	if err := s.before(ctx, "GetChannelMode"); err != nil {
-		return "", err
-	}
-	v0, err := s.Storage.GetChannelMode(ctx, channel)
-	return v0, s.after(ctx, "GetChannelMode", err)
-}
-
-// GetPendingChannelMessagesForInstance delegates to storage with before/after fault hooks and call recording.
-func (s *Store) GetPendingChannelMessagesForInstance(ctx context.Context, id, channel string) ([]*storage.ChannelMessage, error) {
-	if err := s.before(ctx, "GetPendingChannelMessagesForInstance"); err != nil {
-		return nil, err
-	}
-	v0, err := s.Storage.GetPendingChannelMessagesForInstance(ctx, id, channel)
-	return v0, s.after(ctx, "GetPendingChannelMessagesForInstance", err)
-}
-
-// GetChannelSubscribersWaiting delegates to storage with before/after fault hooks and call recording.
-func (s *Store) GetChannelSubscribersWaiting(ctx context.Context, channel string) ([]*storage.ChannelSubscription, error) {
-	if err := s.before(ctx, "GetChannelSubscribersWaiting"); err != nil {
-		return nil, err
-	}
-	v0, err := s.Storage.GetChannelSubscribersWaiting(ctx, channel)
-	return v0, s.after(ctx, "GetChannelSubscribersWaiting", err)
-}
-
-// FindExpiredChannelSubscriptions delegates to storage with before/after fault hooks and call recording.
-func (s *Store) FindExpiredChannelSubscriptions(ctx context.Context, limit int) ([]*storage.ChannelSubscription, error) {
-	if err := s.before(ctx, "FindExpiredChannelSubscriptions"); err != nil {
-		return nil, err
-	}
-	v0, err := s.Storage.FindExpiredChannelSubscriptions(ctx, limit)
-	return v0, s.after(ctx, "FindExpiredChannelSubscriptions", err)
-}
-
-// CleanupOldChannelMessages delegates to storage with before/after fault hooks and call recording.
-func (s *Store) CleanupOldChannelMessages(ctx context.Context, age time.Duration) error {
-	if err := s.before(ctx, "CleanupOldChannelMessages"); err != nil {
-		return err
-	}
-	err := s.Storage.CleanupOldChannelMessages(ctx, age)
-	return s.after(ctx, "CleanupOldChannelMessages", err)
-}
-
 // TryAcquireSystemLock delegates to storage with before/after fault hooks and call recording.
 func (s *Store) TryAcquireSystemLock(ctx context.Context, name, owner string, ttl time.Duration) (bool, error) {
 	if err := s.before(ctx, "TryAcquireSystemLock"); err != nil {
@@ -391,4 +274,26 @@ func (s *Store) ReserveTimer(ctx context.Context, f *storage.Fence, timer *stora
 	}
 	v, err := s.Storage.ReserveTimer(ctx, f, timer)
 	return v, s.after(ctx, "ReserveTimer", err)
+}
+
+func (s *Store) AppendSignal(ctx context.Context, id, channel string, payload []byte) (int64, error) {
+	if err := s.before(ctx, "AppendSignal"); err != nil {
+		return 0, err
+	}
+	v, err := s.Storage.AppendSignal(ctx, id, channel, payload)
+	return v, s.after(ctx, "AppendSignal", err)
+}
+func (s *Store) NextSignal(ctx context.Context, id, channel string) (*storage.Signal, error) {
+	if err := s.before(ctx, "NextSignal"); err != nil {
+		return nil, err
+	}
+	v, err := s.Storage.NextSignal(ctx, id, channel)
+	return v, s.after(ctx, "NextSignal", err)
+}
+func (s *Store) ConsumeSignal(ctx context.Context, f *storage.Fence, id int64, obs *storage.HistoryEvent) (*storage.HistoryEvent, error) {
+	if err := s.before(ctx, "ConsumeSignal"); err != nil {
+		return nil, err
+	}
+	v, err := s.Storage.ConsumeSignal(ctx, f, id, obs)
+	return v, s.after(ctx, "ConsumeSignal", err)
 }

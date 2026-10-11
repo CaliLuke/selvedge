@@ -30,3 +30,8 @@ func fixtureFence(t *testing.T, s Storage, id string) *Fence {
 func fixtureContext(t *testing.T, s Storage, ctx context.Context, id string) context.Context {
 	return ContextWithFence(ctx, *fixtureFence(t, s, id))
 }
+
+func fixtureTimer(ctx context.Context, s Storage, timer *TimerSubscription) error {
+	_, err := s.Conn(ctx).ExecContext(ctx, `INSERT INTO workflow_timer_subscriptions(instance_id,timer_id,expires_at,activity_id) VALUES($1,$2,$3,$4)`, timer.InstanceID, timer.TimerID, timer.ExpiresAt.UTC().Format("2006-01-02 15:04:05"), timer.ActivityID)
+	return err
+}

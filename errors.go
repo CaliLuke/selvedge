@@ -94,17 +94,6 @@ func (e *LockAcquisitionError) Error() string {
 		e.InstanceID, e.WorkerID, e.Reason)
 }
 
-// EventTimeoutError indicates that waiting for an event timed out.
-type EventTimeoutError struct {
-	InstanceID string
-	EventType  string
-}
-
-func (e *EventTimeoutError) Error() string {
-	return fmt.Sprintf("timeout waiting for event %q on instance %s",
-		e.EventType, e.InstanceID)
-}
-
 // ErrWorkflowAlreadyCompleted indicates an operation on a completed workflow.
 var ErrWorkflowAlreadyCompleted = errors.New("workflow already completed")
 
@@ -142,8 +131,8 @@ type SuspendSignal = replay.SuspendSignal
 const (
 	// SuspendForTimer indicates the workflow is waiting for a timer to expire.
 	SuspendForTimer = replay.SuspendForTimer
-	// SuspendForChannelMessage indicates the workflow is waiting for a channel message (via WaitEvent).
-	SuspendForChannelMessage = replay.SuspendForChannelMessage
+	// SuspendForSignal indicates the workflow is waiting for a signal.
+	SuspendForSignal = replay.SuspendForSignal
 )
 
 var (
@@ -153,43 +142,9 @@ var (
 	AsSuspendSignal = replay.AsSuspendSignal
 	// NewTimerSuspend creates a SuspendSignal for timer waiting.
 	NewTimerSuspend = replay.NewTimerSuspend
-	// NewChannelMessageSuspend creates a SuspendSignal for channel message waiting (via WaitEvent).
-	NewChannelMessageSuspend = replay.NewChannelMessageSuspend
+	// NewSignalSuspend creates a SuspendSignal for signal waiting.
+	NewSignalSuspend = replay.NewSignalSuspend
 )
-
-// ========================================
-// Timeout Errors
-// ========================================
-
-// ChannelMessageTimeoutError indicates that waiting for a channel message timed out.
-type ChannelMessageTimeoutError struct {
-	InstanceID  string
-	ChannelName string
-}
-
-func (e *ChannelMessageTimeoutError) Error() string {
-	return fmt.Sprintf("timeout waiting for channel message on %q (instance: %s)",
-		e.ChannelName, e.InstanceID)
-}
-
-// errEventNotSubscribed indicates an operation on a channel without subscription.
-var errEventNotSubscribed = errors.New("not subscribed to channel")
-
-// eventModeConflictError indicates subscribing with a different mode than the channel's established mode.
-type eventModeConflictError struct {
-	Channel       string
-	ExistingMode  string
-	RequestedMode string
-}
-
-func (e *eventModeConflictError) Error() string {
-	return fmt.Sprintf("channel %q is already configured as %q mode; cannot subscribe with %q mode",
-		e.Channel, e.ExistingMode, e.RequestedMode)
-}
-
-// ErrWorkflowNotCancellable indicates that the workflow cannot be cancelled.
-// This happens when the workflow is already completed, cancelled, failed, or does not exist.
-var ErrWorkflowNotCancellable = errors.New("workflow cannot be cancelled")
 
 // ApplicationError carries a portable activity or workflow failure.
 // Details must be JSON-serializable and is returned as JSON-decoded data.

@@ -148,14 +148,11 @@ func testStalledExecutionCommitRejected(t *testing.T, factory replayAppFactory) 
 			for _, status := range []storage.WorkflowStatus{storage.StatusCompleted, storage.StatusFailed, storage.StatusCancelled} {
 				require.ErrorIs(t, h.app.storage.CloseInstance(stale, f, status, []byte(`1`), nil), storage.ErrFenced)
 			}
-			require.ErrorIs(t, h.app.storage.RegisterTimerSubscription(stale, &storage.TimerSubscription{InstanceID: "lease", TimerID: "timer", ExpiresAt: time.Now()}), storage.ErrFenced)
-			require.ErrorIs(t, h.app.storage.SubscribeToChannel(stale, "lease", "messages", storage.ChannelModeBroadcast), storage.ErrFenced)
-			require.ErrorIs(t, h.app.storage.UpdateDeliveryCursor(stale, "lease", "messages", 1), storage.ErrFenced)
-			require.ErrorIs(t, h.app.storage.ClearChannelWaitingState(stale, "lease", "messages"), storage.ErrFenced)
+			_, err = h.app.storage.ReserveTimer(stale, &f, &storage.TimerSubscription{InstanceID: "lease", TimerID: "timer", ExpiresAt: time.Now()})
+			require.ErrorIs(t, err, storage.ErrFenced)
 			require.ErrorIs(t, h.app.storage.UpdateInstanceActivity(stale, "lease", "next"), storage.ErrFenced)
 			require.ErrorIs(t, h.app.storage.RemoveTimerSubscription(stale, "lease", "timer"), storage.ErrFenced)
-			require.ErrorIs(t, h.app.storage.RegisterChannelReceive(stale, "lease", "messages", "next", nil), storage.ErrFenced)
-			_, err = h.app.storage.ConsumeChannelMessage(stale, &f, "messages", 1, &storage.HistoryEvent{InstanceID: "lease", ActivityID: "recv", Command: "receive:messages", EventType: storage.HistoryChannelMessageReceived, EventData: []byte(`1`), DataType: "json"})
+			_, err = h.app.storage.ConsumeSignal(stale, &f, 1, &storage.HistoryEvent{InstanceID: "lease", ActivityID: "recv", Command: "receive:messages", EventType: storage.HistorySignalReceived, EventData: []byte(`1`), DataType: "json"})
 			require.ErrorIs(t, err, storage.ErrFenced)
 
 			n, err := h.app.storage.GetHistoryCount(h.app.ctx, "lease")
@@ -172,7 +169,7 @@ func testCommandWritesRequireFence(t *testing.T, factory replayAppFactory) {
 	require.ErrorIs(t, err, storage.ErrFenced)
 	_, err = h.app.storage.RecordHistory(h.app.ctx, nil, &storage.HistoryEvent{InstanceID: "lease", ActivityID: "obs", Command: "now", EventData: []byte(`1`), DataType: "json"})
 	require.ErrorIs(t, err, storage.ErrFenced)
-	_, err = h.app.storage.SetHistoryValueIfNull(h.app.ctx, nil, "lease", "recv", "receive:c", storage.HistoryChannelMessageReceived, []byte(`1`))
+	_, err = h.app.storage.SetHistoryValueIfNull(h.app.ctx, nil, "lease", "recv", "receive:c", storage.HistorySignalReceived, []byte(`1`))
 	require.ErrorIs(t, err, storage.ErrFenced)
 }
 
@@ -188,7 +185,7 @@ func testTimerFireRollsBackAsOneWrite(t *testing.T, factory replayAppFactory) {
 	_, err = h.app.storage.ReserveHistory(h.app.ctx, &f, "lease", "timer", "another-command")
 	require.NoError(t, err)
 	timer := &storage.TimerSubscription{InstanceID: "lease", TimerID: "timer", ExpiresAt: time.Now()}
-	require.NoError(t, h.app.storage.RegisterTimerSubscription(storage.ContextWithFence(h.app.ctx, f), timer))
+	require.NoError(t, fixtureTimer(h.app.ctx, h.app.storage, timer))
 	require.NoError(t, s.ReleaseLease(h.app.ctx, f, false))
 	require.ErrorIs(t, h.app.storage.FireTimer(h.app.ctx, timer), storage.ErrHistoryKeyConflict)
 	var subscriptions int

@@ -63,10 +63,6 @@ func cleanupPostgresTables(t *testing.T, store *PostgresStorage) {
 	ctx := context.Background()
 
 	tables := []string{
-		"channel_message_claims",
-		"channel_delivery_cursors",
-		"channel_subscriptions",
-		"channel_messages",
 		"workflow_timer_subscriptions",
 		"workflow_history",
 		"workflow_instances",
@@ -286,8 +282,8 @@ func TestPostgresIntegration_TimerSubscription(t *testing.T) {
 		ActivityID: "activity:1",
 	}
 
-	if err := store.RegisterTimerSubscription(fixtureContext(t, store, ctx, "test-timer-1"), sub); err != nil {
-		t.Fatalf("RegisterTimerSubscription failed: %v", err)
+	if err := fixtureTimer(ctx, store, sub); err != nil {
+		t.Fatalf("timer fixture failed: %v", err)
 	}
 
 	timers, err := store.FindExpiredTimers(ctx, 100)
@@ -369,50 +365,6 @@ func TestPostgresIntegration_TransactionCommit(t *testing.T) {
 	if got == nil {
 		t.Error("Instance should exist after commit")
 	}
-}
-
-func TestPostgresIntegration_ChannelOperations(t *testing.T) {
-	store, cleanup := setupPostgresContainer(t)
-	defer cleanup()
-
-	ctx := context.Background()
-	now := time.Now().UTC()
-
-	// Create instance
-	instance := &WorkflowInstance{
-		InstanceID:   "test-channel-1",
-		WorkflowName: "test_workflow",
-		Status:       StatusRunning,
-		StartedAt:    now,
-		UpdatedAt:    now,
-	}
-	store.CreateInstance(ctx, instance)
-
-	// Subscribe to channel
-	if err := store.SubscribeToChannel(fixtureContext(t, store, ctx, "test-channel-1"), "test-channel-1", "test-channel", ChannelModeBroadcast); err != nil {
-		t.Fatalf("SubscribeToChannel failed: %v", err)
-	}
-
-	// Get subscription
-	sub, err := store.GetChannelSubscription(ctx, "test-channel-1", "test-channel")
-	if err != nil {
-		t.Fatalf("GetChannelSubscription failed: %v", err)
-	}
-	if sub == nil {
-		t.Fatal("Subscription should exist")
-	}
-	if sub.Mode != ChannelModeBroadcast {
-		t.Errorf("Mode = %q, want %q", sub.Mode, ChannelModeBroadcast)
-	}
-
-	// Publish message
-	_, err = store.PublishToChannel(ctx, "test-channel", []byte(`{"msg": "hello"}`), nil)
-	if err != nil {
-		t.Fatalf("PublishToChannel failed: %v", err)
-	}
-
-	// Get pending messages
-
 }
 
 func TestPostgresIntegration_ListInstances(t *testing.T) {

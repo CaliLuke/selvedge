@@ -58,19 +58,16 @@ func (s historyStore) write(ctx context.Context, f *Fence, ev *HistoryEvent, fil
 		return nil, rejectFence(ctx)
 	}
 	err = fenceStore(s).withFence(ctx, f, func(conn Executor) error {
-		if fill || ev.EventType == HistoryMessageTimeout {
+		if fill {
 			if _, e := conn.ExecContext(ctx, `UPDATE workflow_instances SET runnable=TRUE WHERE instance_id=$1 AND status='running'`, ev.InstanceID); e != nil {
 				return e
 			}
 		}
 		var writeErr error
 		stored, writeErr = writeHistory(ctx, conn, ev, fill)
-		if writeErr == nil && ev.EventType == HistoryMessageTimeout {
-			_, writeErr = conn.ExecContext(ctx, `UPDATE channel_subscriptions SET activity_id=NULL,timeout_at=NULL WHERE instance_id=$1 AND activity_id=$2`, ev.InstanceID, ev.ActivityID)
-		}
 		return writeErr
 	})
-	if err == nil && (fill || ev.EventType == HistoryMessageTimeout) {
+	if err == nil && fill {
 		notifyRunnable(ctx, s.TransactionManager, ev.InstanceID)
 	}
 	return stored, err
@@ -122,7 +119,7 @@ func (s *SQLiteStorage) ReserveHistory(ctx context.Context, f *Fence, instanceID
 
 // RecordHistory returns the first stored command and value at the key.
 func (s *SQLiteStorage) RecordHistory(ctx context.Context, f *Fence, ev *HistoryEvent) (*HistoryEvent, error) {
-	if f == nil && ev.EventType != HistoryMessageTimeout {
+	if f == nil {
 		return nil, rejectFence(ctx)
 	}
 	return (historyStore{s}).write(ctx, f, ev, false)
@@ -130,7 +127,7 @@ func (s *SQLiteStorage) RecordHistory(ctx context.Context, f *Fence, ev *History
 
 // SetHistoryValueIfNull records the first value for a matching command.
 func (s *SQLiteStorage) SetHistoryValueIfNull(ctx context.Context, f *Fence, instanceID, key, cmd string, t HistoryEventType, data []byte) (*HistoryEvent, error) {
-	if f == nil && t != HistoryActivityCompleted && t != HistoryActivityFailed && t != HistoryTimerExpired && t != HistoryMessageTimeout {
+	if f == nil && t != HistoryActivityCompleted && t != HistoryActivityFailed && t != HistoryTimerExpired {
 		return nil, rejectFence(ctx)
 	}
 	return (historyStore{s}).write(ctx, f, &HistoryEvent{InstanceID: instanceID, ActivityID: key, Command: cmd, EventType: t, EventData: data, DataType: "json"}, true)
@@ -151,7 +148,7 @@ func (s *PostgresStorage) ReserveHistory(ctx context.Context, f *Fence, instance
 
 // RecordHistory returns the first stored command and value at the key.
 func (s *PostgresStorage) RecordHistory(ctx context.Context, f *Fence, ev *HistoryEvent) (*HistoryEvent, error) {
-	if f == nil && ev.EventType != HistoryMessageTimeout {
+	if f == nil {
 		return nil, rejectFence(ctx)
 	}
 	return (historyStore{s}).write(ctx, f, ev, false)
@@ -159,7 +156,7 @@ func (s *PostgresStorage) RecordHistory(ctx context.Context, f *Fence, ev *Histo
 
 // SetHistoryValueIfNull records the first value for a matching command.
 func (s *PostgresStorage) SetHistoryValueIfNull(ctx context.Context, f *Fence, instanceID, key, cmd string, t HistoryEventType, data []byte) (*HistoryEvent, error) {
-	if f == nil && t != HistoryActivityCompleted && t != HistoryActivityFailed && t != HistoryTimerExpired && t != HistoryMessageTimeout {
+	if f == nil && t != HistoryActivityCompleted && t != HistoryActivityFailed && t != HistoryTimerExpired {
 		return nil, rejectFence(ctx)
 	}
 	return (historyStore{s}).write(ctx, f, &HistoryEvent{InstanceID: instanceID, ActivityID: key, Command: cmd, EventType: t, EventData: data, DataType: "json"}, true)

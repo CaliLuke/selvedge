@@ -46,18 +46,13 @@ const (
 	HistoryActivityCompleted HistoryEventType = "ActivityCompleted"
 	HistoryActivityFailed    HistoryEventType = "ActivityFailed"
 
-	// External event received (via WaitEvent)
-	HistoryEventReceived HistoryEventType = "EventReceived"
-
 	// Timer expired (via Sleep/SleepUntil)
 	HistoryTimerExpired   HistoryEventType = "TimerExpired"
 	HistoryTimerCancelled HistoryEventType = "TimerCancelled"
 
-	// Internal event delivery record (via WaitEvent)
-	HistoryChannelMessageReceived HistoryEventType = "ChannelMessageReceived"
-
-	// Message receive timeout
-	HistoryMessageTimeout HistoryEventType = "MessageTimeout"
+	// Signal observations contain the payload or a cancellation envelope.
+	HistorySignalReceived  HistoryEventType = "SignalReceived"
+	HistorySignalCancelled HistoryEventType = "SignalCancelled"
 
 	// Workflow lifecycle events
 	HistoryWorkflowFailed    HistoryEventType = "WorkflowFailed"
@@ -97,49 +92,6 @@ type PaginationResult struct {
 	Instances     []*WorkflowInstance `json:"instances"`
 	NextPageToken string              `json:"next_page_token,omitempty"`
 	HasMore       bool                `json:"has_more"`
-}
-
-// ========================================
-// Channels
-// ========================================
-
-// ChannelMode represents the subscription mode for a channel.
-type ChannelMode string
-
-const (
-	ChannelModeBroadcast ChannelMode = "broadcast" // All subscribers receive all messages
-)
-
-// ChannelMessage represents a message in a channel.
-type ChannelMessage struct {
-	ID          int64     `json:"id"`
-	Channel     string    `json:"channel"`               // Channel name
-	MessageID   string    `json:"message_id"`            // UUID for message
-	DataType    string    `json:"data_type"`             // "json" or "binary"
-	Data        []byte    `json:"data,omitempty"`        // JSON data
-	DataBinary  []byte    `json:"data_binary,omitempty"` // Binary data
-	Metadata    []byte    `json:"metadata,omitempty"`    // JSON-encoded metadata
-	PublishedAt time.Time `json:"published_at"`          // When the message was published
-}
-
-// ChannelSubscription represents a workflow's subscription to a channel.
-// Waiting state is determined by "activity_id IS NOT NULL" instead of explicit waiting flag.
-type ChannelSubscription struct {
-	ID              int64       `json:"id"`
-	InstanceID      string      `json:"instance_id"`
-	Channel         string      `json:"channel"` // Channel name
-	Mode            ChannelMode `json:"mode"`
-	CursorMessageID int64       `json:"cursor_message_id"` // Last delivered message ID
-	TimeoutAt       *time.Time  `json:"timeout_at,omitempty"`
-	ActivityID      string      `json:"activity_id,omitempty"` // Activity ID for replay matching; non-null = waiting
-	SubscribedAt    time.Time   `json:"subscribed_at"`         // When the subscription was created
-}
-
-// ChannelDeliveryResult contains information about a successful message delivery.
-type ChannelDeliveryResult struct {
-	InstanceID   string `json:"instance_id"`
-	WorkflowName string `json:"workflow_name"`
-	ActivityID   string `json:"activity_id"`
 }
 
 // ========================================

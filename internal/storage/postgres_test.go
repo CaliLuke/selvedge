@@ -50,9 +50,6 @@ func cleanupTables(t *testing.T, store *PostgresStorage) {
 
 	// Order matters due to foreign key constraints
 	tables := []string{
-		"channel_delivery_cursors",
-		"channel_messages",
-		"channel_subscriptions",
 		"workflow_timer_subscriptions",
 		"workflow_history",
 		"workflow_instances",
@@ -279,8 +276,8 @@ func TestPostgresStorage_TimerSubscription(t *testing.T) {
 		ActivityID: "activity:1",
 	}
 
-	if err := store.RegisterTimerSubscription(fixtureContext(t, store, ctx, "test-timer-1"), sub); err != nil {
-		t.Fatalf("RegisterTimerSubscription failed: %v", err)
+	if err := fixtureTimer(ctx, store, sub); err != nil {
+		t.Fatalf("timer fixture failed: %v", err)
 	}
 
 	// Find expired timers

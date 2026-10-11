@@ -248,7 +248,7 @@ func TestReceiveObservesCancel(t *testing.T) { testReceiveObservesCancel(t, crea
 func testReceiveObservesCancel(t *testing.T, factory replayAppFactory) {
 	h := newTypedReplayHarness(t, factory)
 	w := DefineWorkflow("receive_cancel", func(ctx *WorkflowContext, _ string) (string, error) {
-		_, err := WaitEvent[string](ctx, "inbox")
+		_, err := Receive[string](ctx, "inbox")
 		return "", err
 	})
 	id := seedErrorWorkflow(t, h, w)
@@ -266,7 +266,7 @@ func testStickyFatalStopsYields(t *testing.T, factory replayAppFactory) {
 				ctx.execCtx.Fail(ErrHistoryKeyConflict)
 				var err error
 				if receive {
-					_, err = WaitEvent[string](ctx, "inbox")
+					_, err = Receive[string](ctx, "inbox")
 				} else {
 					err = Sleep(ctx, time.Hour)
 				}
@@ -279,7 +279,7 @@ func testStickyFatalStopsYields(t *testing.T, factory replayAppFactory) {
 			require.NoError(t, err)
 			require.Len(t, rows, 1)
 			require.Equal(t, "$workflow_failed", rows[0].ActivityID)
-			require.NotContains(t, fs.Calls(), "SubscribeToChannel")
+			require.NotContains(t, fs.Calls(), "NextSignal")
 		})
 	}
 }
@@ -331,7 +331,7 @@ func testCancelObservationReplays(t *testing.T, factory replayAppFactory) {
 			w := DefineWorkflow("cancel_replay", func(ctx *WorkflowContext, _ string) (string, error) {
 				var err error
 				if receive {
-					_, err = WaitEvent[string](ctx, "inbox")
+					_, err = Receive[string](ctx, "inbox")
 				} else {
 					err = Sleep(ctx, time.Hour, WithSleepID("pause"))
 				}
@@ -343,7 +343,7 @@ func testCancelObservationReplays(t *testing.T, factory replayAppFactory) {
 				require.Equal(t, "original reason", cancelled.Reason)
 				observations++
 				if observations == 1 {
-					return "", NewChannelMessageSuspend(ctx.InstanceID(), "inbox", "later", nil)
+					return "", NewSignalSuspend(ctx.InstanceID(), "inbox", "later")
 				}
 				return "caught", nil
 			})
@@ -364,7 +364,7 @@ func testCloseInstanceAtomic(t *testing.T, factory replayAppFactory) {
 	f, ok, err := s.AcquireLease(h.app.ctx, "lease", "closer", time.Minute)
 	require.NoError(t, err)
 	require.True(t, ok)
-	require.NoError(t, h.app.storage.RegisterTimerSubscription(storage.ContextWithFence(h.app.ctx, f), &storage.TimerSubscription{InstanceID: "lease", TimerID: "pause", ExpiresAt: time.Now()}))
+	require.NoError(t, fixtureTimer(h.app.ctx, h.app.storage, &storage.TimerSubscription{InstanceID: "lease", TimerID: "pause", ExpiresAt: time.Now()}))
 	ev := &storage.HistoryEvent{InstanceID: "lease", ActivityID: "$workflow_failed", Command: "close", EventType: storage.HistoryWorkflowCancelled, EventData: encodeError(&WorkflowCancelledError{InstanceID: "lease"}), DataType: "json"}
 	_, err = h.app.storage.DB().Exec("ALTER TABLE workflow_timer_subscriptions RENAME TO hidden_timers")
 	require.NoError(t, err)

@@ -111,7 +111,7 @@ func (a *Activity[I, O]) Execute(
 
 	// Replay uses recorded bytes decoded directly into the activity's output type.
 	if found {
-		if event.EventType == storage.HistoryActivityFailed || event.EventType == storage.HistoryMessageTimeout {
+		if event.EventType == storage.HistoryActivityFailed {
 			var zero O
 			return zero, replayRecordedError(ctx, event)
 		}
@@ -275,7 +275,7 @@ type executeOptions struct {
 
 // WithActivityID specifies a manual activity ID.
 // Required for concurrent activity execution to maintain determinism.
-// IDs starting with $, sleep:, receive_, or channel: are reserved.
+// IDs starting with $, sleep:, or receive: are reserved.
 // Execute rejects these IDs with ErrHistoryKeyConflict before running the activity.
 func WithActivityID(id string) ExecuteOption {
 	return func(o *executeOptions) {
@@ -288,7 +288,7 @@ func WithActivityID(id string) ExecuteOption {
 
 // Runtime-generated keys and the lifecycle namespace cannot be explicit history IDs.
 func reservedHistoryIDError(kind, id string) error {
-	for _, prefix := range []string{"$", "sleep:", "receive_", "channel:"} {
+	for _, prefix := range []string{"$", "sleep:", "receive:"} {
 		if strings.HasPrefix(id, prefix) {
 			return fmt.Errorf("%s ID %q uses reserved prefix %q: %w", kind, id, prefix, ErrHistoryKeyConflict)
 		}

@@ -81,69 +81,17 @@ CREATE TABLE IF NOT EXISTS workflow_timer_subscriptions (
 CREATE INDEX IF NOT EXISTS idx_timer_subscriptions_expires ON workflow_timer_subscriptions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_timer_subscriptions_instance ON workflow_timer_subscriptions(instance_id);
 
--- Channel messages (persistent message queue)
-CREATE TABLE IF NOT EXISTS channel_messages (
-    id SERIAL PRIMARY KEY,
+-- Per-instance signal inbox
+CREATE TABLE IF NOT EXISTS workflow_signals (
+    id BIGSERIAL PRIMARY KEY,
+    instance_id TEXT NOT NULL REFERENCES workflow_instances(instance_id) ON DELETE CASCADE,
     channel TEXT NOT NULL,
-    message_id TEXT NOT NULL UNIQUE,
-    data_type TEXT NOT NULL,
-    data TEXT,
-    data_binary BYTEA,
-    metadata TEXT,
-    published_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    CONSTRAINT valid_data_type CHECK (data_type IN ('json', 'binary')),
-    CONSTRAINT data_type_consistency CHECK (
-        (data_type = 'json' AND data IS NOT NULL AND data_binary IS NULL) OR
-        (data_type = 'binary' AND data IS NULL AND data_binary IS NOT NULL)
-    )
+    payload TEXT NOT NULL,
+    sent_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    consumed_key TEXT NULL,
+    CONSTRAINT unique_consumed UNIQUE (instance_id, consumed_key)
 );
-
-CREATE INDEX IF NOT EXISTS idx_channel_messages_channel ON channel_messages(channel, published_at);
-CREATE INDEX IF NOT EXISTS idx_channel_messages_id ON channel_messages(id);
-
--- Channel subscriptions
-CREATE TABLE IF NOT EXISTS channel_subscriptions (
-    id SERIAL PRIMARY KEY,
-    instance_id TEXT NOT NULL,
-    channel TEXT NOT NULL,
-    mode TEXT NOT NULL,
-    activity_id TEXT,
-    cursor_message_id INTEGER,
-    timeout_at TIMESTAMP,
-    subscribed_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    FOREIGN KEY (instance_id) REFERENCES workflow_instances(instance_id) ON DELETE CASCADE,
-    CONSTRAINT valid_mode CHECK (mode IN ('broadcast', 'competing')),
-    CONSTRAINT unique_instance_channel UNIQUE (instance_id, channel)
-);
-
-CREATE INDEX IF NOT EXISTS idx_channel_subscriptions_channel ON channel_subscriptions(channel);
-CREATE INDEX IF NOT EXISTS idx_channel_subscriptions_instance ON channel_subscriptions(instance_id);
-CREATE INDEX IF NOT EXISTS idx_channel_subscriptions_waiting ON channel_subscriptions(channel, activity_id);
-CREATE INDEX IF NOT EXISTS idx_channel_subscriptions_timeout ON channel_subscriptions(timeout_at);
-
--- Channel delivery cursors (broadcast mode: track who read what)
-CREATE TABLE IF NOT EXISTS channel_delivery_cursors (
-    id SERIAL PRIMARY KEY,
-    channel TEXT NOT NULL,
-    instance_id TEXT NOT NULL,
-    last_delivered_id INTEGER NOT NULL,
-    updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    FOREIGN KEY (instance_id) REFERENCES workflow_instances(instance_id) ON DELETE CASCADE,
-    CONSTRAINT unique_channel_instance UNIQUE (channel, instance_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_channel_delivery_cursors_channel ON channel_delivery_cursors(channel);
-
--- Channel message claims (competing mode: who is processing what)
-CREATE TABLE IF NOT EXISTS channel_message_claims (
-    message_id TEXT PRIMARY KEY,
-    instance_id TEXT NOT NULL,
-    claimed_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    FOREIGN KEY (message_id) REFERENCES channel_messages(message_id) ON DELETE CASCADE,
-    FOREIGN KEY (instance_id) REFERENCES workflow_instances(instance_id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_channel_message_claims_instance ON channel_message_claims(instance_id);
+CREATE INDEX IF NOT EXISTS idx_signals_next ON workflow_signals(instance_id, channel, id);
 
 -- System locks (for coordinating background tasks across pods)
 CREATE TABLE IF NOT EXISTS system_locks (
@@ -159,20 +107,7 @@ CREATE INDEX IF NOT EXISTS idx_instances_dispatch ON workflow_instances(status, 
 
 -- migrate:down
 
-DROP INDEX IF EXISTS idx_channel_message_claims_instance;
-DROP TABLE IF EXISTS channel_message_claims;
-
-DROP INDEX IF EXISTS idx_channel_delivery_cursors_channel;
-DROP TABLE IF EXISTS channel_delivery_cursors;
-
-DROP INDEX IF EXISTS idx_channel_subscriptions_waiting;
-DROP INDEX IF EXISTS idx_channel_subscriptions_instance;
-DROP INDEX IF EXISTS idx_channel_subscriptions_channel;
-DROP TABLE IF EXISTS channel_subscriptions;
-
-DROP INDEX IF EXISTS idx_channel_messages_id;
-DROP INDEX IF EXISTS idx_channel_messages_channel;
-DROP TABLE IF EXISTS channel_messages;
+DROP TABLE IF EXISTS workflow_signals;
 
 DROP INDEX IF EXISTS idx_timer_subscriptions_instance;
 DROP INDEX IF EXISTS idx_timer_subscriptions_expires;

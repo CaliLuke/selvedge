@@ -3,7 +3,6 @@ package storage
 import (
 	"context"
 	"os"
-	"strings"
 	"testing"
 	"time"
 )
@@ -161,7 +160,7 @@ func TestSQLiteStorage(t *testing.T) {
 			ExpiresAt:  expiresAt,
 			ActivityID: "timer:1",
 		}
-		err := storage.RegisterTimerSubscription(fixtureContext(t, storage, ctx, "test-instance-1"), timer)
+		err := fixtureTimer(ctx, storage, timer)
 		if err != nil {
 			t.Fatalf("failed to register timer subscription: %v", err)
 		}
@@ -305,93 +304,6 @@ func TestSQLiteStorage(t *testing.T) {
 			if v != i+1 {
 				t.Errorf("expected callback %d to execute at position %d, got %d", i+1, i, v)
 			}
-		}
-	})
-
-	t.Run("ConsumeChannelMessage_BroadcastNoDuplicate", func(t *testing.T) {
-		// This test verifies that broadcast mode delivery updates the cursor
-		// to prevent duplicate message delivery when workflow resumes.
-
-		instanceID := "test-broadcast-dedup"
-		channelName := "test-broadcast-channel"
-
-		// 1. Create workflow instance
-		instance := &WorkflowInstance{
-			InstanceID:   instanceID,
-			WorkflowName: "test-broadcast-workflow",
-			Status:       StatusRunning,
-			InputData:    []byte(`{}`),
-			StartedAt:    time.Now(),
-			UpdatedAt:    time.Now(),
-		}
-		if err := storage.CreateInstance(ctx, instance); err != nil {
-			t.Fatalf("failed to create instance: %v", err)
-		}
-
-		f := fixtureFence(t, storage, instanceID)
-		ctx := ContextWithFence(ctx, *f)
-		// 2. Subscribe to channel in broadcast mode
-		if err := storage.SubscribeToChannel(ctx, instanceID, channelName, ChannelModeBroadcast); err != nil {
-			t.Fatalf("failed to subscribe to channel: %v", err)
-		}
-
-		// 4. Publish a message to the channel
-		data := []byte(`{"content": "test broadcast message"}`)
-		_, err := storage.PublishToChannel(ctx, channelName, data, nil)
-		if err != nil {
-			t.Fatalf("failed to publish message: %v", err)
-		}
-
-		// 5. Get pending messages for this instance
-		messages, err := storage.GetPendingChannelMessagesForInstance(ctx, instanceID, channelName)
-		if err != nil {
-			t.Fatalf("failed to get pending messages: %v", err)
-		}
-		if len(messages) != 1 {
-			t.Fatalf("expected 1 pending message, got %d", len(messages))
-		}
-
-		// 6. Deliver the message (this is what DeliverChannelMessageWithLock does)
-		result, err := storage.ConsumeChannelMessage(ctx, f, channelName, messages[0].ID, &HistoryEvent{InstanceID: instanceID, ActivityID: "receive:1", Command: "receive:" + channelName, EventType: HistoryChannelMessageReceived, EventData: messages[0].Data, DataType: "json"})
-		if err != nil {
-			t.Fatalf("failed to deliver message: %v", err)
-		}
-		if result == nil {
-			t.Fatal("expected delivery result, got nil")
-		}
-
-		// 7. Verify cursor was updated
-		var cursor int64
-		err = storage.db.QueryRowContext(ctx, "SELECT last_delivered_id FROM channel_delivery_cursors WHERE instance_id = ? AND channel = ?", instanceID, channelName).Scan(&cursor)
-		if err != nil {
-			t.Fatalf("failed to get delivery cursor: %v", err)
-		}
-		if cursor != messages[0].ID {
-			t.Errorf("expected cursor to be %d, got %d", messages[0].ID, cursor)
-		}
-
-		// 8. Verify no duplicate messages are returned (cursor prevents re-delivery)
-		messages2, err := storage.GetPendingChannelMessagesForInstance(ctx, instanceID, channelName)
-		if err != nil {
-			t.Fatalf("failed to get pending messages after delivery: %v", err)
-		}
-		if len(messages2) != 0 {
-			t.Errorf("expected 0 pending messages after delivery (cursor should prevent duplicate), got %d", len(messages2))
-		}
-
-		// 9. Verify message appears exactly once in history
-		history, _, err := storage.GetHistoryPaginated(ctx, instanceID, 0, 100)
-		if err != nil {
-			t.Fatalf("failed to get history: %v", err)
-		}
-		receiveCount := 0
-		for _, h := range history {
-			if strings.HasPrefix(h.ActivityID, "receive:") {
-				receiveCount++
-			}
-		}
-		if receiveCount != 1 {
-			t.Errorf("expected exactly 1 receive event in history, got %d", receiveCount)
 		}
 	})
 }

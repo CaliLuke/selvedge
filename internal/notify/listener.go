@@ -19,8 +19,6 @@ const (
 	ChannelWorkflowResumable NotifyChannel = "workflow_resumable"
 	// ChannelTimerExpired is notified when a timer is registered.
 	ChannelTimerExpired NotifyChannel = "workflow_timer_expired"
-	// ChannelChannelMessage is notified when a channel message is published.
-	ChannelChannelMessage NotifyChannel = "workflow_channel_message"
 )
 
 // AllChannels returns all notification channels.
@@ -28,7 +26,6 @@ func AllChannels() []NotifyChannel {
 	return []NotifyChannel{
 		ChannelWorkflowResumable,
 		ChannelTimerExpired,
-		ChannelChannelMessage,
 	}
 }
 
@@ -43,13 +40,6 @@ type TimerNotification struct {
 	InstanceID string `json:"instance_id"`
 	TimerID    string `json:"timer_id"`
 	ExpiresAt  string `json:"expires_at,omitempty"`
-}
-
-// ChannelMessageNotification is the payload for channel message notifications.
-type ChannelMessageNotification struct {
-	ChannelName      string `json:"channel_name"`
-	MessageID        int64  `json:"message_id"`
-	TargetInstanceID string `json:"target_instance_id,omitempty"`
 }
 
 // NotificationHandler is a callback function that handles notifications.
@@ -310,15 +300,6 @@ func ParseWorkflowNotification(payload string) (*WorkflowNotification, error) {
 // ParseTimerNotification parses a timer notification payload.
 func ParseTimerNotification(payload string) (*TimerNotification, error) {
 	var n TimerNotification
-	if err := json.Unmarshal([]byte(payload), &n); err != nil {
-		return nil, err
-	}
-	return &n, nil
-}
-
-// ParseChannelMessageNotification parses a channel message notification payload.
-func ParseChannelMessageNotification(payload string) (*ChannelMessageNotification, error) {
-	var n ChannelMessageNotification
 	if err := json.Unmarshal([]byte(payload), &n); err != nil {
 		return nil, err
 	}

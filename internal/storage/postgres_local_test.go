@@ -43,10 +43,6 @@ func pgLocalCleanup(t *testing.T, s *PostgresStorage) {
 	t.Helper()
 	ctx := context.Background()
 	tables := []string{
-		"channel_message_claims",
-		"channel_delivery_cursors",
-		"channel_messages",
-		"channel_subscriptions",
 		"workflow_timer_subscriptions",
 		"workflow_history",
 		"workflow_instances",

@@ -49,7 +49,7 @@ func testTerminalTimerIsRemoved(t *testing.T, factory replayAppFactory) {
 			require.True(t, ok)
 			ctx := storage.ContextWithFence(h.app.ctx, f)
 			timer := &storage.TimerSubscription{InstanceID: "lease", TimerID: "pause", ExpiresAt: time.Now().Add(-time.Hour)}
-			require.NoError(t, h.app.storage.RegisterTimerSubscription(ctx, timer))
+			require.NoError(t, fixtureTimer(ctx, h.app.storage, timer))
 			require.NoError(t, h.app.storage.CloseInstance(ctx, f, status, nil, nil))
 			// Simulate a stale subscription left by a faulty writer after close.
 			_, err = h.app.storage.DB().Exec("INSERT INTO workflow_timer_subscriptions(instance_id,timer_id,expires_at,activity_id) VALUES($1,$2,$3,$4)", "lease", "pause", time.Now().Add(-time.Hour).UTC().Format("2006-01-02 15:04:05"), "pause")
@@ -93,7 +93,7 @@ func testTimerHookAfterCommit(t *testing.T, factory replayAppFactory) {
 	require.NoError(t, err)
 	require.True(t, ok)
 	timer := &storage.TimerSubscription{InstanceID: "lease", TimerID: "pause", ExpiresAt: time.Now().Add(-time.Hour)}
-	require.NoError(t, h.app.storage.RegisterTimerSubscription(storage.ContextWithFence(h.app.ctx, f), timer))
+	require.NoError(t, fixtureTimer(h.app.ctx, h.app.storage, timer))
 	require.NoError(t, s.ReleaseLease(h.app.ctx, f, false))
 	calls := 0
 	h.app.config.hooks = &timerCommitHooks{fired: func(info hooks.TimerFiredInfo) {
@@ -125,27 +125,6 @@ func testTimerHookAfterCommit(t *testing.T, factory replayAppFactory) {
 	require.Equal(t, 1, calls)
 }
 
-func TestChannelTimeoutRoundTrip(t *testing.T) { testChannelTimeoutRoundTrip(t, createTestApp) }
-func testChannelTimeoutRoundTrip(t *testing.T, factory replayAppFactory) {
-	h, s := newLeaseStore(t, factory)
-	f, ok, err := s.AcquireLease(h.app.ctx, "lease", "worker", time.Minute)
-	require.NoError(t, err)
-	require.True(t, ok)
-	ctx := storage.ContextWithFence(h.app.ctx, f)
-	require.NoError(t, h.app.storage.SubscribeToChannel(ctx, "lease", "messages", storage.ChannelModeBroadcast))
-	timeout := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
-	require.NoError(t, h.app.storage.RegisterChannelReceive(ctx, "lease", "messages", "receive", &timeout))
-	sub, err := h.app.storage.GetChannelSubscription(ctx, "lease", "messages")
-	require.NoError(t, err)
-	require.NotNil(t, sub.TimeoutAt)
-	require.True(t, timeout.Equal(*sub.TimeoutAt))
-	subs, err := h.app.storage.FindExpiredChannelSubscriptions(ctx, 10)
-	require.NoError(t, err)
-	require.Len(t, subs, 1)
-	require.NotNil(t, subs[0].TimeoutAt)
-	require.True(t, timeout.Equal(*subs[0].TimeoutAt))
-}
-
 func TestContextWritesRequireMatchingFence(t *testing.T) {
 	testContextWritesRequireMatchingFence(t, createTestApp)
 }
@@ -160,19 +139,8 @@ func testContextWritesRequireMatchingFence(t *testing.T, factory replayAppFactor
 	require.True(t, ok)
 	require.NotEqual(t, f.InstanceID, other.InstanceID)
 	writes := map[string]func(context.Context) error{
-		"activity": func(c context.Context) error { return h.app.storage.UpdateInstanceActivity(c, "lease", "next") },
-		"timer register": func(c context.Context) error {
-			return h.app.storage.RegisterTimerSubscription(c, &storage.TimerSubscription{InstanceID: "lease", TimerID: "pause", ExpiresAt: time.Now()})
-		},
+		"activity":     func(c context.Context) error { return h.app.storage.UpdateInstanceActivity(c, "lease", "next") },
 		"timer remove": func(c context.Context) error { return h.app.storage.RemoveTimerSubscription(c, "lease", "pause") },
-		"subscribe": func(c context.Context) error {
-			return h.app.storage.SubscribeToChannel(c, "lease", "messages", storage.ChannelModeBroadcast)
-		},
-		"receive": func(c context.Context) error {
-			return h.app.storage.RegisterChannelReceive(c, "lease", "messages", "next", nil)
-		},
-		"cursor": func(c context.Context) error { return h.app.storage.UpdateDeliveryCursor(c, "lease", "messages", 1) },
-		"clear":  func(c context.Context) error { return h.app.storage.ClearChannelWaitingState(c, "lease", "messages") },
 	}
 	for name, ctx := range map[string]context.Context{"missing": h.app.ctx, "other instance": storage.ContextWithFence(h.app.ctx, other)} {
 		for method, write := range writes {

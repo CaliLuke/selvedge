@@ -37,7 +37,7 @@ func decodeRecorded[O any](event *storage.HistoryEvent) (O, error) {
 }
 
 func decodeActivityRecorded[O any](ctx *WorkflowContext, event *storage.HistoryEvent) (O, error) {
-	if event.EventType == storage.HistoryActivityFailed || event.EventType == storage.HistoryMessageTimeout {
+	if event.EventType == storage.HistoryActivityFailed {
 		var zero O
 		return zero, replayRecordedError(ctx, event)
 	}
@@ -51,18 +51,7 @@ func decodeActivityRecorded[O any](ctx *WorkflowContext, event *storage.HistoryE
 // replayRecordedError attaches row identity to corrupt payloads and uses the
 // execution's existing sticky failure mechanism.
 func replayRecordedError(ctx *WorkflowContext, event *storage.HistoryEvent) error {
-	var err error
-	if event.EventType == storage.HistoryMessageTimeout {
-		// Channel timeout rows still use the channel protocol's JSON string.
-		var message string
-		if decodeErr := json.Unmarshal(event.EventData, &message); decodeErr != nil {
-			err = &ReplayDecodeError{GoType: "string", Err: decodeErr}
-		} else {
-			err = errors.New(message)
-		}
-	} else {
-		err = decodeError(event.EventData)
-	}
+	err := decodeError(event.EventData)
 	var decodeErr *ReplayDecodeError
 	if errors.As(err, &decodeErr) {
 		decodeErr.InstanceID = event.InstanceID

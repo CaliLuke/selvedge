@@ -274,83 +274,6 @@ func TestLockAcquisitionError(t *testing.T) {
 	}
 }
 
-func TestEventTimeoutError(t *testing.T) {
-	tests := []struct {
-		name       string
-		instanceID string
-		eventType  string
-		wantMsg    string
-	}{
-		{
-			name:       "order event",
-			instanceID: "order-123",
-			eventType:  "order.confirmed",
-			wantMsg:    `timeout waiting for event "order.confirmed" on instance order-123`,
-		},
-		{
-			name:       "payment event",
-			instanceID: "payment-456",
-			eventType:  "payment.completed",
-			wantMsg:    `timeout waiting for event "payment.completed" on instance payment-456`,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := &EventTimeoutError{
-				InstanceID: tt.instanceID,
-				EventType:  tt.eventType,
-			}
-			assert.Equal(t, tt.wantMsg, err.Error())
-		})
-	}
-}
-
-func TestChannelMessageTimeoutError(t *testing.T) {
-	tests := []struct {
-		name        string
-		instanceID  string
-		channelName string
-		wantMsg     string
-	}{
-		{
-			name:        "notification channel",
-			instanceID:  "inst-001",
-			channelName: "notifications",
-			wantMsg:     `timeout waiting for channel message on "notifications" (instance: inst-001)`,
-		},
-		{
-			name:        "events channel",
-			instanceID:  "inst-002",
-			channelName: "user.events",
-			wantMsg:     `timeout waiting for channel message on "user.events" (instance: inst-002)`,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := &ChannelMessageTimeoutError{
-				InstanceID:  tt.instanceID,
-				ChannelName: tt.channelName,
-			}
-			assert.Equal(t, tt.wantMsg, err.Error())
-		})
-	}
-}
-
-func TestChannelMessageTimeoutError_ErrorsAs(t *testing.T) {
-	originalErr := &ChannelMessageTimeoutError{
-		InstanceID:  "inst-test",
-		ChannelName: "test-channel",
-	}
-	wrappedErr := fmt.Errorf("operation failed: %w", originalErr)
-
-	var targetErr *ChannelMessageTimeoutError
-	require.True(t, errors.As(wrappedErr, &targetErr))
-	assert.Equal(t, "inst-test", targetErr.InstanceID)
-	assert.Equal(t, "test-channel", targetErr.ChannelName)
-}
-
 func TestSentinelErrors(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -387,16 +310,6 @@ func TestSentinelErrors(t *testing.T) {
 			err:     ErrDeterminismViolation,
 			wantMsg: "determinism violation during replay",
 		},
-		{
-			name:    "errEventNotSubscribed",
-			err:     errEventNotSubscribed,
-			wantMsg: "not subscribed to channel",
-		},
-		{
-			name:    "ErrWorkflowNotCancellable",
-			err:     ErrWorkflowNotCancellable,
-			wantMsg: "workflow cannot be cancelled",
-		},
 	}
 
 	for _, tt := range tests {
@@ -422,11 +335,6 @@ func TestSentinelErrors_ErrorsIs(t *testing.T) {
 			err:       ErrWorkflowAlreadyCancelled,
 			wrappedIn: fmt.Errorf("failed: %w", ErrWorkflowAlreadyCancelled),
 		},
-		{
-			name:      "errEventNotSubscribed wrapped",
-			err:       errEventNotSubscribed,
-			wrappedIn: fmt.Errorf("operation failed: %w", errEventNotSubscribed),
-		},
 	}
 
 	for _, tt := range tests {
@@ -438,7 +346,7 @@ func TestSentinelErrors_ErrorsIs(t *testing.T) {
 
 func TestSuspendType_Constants(t *testing.T) {
 	assert.Equal(t, SuspendType(0), SuspendForTimer)
-	assert.Equal(t, SuspendType(1), SuspendForChannelMessage)
+	assert.Equal(t, SuspendType(1), SuspendForSignal)
 }
 
 func TestIsSuspendSignal(t *testing.T) {
@@ -464,7 +372,7 @@ func TestIsSuspendSignal(t *testing.T) {
 		},
 		{
 			name: "channel message suspend signal",
-			err:  NewChannelMessageSuspend("inst-2", "events", "act-1", nil),
+			err:  NewSignalSuspend("inst-2", "events", "act-1"),
 			want: true,
 		},
 		{
@@ -484,7 +392,7 @@ func TestIsSuspendSignal(t *testing.T) {
 
 func TestAsSuspendSignal(t *testing.T) {
 	timerSignal := NewTimerSuspend("inst-1", "timer-1", "timer-1", time.Now().Add(time.Hour))
-	channelSignal := NewChannelMessageSuspend("inst-2", "events", "act-1", nil)
+	channelSignal := NewSignalSuspend("inst-2", "events", "act-1")
 
 	tests := []struct {
 		name     string
@@ -512,7 +420,7 @@ func TestAsSuspendSignal(t *testing.T) {
 			name:     "channel message suspend signal",
 			err:      channelSignal,
 			wantNil:  false,
-			wantType: SuspendForChannelMessage,
+			wantType: SuspendForSignal,
 		},
 		{
 			name:     "wrapped suspend signal",
@@ -576,52 +484,7 @@ func TestNewTimerSuspend(t *testing.T) {
 	}
 }
 
-func TestNewChannelMessageSuspend(t *testing.T) {
-	timeout := 5 * time.Minute
-
-	tests := []struct {
-		name       string
-		instanceID string
-		channel    string
-		activityID string
-		timeout    *time.Duration
-	}{
-		{
-			name:       "without timeout",
-			instanceID: "inst-1",
-			channel:    "notifications",
-			activityID: "receive:1",
-			timeout:    nil,
-		},
-		{
-			name:       "with timeout",
-			instanceID: "inst-2",
-			channel:    "events",
-			activityID: "receive:2",
-			timeout:    &timeout,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			signal := NewChannelMessageSuspend(tt.instanceID, tt.channel, tt.activityID, tt.timeout)
-
-			require.NotNil(t, signal)
-			assert.Equal(t, SuspendForChannelMessage, signal.Type)
-			assert.Equal(t, tt.instanceID, signal.InstanceID)
-			assert.Equal(t, tt.channel, signal.Channel)
-			assert.Equal(t, tt.activityID, signal.ActivityID)
-			assert.Equal(t, tt.timeout, signal.Timeout)
-
-			assert.Contains(t, signal.Error(), "waiting for channel message")
-			assert.Contains(t, signal.Error(), tt.channel)
-		})
-	}
-}
-
 func TestSuspendSignal_Error(t *testing.T) {
-	timeout := 10 * time.Second
-
 	tests := []struct {
 		name         string
 		signal       *SuspendSignal
@@ -634,13 +497,8 @@ func TestSuspendSignal_Error(t *testing.T) {
 		},
 		{
 			name:         "channel message suspend without timeout",
-			signal:       NewChannelMessageSuspend("inst-2", "events", "act-1", nil),
-			wantContains: []string{"workflow suspended", "waiting for channel message", "events"},
-		},
-		{
-			name:         "channel message suspend with timeout",
-			signal:       NewChannelMessageSuspend("inst-3", "events", "act-2", &timeout),
-			wantContains: []string{"workflow suspended", "waiting for channel message", "events", "timeout"},
+			signal:       NewSignalSuspend("inst-2", "events", "act-1"),
+			wantContains: []string{"workflow suspended", "waiting for signal", "events"},
 		},
 	}
 

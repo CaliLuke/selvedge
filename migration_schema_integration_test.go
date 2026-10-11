@@ -61,7 +61,3 @@ func TestMigrationsRollbackOnError_Postgres(t *testing.T) {
 func TestMigrationsSQLLiterals_Postgres(t *testing.T) {
 	testMigrationsSQLLiterals(t, postgresSchemaBackend)
 }
-
-func TestReceiveGoEnvelopeOnly_Postgres(t *testing.T) {
-	testReceiveGoEnvelopeOnly(t, postgresSchemaBackend)
-}

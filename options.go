@@ -27,21 +27,15 @@ type appConfig struct {
 
 	// Background task intervals
 	timerCheckInterval         time.Duration
-	eventTimeoutInterval       time.Duration
-	messageCheckInterval       time.Duration
-	channelCleanupInterval     time.Duration
-	channelMessageRetention    time.Duration
 	workflowResumptionInterval time.Duration
 
 	// Concurrency control
 	maxConcurrentResumptions int
 	maxConcurrentTimers      int
-	maxConcurrentMessages    int
 
 	// Batch sizes for background tasks
 	maxWorkflowsPerBatch int
 	maxTimersPerBatch    int
-	maxMessagesPerBatch  int
 
 	// Leader election configuration
 	leaderHeartbeatInterval time.Duration
@@ -67,17 +61,11 @@ func defaultConfig() *appConfig {
 		useListenNotify:            nil, // auto-detect
 		notifyReconnectDelay:       60 * time.Second,
 		timerCheckInterval:         10 * time.Second,
-		eventTimeoutInterval:       30 * time.Second,
-		messageCheckInterval:       5 * time.Second,
-		channelCleanupInterval:     300 * time.Second,
-		channelMessageRetention:    24 * time.Hour,
 		workflowResumptionInterval: 1 * time.Second,
 		maxConcurrentResumptions:   10,
 		maxConcurrentTimers:        10,
-		maxConcurrentMessages:      10,
 		maxWorkflowsPerBatch:       100,
 		maxTimersPerBatch:          100,
-		maxMessagesPerBatch:        100,
 		leaderHeartbeatInterval:    15 * time.Second,
 		leaderLeaseDuration:        45 * time.Second,
 		shutdownTimeout:            30 * time.Second,
@@ -159,13 +147,6 @@ func WithTimerCheckInterval(d time.Duration) Option {
 	}
 }
 
-// WithEventTimeoutInterval sets the interval for checking event timeouts.
-func WithEventTimeoutInterval(d time.Duration) Option {
-	return func(c *appConfig) {
-		c.eventTimeoutInterval = d
-	}
-}
-
 // WithHooks sets the workflow lifecycle hooks.
 func WithHooks(h hooks.WorkflowHooks) Option {
 	return func(c *appConfig) {
@@ -177,27 +158,6 @@ func WithHooks(h hooks.WorkflowHooks) Option {
 func WithShutdownTimeout(d time.Duration) Option {
 	return func(c *appConfig) {
 		c.shutdownTimeout = d
-	}
-}
-
-// WithMessageCheckInterval sets the interval for checking channel message subscriptions.
-func WithMessageCheckInterval(d time.Duration) Option {
-	return func(c *appConfig) {
-		c.messageCheckInterval = d
-	}
-}
-
-// WithChannelCleanupInterval sets the interval for cleaning up old channel messages.
-func WithChannelCleanupInterval(d time.Duration) Option {
-	return func(c *appConfig) {
-		c.channelCleanupInterval = d
-	}
-}
-
-// WithChannelMessageRetention sets how long to keep channel messages before cleanup.
-func WithChannelMessageRetention(d time.Duration) Option {
-	return func(c *appConfig) {
-		c.channelMessageRetention = d
 	}
 }
 
@@ -227,16 +187,6 @@ func WithMaxConcurrentTimers(n int) Option {
 	return func(c *appConfig) {
 		if n > 0 {
 			c.maxConcurrentTimers = n
-		}
-	}
-}
-
-// WithMaxConcurrentMessages sets the maximum number of concurrent message handlers.
-// Default: 10.
-func WithMaxConcurrentMessages(n int) Option {
-	return func(c *appConfig) {
-		if n > 0 {
-			c.maxConcurrentMessages = n
 		}
 	}
 }
@@ -297,16 +247,6 @@ func WithMaxTimersPerBatch(n int) Option {
 	return func(c *appConfig) {
 		if n > 0 {
 			c.maxTimersPerBatch = n
-		}
-	}
-}
-
-// WithMaxMessagesPerBatch sets the maximum number of channel messages
-// to process per polling cycle. Default: 100.
-func WithMaxMessagesPerBatch(n int) Option {
-	return func(c *appConfig) {
-		if n > 0 {
-			c.maxMessagesPerBatch = n
 		}
 	}
 }
