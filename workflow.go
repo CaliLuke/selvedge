@@ -194,25 +194,19 @@ func GetWorkflowResult[O any](ctx context.Context, app *App, instanceID string) 
 	return result, nil
 }
 
-// getWorkflowErrorFromHistory reads all history pages and decodes the failure.
+// getWorkflowErrorFromHistory reads the reserved failure key directly.
 func getWorkflowErrorFromHistory(ctx context.Context, s storage.Storage, instanceID string) (failure, readErr error) {
-	iter := storage.NewHistoryIterator(ctx, s, instanceID, nil)
-	defer func() { _ = iter.Close() }()
-	for {
-		event, ok := iter.Next()
-		if !ok {
-			break
-		}
-		if event.EventType == storage.HistoryWorkflowFailed {
-			failure = decodeError(event.EventData)
-			if decodeErr, ok := failure.(*ReplayDecodeError); ok {
-				decodeErr.InstanceID = instanceID
-				decodeErr.Key = event.ActivityID
-			}
-		}
-	}
-	if err := iter.Err(); err != nil {
+	event, err := s.GetHistoryEvent(ctx, instanceID, "$workflow_failed")
+	if err != nil {
 		return nil, fmt.Errorf("failed to load workflow error: %w", err)
+	}
+	if event == nil {
+		return nil, nil
+	}
+	failure = decodeError(event.EventData)
+	if decodeErr, ok := failure.(*ReplayDecodeError); ok {
+		decodeErr.InstanceID = instanceID
+		decodeErr.Key = event.ActivityID
 	}
 	return failure, nil
 }

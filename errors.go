@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/CaliLuke/selvedge/internal/replay"
+	"github.com/CaliLuke/selvedge/internal/storage"
 )
 
 // TerminalError wraps an error to indicate it should not be retried.
@@ -112,11 +113,14 @@ var ErrWorkflowAlreadyFailed = errors.New("workflow already failed")
 // ErrInvalidWorkflowState indicates an invalid workflow state transition.
 var ErrInvalidWorkflowState = errors.New("invalid workflow state")
 
-// ErrActivityIDConflict indicates duplicate activity IDs in a workflow.
-var ErrActivityIDConflict = errors.New("activity ID conflict: duplicate activity ID in workflow")
+// ErrHistoryKeyConflict indicates duplicate claims or conflicting stored commands.
+var ErrHistoryKeyConflict = storage.ErrHistoryKeyConflict
+
+// ErrWorkflowAlreadyStarted indicates that an instance ID already exists.
+var ErrWorkflowAlreadyStarted = storage.ErrWorkflowAlreadyStarted
 
 // ErrDeterminismViolation indicates non-deterministic behavior during replay.
-var ErrDeterminismViolation = errors.New("determinism violation during replay")
+var ErrDeterminismViolation = replay.ErrDeterminismViolation
 
 // ========================================
 // SuspendSignal - Unified Workflow Suspension

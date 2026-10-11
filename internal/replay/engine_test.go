@@ -346,7 +346,7 @@ func TestEngine_RecordActivityResult(t *testing.T) {
 			}
 			require.NoError(t, store.CreateInstance(context.Background(), instance))
 
-			stored, err := engine.RecordActivityResult(context.Background(), instance.InstanceID, tt.activityID, tt.result, tt.activityErr)
+			stored, err := engine.RecordActivityResult(context.Background(), instance.InstanceID, tt.activityID, "activity:test", tt.result, tt.activityErr)
 			require.NoError(t, err)
 
 			history, _, err := store.GetHistoryPaginated(context.Background(), instance.InstanceID, 0, 10)

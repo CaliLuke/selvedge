@@ -176,14 +176,25 @@ func (s *PostgresStorage) CreateInstance(ctx context.Context, instance *Workflow
 		return fmt.Errorf("failed to ensure workflow definition: %w", err)
 	}
 
-	_, err = conn.ExecContext(ctx, `
+	result, err := conn.ExecContext(ctx, `
 		INSERT INTO workflow_instances (
 			instance_id, workflow_name, status, input_data, source_hash, owner_service, framework, started_at, updated_at
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		ON CONFLICT (instance_id) DO NOTHING
 	`, instance.InstanceID, instance.WorkflowName, instance.Status,
 		string(instance.InputData), instance.SourceHash, instance.OwnerService,
 		framework, instance.StartedAt.UTC(), instance.UpdatedAt.UTC())
-	return err
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return ErrWorkflowAlreadyStarted
+	}
+	return nil
 }
 
 // GetInstance retrieves a workflow instance by ID.
@@ -582,17 +593,6 @@ func (s *PostgresStorage) CleanupStaleLocks(ctx context.Context, timeoutSec int)
 
 // --- History Manager ---
 
-// AppendHistory appends a history event.
-func (s *PostgresStorage) AppendHistory(ctx context.Context, event *HistoryEvent) error {
-	conn := s.getConn(ctx)
-	_, err := conn.ExecContext(ctx, `
-		INSERT INTO workflow_history (instance_id, activity_id, event_type, event_data, event_data_binary, data_type)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		ON CONFLICT (instance_id, activity_id) DO NOTHING
-	`, event.InstanceID, event.ActivityID, event.EventType, string(event.EventData), event.EventDataBinary, event.DataType)
-	return err
-}
-
 // GetHistoryPaginated retrieves history events with pagination.
 // Returns events with id > afterID, up to limit events.
 // Returns (events, hasMore, error).
@@ -600,7 +600,7 @@ func (s *PostgresStorage) GetHistoryPaginated(ctx context.Context, instanceID st
 	conn := s.getConn(ctx)
 	// Fetch one extra to check if there are more events
 	rows, err := conn.QueryContext(ctx, `
-		SELECT id, instance_id, activity_id, event_type, event_data, event_data_binary, data_type, created_at
+		SELECT id, instance_id, activity_id, command, event_type, event_data, event_data_binary, data_type, created_at
 		FROM workflow_history
 		WHERE instance_id = $1 AND id > $2
 		ORDER BY id ASC
@@ -617,7 +617,7 @@ func (s *PostgresStorage) GetHistoryPaginated(ctx context.Context, instanceID st
 		var eventData sql.NullString
 		var eventDataBinary []byte
 
-		if err := rows.Scan(&h.ID, &h.InstanceID, &h.ActivityID, &h.EventType, &eventData, &eventDataBinary, &h.DataType, &h.CreatedAt); err != nil {
+		if err := rows.Scan(&h.ID, &h.InstanceID, &h.ActivityID, &h.Command, &h.EventType, &eventData, &eventDataBinary, &h.DataType, &h.CreatedAt); err != nil {
 			return nil, false, err
 		}
 		if eventData.Valid {
@@ -1126,10 +1126,10 @@ func (s *PostgresStorage) DeliverChannelMessageWithLock(
 	}
 	wrappedJSON, _ := json.Marshal(wrappedData)
 
-	_, err = conn.ExecContext(ctx, `
-		INSERT INTO workflow_history (instance_id, activity_id, event_type, event_data, data_type)
-		VALUES ($1, $2, 'ChannelMessageReceived', $3, 'json')
-	`, instanceID, historyActivityID, string(wrappedJSON))
+	_, err = s.RecordHistory(ctx, nil, &HistoryEvent{
+		InstanceID: instanceID, ActivityID: historyActivityID, Command: "receive:" + channelName,
+		EventType: HistoryChannelMessageReceived, EventData: wrappedJSON, DataType: "json",
+	})
 	if err != nil {
 		_ = s.ReleaseLock(ctx, instanceID, workerID)
 		return nil, fmt.Errorf("failed to record history: %w", err)

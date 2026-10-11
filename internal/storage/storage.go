@@ -153,10 +153,25 @@ type LockManager interface {
 	CleanupStaleLocks(ctx context.Context, timeoutSec int) ([]StaleWorkflowInfo, error)
 }
 
+// Fence identifies an execution lease. S3 accepts and ignores it; S4 enforces it.
+type Fence struct {
+	InstanceID, Owner string
+	Epoch             int64
+}
+
+var ErrHistoryKeyConflict = errors.New("history key holds another command")
+var ErrWorkflowAlreadyStarted = errors.New("workflow already started")
+
 // HistoryManager handles workflow execution history.
 type HistoryManager interface {
-	// AppendHistory adds a new history event.
-	AppendHistory(ctx context.Context, event *HistoryEvent) error
+	// ReserveHistory inserts a command with a SQL NULL value; matching repeats return the stored row.
+	ReserveHistory(ctx context.Context, f *Fence, instanceID, key, cmd string) (*HistoryEvent, error)
+	// RecordHistory inserts a command and value. Matching repeats preserve the entire first row.
+	RecordHistory(ctx context.Context, f *Fence, event *HistoryEvent) (*HistoryEvent, error)
+	// SetHistoryValueIfNull fills a reservation or inserts a result; the first value wins.
+	SetHistoryValueIfNull(ctx context.Context, f *Fence, instanceID, key, cmd string, t HistoryEventType, data []byte) (*HistoryEvent, error)
+	// GetHistoryEvent returns nil, nil when the key does not exist.
+	GetHistoryEvent(ctx context.Context, instanceID, key string) (*HistoryEvent, error)
 
 	// GetHistoryPaginated retrieves history events for an instance with pagination.
 	// Returns events with id > afterID, up to limit events.

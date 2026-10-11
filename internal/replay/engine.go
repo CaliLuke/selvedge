@@ -3,6 +3,7 @@ package replay
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -10,6 +11,9 @@ import (
 	"github.com/CaliLuke/selvedge/hooks"
 	"github.com/CaliLuke/selvedge/internal/storage"
 )
+
+// ErrDeterminismViolation indicates a changed command at a recorded key.
+var ErrDeterminismViolation = errors.New("determinism violation during replay")
 
 // ErrorCodec encodes workflow failures without depending on public error types.
 type ErrorCodec interface{ Encode(error) []byte }
@@ -52,12 +56,61 @@ type ExecutionContext struct {
 	isReplaying  bool
 
 	// Raw recorded rows; values are decoded by their typed caller.
+	claimed  map[string]string
 	recorded map[string]*storage.HistoryEvent
 	fatal    error
 
 	// Replay statistics
 	cacheHits     int
 	newActivities int
+}
+
+// NewExecutionContext creates standalone execution tracking without storage.
+func NewExecutionContext(ctx context.Context, instanceID string) *ExecutionContext {
+	return &ExecutionContext{ctx: ctx, instanceID: instanceID, activityCounter: make(map[string]int), claimed: make(map[string]string), recorded: make(map[string]*storage.HistoryEvent)}
+}
+
+// Claim checks issue uniqueness and the recorded command before any side effect.
+func (ec *ExecutionContext) Claim(key, cmd string) (*storage.HistoryEvent, bool, error) {
+	if err := ec.Fatal(); err != nil {
+		return nil, false, err
+	}
+	ec.counterMu.Lock()
+	_, duplicate := ec.claimed[key]
+	if ec.claimed == nil {
+		ec.claimed = make(map[string]string)
+	}
+	if !duplicate {
+		ec.claimed[key] = cmd
+	}
+	event, found := ec.recorded[key]
+	ec.counterMu.Unlock()
+	if duplicate {
+		ec.Fail(storage.ErrHistoryKeyConflict)
+		return nil, false, ec.Fatal()
+	}
+	if found && event.Command != cmd {
+		ec.Fail(ErrDeterminismViolation)
+		return nil, false, ec.Fatal()
+	}
+	if found {
+		ec.counterMu.Lock()
+		ec.cacheHits++
+		ec.counterMu.Unlock()
+	}
+	return event, found, nil
+}
+
+// Reserve records a command with no value, as required before parking a sleep.
+func (ec *ExecutionContext) Reserve(key, cmd string) (*storage.HistoryEvent, error) {
+	if ec.engine == nil {
+		return nil, nil
+	}
+	event, err := ec.engine.storage.ReserveHistory(ec.ctx, nil, ec.instanceID, key, cmd)
+	if errors.Is(err, storage.ErrHistoryKeyConflict) {
+		ec.Fail(err)
+	}
+	return event, err
 }
 
 // Context returns the underlying context.Context.
@@ -120,8 +173,15 @@ func (ec *ExecutionContext) RecordActivityID(activityID string) {
 func (ec *ExecutionContext) RecordActivityResultWithContext(ctx context.Context, key string, eventType storage.HistoryEventType, payload []byte) (*storage.HistoryEvent, error) {
 	ec.counterMu.Lock()
 	ec.newActivities++
+	cmd := ec.claimed[key]
 	ec.counterMu.Unlock()
-	event, err := ec.engine.recordActivityPayload(ctx, ec.instanceID, key, eventType, payload)
+	if ec.engine == nil {
+		return &storage.HistoryEvent{InstanceID: ec.instanceID, ActivityID: key, Command: cmd, EventType: eventType, EventData: payload, DataType: "json"}, nil
+	}
+	event, err := ec.engine.recordActivityPayload(ctx, ec.instanceID, key, cmd, eventType, payload)
+	if errors.Is(err, storage.ErrHistoryKeyConflict) {
+		ec.Fail(err)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -133,11 +193,17 @@ func (ec *ExecutionContext) RecordActivityResultWithContext(ctx context.Context,
 
 // Storage returns the storage interface for advanced use cases.
 func (ec *ExecutionContext) Storage() storage.Storage {
+	if ec.engine == nil {
+		return nil
+	}
 	return ec.engine.storage
 }
 
 // Hooks returns the workflow hooks for observability.
 func (ec *ExecutionContext) Hooks() hooks.WorkflowHooks {
+	if ec.engine == nil {
+		return nil
+	}
 	return ec.engine.hooks
 }
 
@@ -211,11 +277,7 @@ func (e *Engine) executeWorkflow(ctx context.Context, instanceID string, runner 
 			break
 		}
 		historyCount++
-		switch event.EventType {
-		case storage.HistoryActivityCompleted, storage.HistoryChannelMessageReceived,
-			storage.HistoryActivityFailed, storage.HistoryMessageTimeout:
-			recorded[event.ActivityID] = event
-		}
+		recorded[event.ActivityID] = event
 	}
 	if err := iter.Err(); err != nil {
 		return fmt.Errorf("failed to load history: %w", err)
@@ -232,6 +294,7 @@ func (e *Engine) executeWorkflow(ctx context.Context, instanceID string, runner 
 		historyIndex:    0,
 		isReplaying:     isReplaying,
 		recorded:        recorded,
+		claimed:         make(map[string]string),
 	}
 
 	startTime := time.Now()
@@ -269,16 +332,22 @@ func (e *Engine) executeWorkflow(ctx context.Context, instanceID string, runner 
 
 		// Record workflow failure in history
 		eventData := e.codec.Encode(err)
-		_ = e.storage.AppendHistory(ctx, &storage.HistoryEvent{
+		_, writeErr := e.storage.RecordHistory(ctx, nil, &storage.HistoryEvent{
 			InstanceID: instanceID,
 			EventType:  storage.HistoryWorkflowFailed,
 			ActivityID: "$workflow_failed",
+			Command:    "close",
 			EventData:  eventData,
 			DataType:   "json",
 		})
 
+		if writeErr != nil {
+			return errors.Join(err, fmt.Errorf("failed to record workflow failure: %w", writeErr))
+		}
 		// Mark as failed
-		_ = e.storage.UpdateInstanceStatus(ctx, instanceID, storage.StatusFailed, err.Error())
+		if statusErr := e.storage.UpdateInstanceStatus(ctx, instanceID, storage.StatusFailed, err.Error()); statusErr != nil {
+			return errors.Join(err, fmt.Errorf("failed to mark workflow failed: %w", statusErr))
+		}
 
 		e.hooks.OnWorkflowFailed(ctx, hooks.WorkflowFailedInfo{
 			InstanceID: instanceID,
@@ -378,6 +447,7 @@ func (e *Engine) RecordActivityResult(
 	ctx context.Context,
 	instanceID string,
 	activityID string,
+	command string,
 	result any,
 	activityErr error,
 ) (*storage.HistoryEvent, error) {
@@ -393,30 +463,9 @@ func (e *Engine) RecordActivityResult(
 			return nil, fmt.Errorf("failed to serialize result: %w", err)
 		}
 	}
-	return e.recordActivityPayload(ctx, instanceID, activityID, eventType, payload)
+	return e.recordActivityPayload(ctx, instanceID, activityID, command, eventType, payload)
 }
 
-func (e *Engine) recordActivityPayload(ctx context.Context, instanceID, activityID string, eventType storage.HistoryEventType, payload []byte) (*storage.HistoryEvent, error) {
-	event := &storage.HistoryEvent{InstanceID: instanceID, ActivityID: activityID, EventType: eventType, EventData: payload, DataType: "json"}
-
-	if err := e.storage.AppendHistory(ctx, event); err != nil {
-		return nil, err
-	}
-	// Read the stored bytes, including any normalization by the database.
-	// S3's row-returning history API will replace this iterator lookup.
-	iter := storage.NewHistoryIterator(ctx, e.storage, instanceID, nil)
-	defer func() { _ = iter.Close() }()
-	for {
-		stored, ok := iter.Next()
-		if !ok {
-			break
-		}
-		if stored.ActivityID == activityID {
-			return stored, nil
-		}
-	}
-	if err := iter.Err(); err != nil {
-		return nil, err
-	}
-	return nil, fmt.Errorf("recorded activity result missing for %s", activityID)
+func (e *Engine) recordActivityPayload(ctx context.Context, instanceID, activityID, command string, eventType storage.HistoryEventType, payload []byte) (*storage.HistoryEvent, error) {
+	return e.storage.RecordHistory(ctx, nil, &storage.HistoryEvent{InstanceID: instanceID, ActivityID: activityID, Command: command, EventType: eventType, EventData: payload, DataType: "json"})
 }

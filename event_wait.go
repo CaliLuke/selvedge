@@ -31,14 +31,6 @@ type receivedEventMessage[T any] struct {
 
 // subscribeEvent registers the workflow to wait for an event type.
 func subscribeEvent(ctx *WorkflowContext, channelName string) error {
-	// Generate activity ID for deterministic replay
-	activityID := ctx.GenerateActivityID(fmt.Sprintf("subscribe_%s", channelName))
-
-	// Check if already subscribed (replay)
-	if _, ok := ctx.lookupRecorded(activityID); ok {
-		return nil
-	}
-
 	// Subscribe to channel
 	s := ctx.Storage()
 	if s == nil {
@@ -69,7 +61,8 @@ func subscribeEvent(ctx *WorkflowContext, channelName string) error {
 type receiveEventOption func(*receiveOptions)
 
 type receiveOptions struct {
-	timeout *time.Duration
+	subscribe bool
+	timeout   *time.Duration
 }
 
 // withReceiveEventTimeout sets a timeout for waiting for a message.
@@ -90,17 +83,16 @@ func receiveEvent[T any](ctx *WorkflowContext, channelName string, opts ...recei
 	// Generate activity ID for this receive (use original channelName for consistency)
 	activityID := ctx.GenerateActivityID(fmt.Sprintf("receive_%s", channelName))
 
-	// Check if result is cached (replay)
-	// First try raw JSON to avoid re-serialization
-	if event, ok := ctx.lookupRecorded(activityID); ok && event.EventType != storage.HistoryActivityFailed && event.EventType != storage.HistoryMessageTimeout && len(event.EventData) > 0 {
-		rawJSON := event.EventData
-		// Decode the recorded Go message envelope.
-		var msg receivedEventMessage[T]
-		if err := json.Unmarshal(rawJSON, &msg); err == nil && msg.ChannelName != "" {
-			return &msg, nil
+	event, found, err := ctx.execCtx.Claim(activityID, "receive:"+channelName)
+	if err != nil {
+		return nil, err
+	}
+	if options.subscribe {
+		if h := ctx.Hooks(); h != nil {
+			h.OnEventWaitStart(ctx.Context(), hooks.EventWaitStartInfo{InstanceID: ctx.InstanceID(), WorkflowName: ctx.WorkflowName(), EventType: channelName, Timeout: options.timeout})
 		}
 	}
-	if event, ok := ctx.lookupRecorded(activityID); ok {
+	if found {
 		if event.EventType == storage.HistoryActivityFailed || event.EventType == storage.HistoryMessageTimeout {
 			err := replayRecordedError(ctx, event)
 			if strings.Contains(err.Error(), "timeout waiting for channel message") {
@@ -108,7 +100,19 @@ func receiveEvent[T any](ctx *WorkflowContext, channelName string, opts ...recei
 			}
 			return nil, err
 		}
-		return nil, fmt.Errorf("cached result type mismatch for channel receive %s", activityID)
+		msg, err := decodeRecorded[*receivedEventMessage[T]](event)
+		if err != nil {
+			return nil, err
+		}
+		if msg == nil || msg.ChannelName == "" {
+			return nil, fmt.Errorf("cached result type mismatch for channel receive %s", activityID)
+		}
+		return msg, nil
+	}
+	if options.subscribe {
+		if err := subscribeEvent(ctx, channelName); err != nil {
+			return nil, fmt.Errorf("failed to subscribe to event channel: %w", err)
+		}
 	}
 
 	// Verify subscription exists
@@ -161,7 +165,8 @@ func receiveEvent[T any](ctx *WorkflowContext, channelName string, opts ...recei
 		}
 
 		// Record to history for replay (synchronous message processing)
-		if err := ctx.RecordActivityResult(activityID, result, nil); err != nil {
+		stored, err := ctx.recordActivityResult(activityID, result, nil)
+		if err != nil {
 			return nil, fmt.Errorf("failed to record activity result: %w", err)
 		}
 
@@ -175,7 +180,7 @@ func receiveEvent[T any](ctx *WorkflowContext, channelName string, opts ...recei
 			})
 		}
 
-		return result, nil
+		return decodeRecorded[*receivedEventMessage[T]](stored)
 	}
 
 	// No pending messages - need to wait for message

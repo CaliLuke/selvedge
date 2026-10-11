@@ -167,7 +167,7 @@ func testWorkflowResultErrorTyped(t *testing.T, factory replayAppFactory) {
 	})
 	id := seedErrorWorkflow(t, h, w)
 	for i := 0; i < 1001; i++ {
-		require.NoError(t, h.app.storage.AppendHistory(h.app.ctx, &storage.HistoryEvent{InstanceID: id, ActivityID: fmt.Sprintf("filler:%d", i), EventType: storage.HistoryActivityCompleted, EventData: []byte(`true`), DataType: "json"}))
+		requireRecordedHistory(t, h.app.storage, h.app.ctx, &storage.HistoryEvent{InstanceID: id, ActivityID: fmt.Sprintf("filler:%d", i), Command: "activity:filler", EventType: storage.HistoryActivityCompleted, EventData: []byte(`true`), DataType: "json"})
 	}
 	require.Error(t, h.RunOnce(id))
 	res, err := GetWorkflowResult[string](h.app.ctx, h.app, id)
@@ -196,7 +196,7 @@ func testErrorEnvelopeUnknownKindDecodesGeneric(t *testing.T, factory replayAppF
 			a := DefineActivity("never", func(context.Context, string) (string, error) { t.Fatal("recorded error reran"); return "", nil })
 			var seen []error
 			id := addErrorReplayWorkflow(t, h, a, &seen)
-			require.NoError(t, h.app.storage.AppendHistory(h.app.ctx, &storage.HistoryEvent{InstanceID: id, ActivityID: "result", EventType: storage.HistoryActivityFailed, EventData: []byte(payload), DataType: "json"}))
+			requireRecordedHistory(t, h.app.storage, h.app.ctx, &storage.HistoryEvent{InstanceID: id, ActivityID: "result", Command: "activity:never", EventType: storage.HistoryActivityFailed, EventData: []byte(payload), DataType: "json"})
 			require.NoError(t, h.RunOnce(id))
 			require.EqualError(t, seen[0], "future failure")
 			var app *ApplicationError
@@ -222,7 +222,7 @@ func testCorruptFailureFailsRunEvenWhenCaught(t *testing.T, factory replayAppFac
 				return "caught", nil
 			})
 			id := seedErrorWorkflow(t, h, w)
-			require.NoError(t, h.app.storage.AppendHistory(h.app.ctx, &storage.HistoryEvent{InstanceID: id, ActivityID: "result", EventType: storage.HistoryActivityFailed, EventData: []byte(payload), DataType: "json"}))
+			requireRecordedHistory(t, h.app.storage, h.app.ctx, &storage.HistoryEvent{InstanceID: id, ActivityID: "result", Command: "activity:never", EventType: storage.HistoryActivityFailed, EventData: []byte(payload), DataType: "json"})
 			err := h.RunOnce(id)
 			var decode *ReplayDecodeError
 			require.ErrorAs(t, err, &decode)
@@ -260,7 +260,7 @@ func testLiveActivityUsesStoredOutcome(t *testing.T, factory replayAppFactory) {
 			a := DefineActivity("competing", func(ctx context.Context, _ string) (string, error) {
 				calls++
 				wc := GetWorkflowContext(ctx)
-				require.NoError(t, h.app.storage.AppendHistory(ctx, &storage.HistoryEvent{InstanceID: wc.InstanceID(), ActivityID: "result", EventType: tc.kind, EventData: []byte(tc.payload), DataType: "json"}))
+				requireRecordedHistory(t, h.app.storage, ctx, &storage.HistoryEvent{InstanceID: wc.InstanceID(), ActivityID: "result", Command: "activity:competing", EventType: tc.kind, EventData: []byte(tc.payload), DataType: "json"})
 				return "live", tc.liveErr
 			})
 			var values []string
@@ -297,9 +297,9 @@ func testLiveCorruptFailureFailsRunEvenWhenCaught(t *testing.T, factory replayAp
 	calls := 0
 	activity := DefineActivity("corrupt_live", func(ctx context.Context, _ string) (string, error) {
 		calls++
-		require.NoError(t, h.app.storage.AppendHistory(ctx, &storage.HistoryEvent{
-			InstanceID: GetWorkflowContext(ctx).InstanceID(), ActivityID: "result", EventType: storage.HistoryActivityFailed, EventData: []byte(`{`), DataType: "json",
-		}))
+		requireRecordedHistory(t, h.app.storage, ctx, &storage.HistoryEvent{
+			InstanceID: GetWorkflowContext(ctx).InstanceID(), ActivityID: "result", Command: "activity:corrupt_live", EventType: storage.HistoryActivityFailed, EventData: []byte(`{`), DataType: "json",
+		})
 		return "live success", nil
 	}, WithRetryPolicy[string, string](retry.Fixed(3, 0)))
 	var caught error

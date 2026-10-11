@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS workflow_history (
     instance_id TEXT NOT NULL,
     activity_id TEXT NOT NULL,
     event_type TEXT NOT NULL,
+    command TEXT NOT NULL DEFAULT '',
     data_type TEXT NOT NULL DEFAULT 'json',
     event_data TEXT,
     event_data_binary BYTEA,

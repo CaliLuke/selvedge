@@ -378,9 +378,9 @@ func TestSentinelErrors(t *testing.T) {
 			wantMsg: "invalid workflow state",
 		},
 		{
-			name:    "ErrActivityIDConflict",
-			err:     ErrActivityIDConflict,
-			wantMsg: "activity ID conflict: duplicate activity ID in workflow",
+			name:    "ErrHistoryKeyConflict",
+			err:     ErrHistoryKeyConflict,
+			wantMsg: "history key holds another command",
 		},
 		{
 			name:    "ErrDeterminismViolation",

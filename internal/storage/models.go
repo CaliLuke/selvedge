@@ -41,6 +41,8 @@ type WorkflowInstance struct {
 type HistoryEventType string
 
 const (
+	HistoryReserved HistoryEventType = "Reserved"
+
 	// Activity events
 	HistoryActivityCompleted HistoryEventType = "ActivityCompleted"
 	HistoryActivityFailed    HistoryEventType = "ActivityFailed"
@@ -64,6 +66,7 @@ const (
 
 // HistoryEvent represents a single event in a workflow's execution history.
 type HistoryEvent struct {
+	Command         string           `json:"command"`
 	ID              int64            `json:"id"`
 	InstanceID      string           `json:"instance_id"`
 	ActivityID      string           `json:"activity_id"`

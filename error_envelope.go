@@ -71,6 +71,8 @@ func envelopeForError(err error) *errorEnvelope {
 			ev.Kind = "canceled"
 		case context.DeadlineExceeded:
 			ev.Kind = "deadline_exceeded"
+		case ErrHistoryKeyConflict:
+			ev.Kind = "history_key_conflict"
 		case ErrDeterminismViolation:
 			ev.Kind = "nondeterminism"
 		}
@@ -126,6 +128,8 @@ func errorFromEnvelope(ev *errorEnvelope) error {
 		return context.DeadlineExceeded
 	case "workflow_cancelled":
 		return &WorkflowCancelledError{InstanceID: ev.InstanceID, Reason: ev.Reason}
+	case "history_key_conflict":
+		return ErrHistoryKeyConflict
 	case "nondeterminism":
 		return ErrDeterminismViolation
 	case "generic":

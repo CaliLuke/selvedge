@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/CaliLuke/selvedge/hooks"
+	"github.com/CaliLuke/selvedge/internal/storage"
 )
 
 // ReceivedEvent represents an event received by a workflow.
@@ -35,23 +36,8 @@ func WaitEvent[T any](ctx *WorkflowContext, eventType string, opts ...WaitEventO
 		opt(options)
 	}
 
-	// Call OnEventWaitStart hook
-	if h := ctx.Hooks(); h != nil {
-		h.OnEventWaitStart(ctx.Context(), hooks.EventWaitStartInfo{
-			InstanceID:   ctx.InstanceID(),
-			WorkflowName: ctx.WorkflowName(),
-			EventType:    eventType,
-			Timeout:      options.timeout,
-		})
-	}
-
-	// Subscribe to the event type channel (idempotent)
-	if err := subscribeEvent(ctx, eventType); err != nil {
-		return nil, fmt.Errorf("failed to subscribe to event channel: %w", err)
-	}
-
 	// Convert WaitEventOption to receiveEventOption
-	var receiveOpts []receiveEventOption
+	receiveOpts := []receiveEventOption{func(o *receiveOptions) { o.subscribe = true }}
 	if options.timeout != nil {
 		receiveOpts = append(receiveOpts, withReceiveEventTimeout(*options.timeout))
 	}
@@ -142,9 +128,17 @@ func WithEventTimeout(d time.Duration) WaitEventOption {
 //
 // When the timer expires, the workflow will be resumed.
 func Sleep(ctx *WorkflowContext, duration time.Duration, opts ...SleepOption) error {
+	if err := ctx.execCtx.Fatal(); err != nil {
+		return err
+	}
 	options := &sleepOptions{}
 	for _, opt := range opts {
 		opt(options)
+	}
+
+	if options.err != nil {
+		ctx.execCtx.Fail(options.err)
+		return options.err
 	}
 
 	// Generate timer ID
@@ -154,7 +148,18 @@ func Sleep(ctx *WorkflowContext, duration time.Duration, opts ...SleepOption) er
 	}
 
 	// Check if result is cached (replay)
-	if _, ok := ctx.lookupRecorded(timerID); ok {
+	event, found, err := ctx.execCtx.Claim(timerID, "sleep")
+	if err != nil {
+		return err
+	}
+	if found && event.EventData != nil {
+		return nil
+	}
+	stored, err := ctx.execCtx.Reserve(timerID, "sleep")
+	if err != nil {
+		return err
+	}
+	if stored != nil && stored.EventType != storage.HistoryReserved && stored.EventData != nil {
 		return nil
 	}
 
@@ -182,14 +187,19 @@ func Sleep(ctx *WorkflowContext, duration time.Duration, opts ...SleepOption) er
 type SleepOption func(*sleepOptions)
 
 type sleepOptions struct {
+	err     error
 	timerID string
 }
 
 // WithSleepID sets a custom timer ID for the sleep.
 // This is useful for identifying timers in logs and for deterministic replay.
+// The same prefixes as WithActivityID are reserved; Sleep rejects them with ErrHistoryKeyConflict.
 func WithSleepID(id string) SleepOption {
 	return func(o *sleepOptions) {
 		o.timerID = id
+		if err := reservedHistoryIDError("sleep", id); err != nil {
+			o.err = err
+		}
 	}
 }
 

@@ -3,6 +3,7 @@ package selvedge
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -44,7 +45,7 @@ func (h *typedReplayHarness) RunOnce(instanceID string) error {
 func (h *typedReplayHarness) forceFire(t *testing.T, instanceID string) {
 	t.Helper()
 	require.NoError(t, h.app.storage.RemoveTimerSubscription(h.app.ctx, instanceID, "pause"))
-	_, err := h.app.engine.RecordActivityResult(h.app.ctx, instanceID, "pause", true, nil)
+	_, err := h.app.storage.SetHistoryValueIfNull(h.app.ctx, nil, instanceID, "pause", "sleep", storage.HistoryTimerExpired, []byte(`true`))
 	require.NoError(t, err)
 }
 
@@ -209,7 +210,7 @@ func workflowContextWithRecordedHistory(t *testing.T, history map[string]any) *W
 			activityErr = err
 			value = nil
 		}
-		_, err := h.app.engine.RecordActivityResult(h.app.ctx, instanceID, key, value, activityErr)
+		_, err := h.app.engine.RecordActivityResult(h.app.ctx, instanceID, key, fixtureCommand(key), value, activityErr)
 		require.NoError(t, err)
 	}
 	var wfCtx *WorkflowContext
@@ -263,4 +264,17 @@ func testLiveDecodeErrorFailsRunEvenWhenCaught(t *testing.T, factory replayAppFa
 	err = h.RunOnce(instanceID)
 	require.ErrorAs(t, err, &decodeErr)
 	require.Equal(t, 1, calls)
+}
+
+func requireRecordedHistory(t *testing.T, s storage.Storage, ctx context.Context, event *storage.HistoryEvent) {
+	t.Helper()
+	_, err := s.RecordHistory(ctx, nil, event)
+	require.NoError(t, err)
+}
+
+func fixtureCommand(key string) string {
+	if strings.HasPrefix(key, "receive_") {
+		return "receive:" + strings.TrimPrefix(key[:strings.LastIndex(key, ":")], "receive_")
+	}
+	return "activity:" + strings.Split(key, ":")[0]
 }

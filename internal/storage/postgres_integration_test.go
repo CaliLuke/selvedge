@@ -242,8 +242,8 @@ func TestPostgresIntegration_HistoryOperations(t *testing.T) {
 		DataType:   "json",
 	}
 
-	if err := store.AppendHistory(ctx, event); err != nil {
-		t.Fatalf("AppendHistory failed: %v", err)
+	if _, err := store.RecordHistory(ctx, nil, event); err != nil {
+		t.Fatalf("RecordHistory failed: %v", err)
 	}
 
 	history, hasMore, err := store.GetHistoryPaginated(ctx, "test-history-1", 0, 100)

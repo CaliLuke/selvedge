@@ -21,6 +21,8 @@ func testReceiveGoEnvelopeOnly(t *testing.T, factory schemaBackendFactory) {
 		wantError      bool
 	}{
 		{"go", `{"id":7,"channel_name":"messages","data":"value","created_at":"2026-10-11T00:00:00Z"}`, false},
+		{"missing_channel", `{"id":7,"data":"value"}`, true},
+		{"null", `null`, true},
 		{"foreign", `{"id":"uuid","channel":"messages","data":"value","published_at":"2026-10-11T00:00:00Z"}`, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -32,7 +34,7 @@ func testReceiveGoEnvelopeOnly(t *testing.T, factory schemaBackendFactory) {
 			if err := b.store.CreateInstance(ctx, &storage.WorkflowInstance{InstanceID: "receive", WorkflowName: "receiver", Status: storage.StatusRunning, InputData: []byte(`{}`), StartedAt: time.Now(), UpdatedAt: time.Now()}); err != nil {
 				t.Fatal(err)
 			}
-			if err := b.store.AppendHistory(ctx, &storage.HistoryEvent{InstanceID: "receive", ActivityID: "receive_messages:1", EventType: storage.HistoryChannelMessageReceived, DataType: "json", EventData: []byte(tc.envelope)}); err != nil {
+			if _, err := b.store.RecordHistory(ctx, nil, &storage.HistoryEvent{InstanceID: "receive", ActivityID: "receive_messages:1", Command: "receive:messages", EventType: storage.HistoryChannelMessageReceived, DataType: "json", EventData: []byte(tc.envelope)}); err != nil {
 				t.Fatal(err)
 			}
 			engine := replay.NewEngine(b.store, &hooks.NoOpHooks{}, "worker", errorCodec{})

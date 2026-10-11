@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sync"
 
 	"github.com/CaliLuke/selvedge/hooks"
 	"github.com/CaliLuke/selvedge/internal/replay"
@@ -45,10 +44,6 @@ type WorkflowContext struct {
 	// Replay state
 	isReplaying bool
 
-	// Activity ID management
-	activityCounts map[string]int // function_name → counter
-	mu             sync.Mutex
-
 	// Reference to the replay execution context (when using replay engine)
 	execCtx *replay.ExecutionContext
 
@@ -64,13 +59,13 @@ func NewWorkflowContext(
 ) *WorkflowContext {
 	ctx, cancel := context.WithCancel(ctx)
 	return &WorkflowContext{
-		ctx:            ctx,
-		cancel:         cancel,
-		instanceID:     instanceID,
-		workerID:       workerID,
-		workflowName:   workflowName,
-		isReplaying:    isReplaying,
-		activityCounts: make(map[string]int),
+		ctx:          ctx,
+		cancel:       cancel,
+		instanceID:   instanceID,
+		workerID:     workerID,
+		workflowName: workflowName,
+		isReplaying:  isReplaying,
+		execCtx:      replay.NewExecutionContext(ctx, instanceID),
 	}
 }
 
@@ -78,12 +73,11 @@ func NewWorkflowContext(
 func NewWorkflowContextFromExecution(execCtx *replay.ExecutionContext) *WorkflowContext {
 	ctx, cancel := context.WithCancel(execCtx.Context())
 	return &WorkflowContext{
-		ctx:            ctx,
-		cancel:         cancel,
-		instanceID:     execCtx.InstanceID(),
-		isReplaying:    execCtx.IsReplaying(),
-		activityCounts: make(map[string]int),
-		execCtx:        execCtx,
+		ctx:         ctx,
+		cancel:      cancel,
+		instanceID:  execCtx.InstanceID(),
+		isReplaying: execCtx.IsReplaying(),
+		execCtx:     execCtx,
 	}
 }
 
@@ -95,14 +89,14 @@ func (c *WorkflowContext) Context() context.Context {
 // WithContext returns a copy of the WorkflowContext with a new underlying context.
 func (c *WorkflowContext) WithContext(ctx context.Context) *WorkflowContext {
 	return &WorkflowContext{
-		ctx:            ctx,
-		cancel:         c.cancel,
-		instanceID:     c.instanceID,
-		workerID:       c.workerID,
-		workflowName:   c.workflowName,
-		isReplaying:    c.isReplaying,
-		activityCounts: c.activityCounts,
-		execCtx:        c.execCtx,
+		ctx:          ctx,
+		cancel:       c.cancel,
+		instanceID:   c.instanceID,
+		workerID:     c.workerID,
+		workflowName: c.workflowName,
+		isReplaying:  c.isReplaying,
+		execCtx:      c.execCtx,
+		app:          c.app,
 	}
 }
 
@@ -131,11 +125,7 @@ func (c *WorkflowContext) IsReplaying() bool {
 // This is used for deterministic replay - the same sequence of calls
 // will always generate the same IDs.
 func (c *WorkflowContext) GenerateActivityID(functionName string) string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	c.activityCounts[functionName]++
-	return fmt.Sprintf("%s:%d", functionName, c.activityCounts[functionName])
+	return c.execCtx.GenerateActivityID(functionName)
 }
 
 // lookupRecorded retrieves a raw row from the replay execution.

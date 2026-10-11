@@ -125,7 +125,7 @@ func TestSQLiteStorage(t *testing.T) {
 			EventData:  []byte(`{"result":"success"}`),
 			DataType:   "json",
 		}
-		err := storage.AppendHistory(ctx, historyEvent)
+		_, err := storage.RecordHistory(ctx, nil, historyEvent)
 		if err != nil {
 			t.Fatalf("failed to append history: %v", err)
 		}

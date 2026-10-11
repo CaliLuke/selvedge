@@ -3,6 +3,7 @@ package selvedge
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/CaliLuke/selvedge/hooks"
@@ -78,10 +79,22 @@ func (a *Activity[I, O]) Execute(
 		opt(options)
 	}
 
+	if options.err != nil {
+		ctx.execCtx.Fail(options.err)
+		var zero O
+		return zero, options.err
+	}
+
 	// Generate or use provided activity ID
 	activityID := options.activityID
 	if activityID == "" {
 		activityID = ctx.GenerateActivityID(a.name)
+	}
+
+	event, found, claimErr := ctx.execCtx.Claim(activityID, "activity:"+a.name)
+	if claimErr != nil {
+		var zero O
+		return zero, claimErr
 	}
 
 	// Call OnActivityStart hook
@@ -97,7 +110,7 @@ func (a *Activity[I, O]) Execute(
 	}
 
 	// Replay uses recorded bytes decoded directly into the activity's output type.
-	if event, ok := ctx.lookupRecorded(activityID); ok {
+	if found {
 		if event.EventType == storage.HistoryActivityFailed || event.EventType == storage.HistoryMessageTimeout {
 			var zero O
 			return zero, replayRecordedError(ctx, event)
@@ -256,13 +269,29 @@ func (a *Activity[I, O]) executeWithRetry(ctx *WorkflowContext, input I, activit
 type ExecuteOption func(*executeOptions)
 
 type executeOptions struct {
+	err        error
 	activityID string
 }
 
 // WithActivityID specifies a manual activity ID.
 // Required for concurrent activity execution to maintain determinism.
+// IDs starting with $, sleep:, receive_, or channel: are reserved.
+// Execute rejects these IDs with ErrHistoryKeyConflict before running the activity.
 func WithActivityID(id string) ExecuteOption {
 	return func(o *executeOptions) {
 		o.activityID = id
+		if err := reservedHistoryIDError("activity", id); err != nil {
+			o.err = err
+		}
 	}
+}
+
+// Runtime-generated keys and the lifecycle namespace cannot be explicit history IDs.
+func reservedHistoryIDError(kind, id string) error {
+	for _, prefix := range []string{"$", "sleep:", "receive_", "channel:"} {
+		if strings.HasPrefix(id, prefix) {
+			return fmt.Errorf("%s ID %q uses reserved prefix %q: %w", kind, id, prefix, ErrHistoryKeyConflict)
+		}
+	}
+	return nil
 }

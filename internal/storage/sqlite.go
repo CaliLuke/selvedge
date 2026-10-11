@@ -198,15 +198,26 @@ func (s *SQLiteStorage) CreateInstance(ctx context.Context, instance *WorkflowIn
 		return fmt.Errorf("failed to ensure workflow definition: %w", err)
 	}
 
-	_, err = conn.ExecContext(ctx, `
+	result, err := conn.ExecContext(ctx, `
 		INSERT INTO workflow_instances (
 			instance_id, workflow_name, framework, status, input_data, source_hash, owner_service, started_at, updated_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (instance_id) DO NOTHING
 	`, instance.InstanceID, instance.WorkflowName, framework, instance.Status,
 		string(instance.InputData), instance.SourceHash, instance.OwnerService,
 		instance.StartedAt.UTC().Format("2006-01-02 15:04:05"),
 		instance.UpdatedAt.UTC().Format("2006-01-02 15:04:05"))
-	return err
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return ErrWorkflowAlreadyStarted
+	}
+	return nil
 }
 
 // GetInstance retrieves a workflow instance by ID.
@@ -607,17 +618,6 @@ func (s *SQLiteStorage) CleanupStaleLocks(ctx context.Context, timeoutSec int) (
 
 // --- History Manager ---
 
-// AppendHistory appends a history event.
-func (s *SQLiteStorage) AppendHistory(ctx context.Context, event *HistoryEvent) error {
-	conn := s.getConn(ctx)
-	_, err := conn.ExecContext(ctx, `
-		INSERT INTO workflow_history (instance_id, activity_id, event_type, event_data, event_data_binary, data_type)
-		VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT (instance_id, activity_id) DO NOTHING
-	`, event.InstanceID, event.ActivityID, event.EventType, string(event.EventData), event.EventDataBinary, event.DataType)
-	return err
-}
-
 // GetHistoryPaginated retrieves history events with pagination.
 // Returns events with id > afterID, up to limit events.
 // Returns (events, hasMore, error).
@@ -625,7 +625,7 @@ func (s *SQLiteStorage) GetHistoryPaginated(ctx context.Context, instanceID stri
 	conn := s.getConn(ctx)
 	// Fetch one extra to check if there are more events
 	rows, err := conn.QueryContext(ctx, `
-		SELECT id, instance_id, activity_id, event_type, event_data, event_data_binary, data_type, created_at
+		SELECT id, instance_id, activity_id, command, event_type, event_data, event_data_binary, data_type, created_at
 		FROM workflow_history
 		WHERE instance_id = ? AND id > ?
 		ORDER BY id ASC
@@ -643,7 +643,7 @@ func (s *SQLiteStorage) GetHistoryPaginated(ctx context.Context, instanceID stri
 		var eventDataBinary []byte
 		var createdAtStr string
 
-		if err := rows.Scan(&h.ID, &h.InstanceID, &h.ActivityID, &h.EventType, &eventData, &eventDataBinary, &h.DataType, &createdAtStr); err != nil {
+		if err := rows.Scan(&h.ID, &h.InstanceID, &h.ActivityID, &h.Command, &h.EventType, &eventData, &eventDataBinary, &h.DataType, &createdAtStr); err != nil {
 			return nil, false, err
 		}
 		h.CreatedAt, _ = parseSQLiteTime(createdAtStr)
@@ -1159,10 +1159,10 @@ func (s *SQLiteStorage) DeliverChannelMessageWithLock(
 	}
 	wrappedJSON, _ := json.Marshal(wrappedData)
 
-	_, err = conn.ExecContext(ctx, `
-		INSERT INTO workflow_history (instance_id, activity_id, event_type, event_data, data_type)
-		VALUES (?, ?, 'ChannelMessageReceived', ?, 'json')
-	`, instanceID, historyActivityID, string(wrappedJSON))
+	_, err = s.RecordHistory(ctx, nil, &HistoryEvent{
+		InstanceID: instanceID, ActivityID: historyActivityID, Command: "receive:" + channelName,
+		EventType: HistoryChannelMessageReceived, EventData: wrappedJSON, DataType: "json",
+	})
 	if err != nil {
 		_ = s.ReleaseLock(ctx, instanceID, workerID)
 		return nil, fmt.Errorf("failed to record history: %w", err)

@@ -706,7 +706,11 @@ func (a *App) handleExpiredTimer(timer *storage.TimerSubscription) error {
 		"expires_at": timer.ExpiresAt.Format(time.RFC3339),
 		"completed":  true,
 	}
-	if _, err := a.engine.RecordActivityResult(a.ctx, timer.InstanceID, timer.TimerID, timerResult, nil); err != nil {
+	timerData, err := json.Marshal(timerResult)
+	if err != nil {
+		return err
+	}
+	if _, err := a.storage.SetHistoryValueIfNull(a.ctx, nil, timer.InstanceID, timer.TimerID, "sleep", storage.HistoryTimerExpired, timerData); err != nil {
 		_ = a.storage.ReleaseLock(a.ctx, timer.InstanceID, a.config.workerID)
 		return fmt.Errorf("failed to record timer result: %w", err)
 	}
@@ -1192,10 +1196,11 @@ func (a *App) handleChannelTimeout(sub *storage.ChannelSubscription) error {
 		InstanceID: sub.InstanceID,
 		ActivityID: activityID,
 		EventType:  storage.HistoryMessageTimeout,
+		Command:    "receive:" + sub.Channel,
 		EventData:  errJSON,
 		DataType:   "json",
 	}
-	if err := a.storage.AppendHistory(a.ctx, historyEvent); err != nil {
+	if _, err := a.storage.RecordHistory(a.ctx, nil, historyEvent); err != nil {
 		_ = a.storage.ReleaseLock(a.ctx, sub.InstanceID, a.config.workerID)
 		return fmt.Errorf("failed to record timeout error: %w", err)
 	}
