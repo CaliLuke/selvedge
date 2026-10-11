@@ -86,9 +86,9 @@ func (s *PostgresStorage) sendNotify(ctx context.Context, channel notify.NotifyC
 // getConn returns the appropriate database handle based on context.
 func (s *PostgresStorage) getConn(ctx context.Context) Executor {
 	if state, ok := ctx.Value(txKey{}).(*txState); ok {
-		return state.tx
+		return observeExecutor(s.driver, state.tx)
 	}
-	return s.db
+	return observeExecutor(s.driver, s.db)
 }
 
 // --- Transaction Manager ---
@@ -178,8 +178,8 @@ func (s *PostgresStorage) CreateInstance(ctx context.Context, instance *Workflow
 
 	result, err := conn.ExecContext(ctx, `
 		INSERT INTO workflow_instances (
-			instance_id, workflow_name, status, input_data, source_hash, owner_service, framework, started_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			instance_id, workflow_name, status, input_data, source_hash, owner_service, framework, started_at, updated_at, runnable
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, TRUE)
 		ON CONFLICT (instance_id) DO NOTHING
 	`, instance.InstanceID, instance.WorkflowName, instance.Status,
 		string(instance.InputData), instance.SourceHash, instance.OwnerService,
@@ -194,6 +194,7 @@ func (s *PostgresStorage) CreateInstance(ctx context.Context, instance *Workflow
 	if count == 0 {
 		return ErrWorkflowAlreadyStarted
 	}
+	s.notifyRunnable(ctx, instance.InstanceID)
 	return nil
 }
 
@@ -203,21 +204,20 @@ func (s *PostgresStorage) GetInstance(ctx context.Context, instanceID string) (*
 	row := conn.QueryRowContext(ctx, `
 		SELECT instance_id, workflow_name, status, input_data, output_data,
 			   current_activity_id, source_hash, owner_service, framework,
-			   locked_by, locked_at, lock_timeout_seconds, lock_expires_at,
+			   lease_owner, lease_epoch, lease_expires_ms, runnable,
 			   started_at, updated_at
 		FROM workflow_instances WHERE instance_id = $1
 	`, instanceID)
 
 	var inst WorkflowInstance
 	var inputData, outputData, activityID, sourceHash, ownerService, framework sql.NullString
-	var lockedBy sql.NullString
-	var lockedAt, lockExpiresAt sql.NullTime
-	var lockTimeout sql.NullInt64
+	var leaseOwner sql.NullString
+	var leaseExpires sql.NullInt64
 
 	err := row.Scan(
 		&inst.InstanceID, &inst.WorkflowName, &inst.Status,
 		&inputData, &outputData, &activityID, &sourceHash, &ownerService, &framework,
-		&lockedBy, &lockedAt, &lockTimeout, &lockExpiresAt,
+		&leaseOwner, &inst.LeaseEpoch, &leaseExpires, &inst.Runnable,
 		&inst.StartedAt, &inst.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -245,18 +245,9 @@ func (s *PostgresStorage) GetInstance(ctx context.Context, instanceID string) (*
 	if framework.Valid {
 		inst.Framework = framework.String
 	}
-	if lockedBy.Valid {
-		inst.LockedBy = lockedBy.String
-	}
-	if lockedAt.Valid {
-		inst.LockedAt = &lockedAt.Time
-	}
-	if lockTimeout.Valid {
-		timeout := int(lockTimeout.Int64)
-		inst.LockTimeoutSec = &timeout
-	}
-	if lockExpiresAt.Valid {
-		inst.LockExpiresAt = &lockExpiresAt.Time
+	inst.LeaseOwner = leaseOwner.String
+	if leaseExpires.Valid {
+		inst.LeaseExpiresMS = &leaseExpires.Int64
 	}
 
 	return &inst, nil
@@ -264,64 +255,68 @@ func (s *PostgresStorage) GetInstance(ctx context.Context, instanceID string) (*
 
 // UpdateInstanceStatus updates the status of a workflow instance.
 func (s *PostgresStorage) UpdateInstanceStatus(ctx context.Context, instanceID string, status WorkflowStatus, errorMsg string) error {
-	conn := s.getConn(ctx)
-	// Note: errorMsg parameter kept for interface compatibility but ignored
-	_, err := conn.ExecContext(ctx, `
+	return (fenceStore{s}).withFence(ctx, contextFence(ctx, instanceID), func(conn Executor) error {
+		// Note: errorMsg parameter kept for interface compatibility but ignored
+		_, err := conn.ExecContext(ctx, `
 		UPDATE workflow_instances
 		SET status = $1, updated_at = NOW()
 		WHERE instance_id = $2
 	`, status, instanceID)
-	return err
+		return err
+	})
 }
 
 // UpdateInstanceActivity updates the current activity ID.
 func (s *PostgresStorage) UpdateInstanceActivity(ctx context.Context, instanceID, activityID string) error {
-	conn := s.getConn(ctx)
-	_, err := conn.ExecContext(ctx, `
+	return (fenceStore{s}).withFence(ctx, contextFence(ctx, instanceID), func(conn Executor) error {
+		_, err := conn.ExecContext(ctx, `
 		UPDATE workflow_instances
 		SET current_activity_id = $1, updated_at = NOW()
 		WHERE instance_id = $2
 	`, activityID, instanceID)
-	return err
+		return err
+	})
 }
 
 // UpdateInstanceOutput updates the output data.
 func (s *PostgresStorage) UpdateInstanceOutput(ctx context.Context, instanceID string, outputData []byte) error {
-	conn := s.getConn(ctx)
-	_, err := conn.ExecContext(ctx, `
+	return (fenceStore{s}).withFence(ctx, contextFence(ctx, instanceID), func(conn Executor) error {
+		_, err := conn.ExecContext(ctx, `
 		UPDATE workflow_instances
 		SET output_data = $1, status = 'completed', updated_at = NOW()
 		WHERE instance_id = $2
 	`, string(outputData), instanceID)
-	return err
+		return err
+	})
 }
 
 // CancelInstance cancels a workflow instance.
 // Returns ErrWorkflowNotCancellable if the workflow is already completed, cancelled, failed, or does not exist.
 func (s *PostgresStorage) CancelInstance(ctx context.Context, instanceID, reason string) error {
-	conn := s.getConn(ctx)
-	result, err := conn.ExecContext(ctx, `
+	return (fenceStore{s}).withFence(ctx, contextFence(ctx, instanceID), func(conn Executor) error {
+		result, err := conn.ExecContext(ctx, `
 		UPDATE workflow_instances
 		SET status = 'cancelled', updated_at = NOW()
-		WHERE instance_id = $1 AND status IN ('pending', 'running', 'waiting_for_event', 'waiting_for_timer', 'waiting_for_message')
+		WHERE instance_id = $1 AND status='running'
 	`, instanceID)
-	if err != nil {
-		return err
-	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if rows == 0 {
-		return ErrWorkflowNotCancellable
-	}
-	return nil
+		if err != nil {
+			return err
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rows == 0 {
+			return ErrWorkflowNotCancellable
+		}
+		return nil
+	})
 }
 
 // ListInstances lists workflow instances with cursor-based pagination and filters.
 func (s *PostgresStorage) ListInstances(ctx context.Context, opts ListInstancesOptions) (*PaginationResult, error) {
 	conn := s.getConn(ctx)
-	query := "SELECT instance_id, workflow_name, status, started_at, updated_at FROM workflow_instances WHERE framework = 'go'"
+	query := "SELECT instance_id, workflow_name, status, started_at, updated_at FROM workflow_instances WHERE 1=1"
 	args := []any{}
 	argN := 1
 
@@ -436,160 +431,7 @@ func (s *PostgresStorage) ListInstances(ctx context.Context, opts ListInstancesO
 	}, nil
 }
 
-// FindResumableWorkflows finds workflows with status='running' that don't have an active lock.
-// These are workflows that had a message delivered and are waiting for a worker to resume them.
-func (s *PostgresStorage) FindResumableWorkflows(ctx context.Context, limit int) ([]*ResumableWorkflow, error) {
-	if limit <= 0 {
-		limit = 100
-	}
-	conn := s.getConn(ctx)
-	query := `
-		SELECT instance_id, workflow_name
-		FROM workflow_instances
-		WHERE status = $1
-		AND (locked_by IS NULL OR locked_by = '')
-		AND framework = 'go'
-		ORDER BY updated_at ASC
-		LIMIT $2
-	`
-
-	rows, err := conn.QueryContext(ctx, query, StatusRunning, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-
-	var workflows []*ResumableWorkflow
-	for rows.Next() {
-		var wf ResumableWorkflow
-		if err := rows.Scan(&wf.InstanceID, &wf.WorkflowName); err != nil {
-			return nil, err
-		}
-		workflows = append(workflows, &wf)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return workflows, nil
-}
-
 // --- Lock Manager ---
-
-// TryAcquireLock attempts to acquire a lock on a workflow instance.
-// Uses SELECT FOR UPDATE SKIP LOCKED pattern.
-// SKIP LOCKED allows concurrent workers to not block on locked rows.
-func (s *PostgresStorage) TryAcquireLock(ctx context.Context, instanceID, workerID string, timeoutSec int) (bool, error) {
-	conn := s.getConn(ctx)
-	now := time.Now().UTC()
-	expiresAt := now.Add(time.Duration(timeoutSec) * time.Second)
-
-	// SELECT FOR UPDATE SKIP LOCKED to avoid blocking
-	var currentLockedBy sql.NullString
-	var currentLockExpiresAt sql.NullTime
-	err := conn.QueryRowContext(ctx, `
-		SELECT locked_by, lock_expires_at
-		FROM workflow_instances
-		WHERE instance_id = $1
-		FOR UPDATE SKIP LOCKED
-	`, instanceID).Scan(&currentLockedBy, &currentLockExpiresAt)
-
-	if err == sql.ErrNoRows {
-		// Row is locked by another transaction, skip
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-
-	// Check lock conditions:
-	// 1. No lock exists (locked_by IS NULL or empty)
-	// 2. Lock is expired
-	// 3. Same worker already holds the lock (re-entrant)
-	canAcquire := !currentLockedBy.Valid ||
-		currentLockedBy.String == "" ||
-		currentLockedBy.String == workerID ||
-		(currentLockExpiresAt.Valid && currentLockExpiresAt.Time.Before(now))
-
-	if !canAcquire {
-		return false, nil
-	}
-
-	_, err = conn.ExecContext(ctx, `
-		UPDATE workflow_instances
-		SET locked_by = $1, locked_at = $2, lock_expires_at = $3, updated_at = $2
-		WHERE instance_id = $4
-	`, workerID, now, expiresAt, instanceID)
-	if err != nil {
-		return false, err
-	}
-
-	return true, nil
-}
-
-// ReleaseLock releases a lock on a workflow instance.
-func (s *PostgresStorage) ReleaseLock(ctx context.Context, instanceID, workerID string) error {
-	conn := s.getConn(ctx)
-	_, err := conn.ExecContext(ctx, `
-		UPDATE workflow_instances
-		SET locked_by = NULL, locked_at = NULL, lock_expires_at = NULL, updated_at = NOW()
-		WHERE instance_id = $1 AND locked_by = $2
-	`, instanceID, workerID)
-	return err
-}
-
-// RefreshLock extends the lock expiration time.
-func (s *PostgresStorage) RefreshLock(ctx context.Context, instanceID, workerID string, timeoutSec int) error {
-	conn := s.getConn(ctx)
-	expiresAt := time.Now().UTC().Add(time.Duration(timeoutSec) * time.Second)
-	_, err := conn.ExecContext(ctx, `
-		UPDATE workflow_instances
-		SET lock_expires_at = $1, updated_at = NOW()
-		WHERE instance_id = $2 AND locked_by = $3
-	`, expiresAt, instanceID, workerID)
-	return err
-}
-
-// CleanupStaleLocks cleans up expired locks and returns workflows to resume.
-func (s *PostgresStorage) CleanupStaleLocks(ctx context.Context, timeoutSec int) ([]StaleWorkflowInfo, error) {
-	conn := s.getConn(ctx)
-
-	// Find stale locks (limit to 100 to prevent memory spikes)
-	rows, err := conn.QueryContext(ctx, `
-		SELECT instance_id, workflow_name
-		FROM workflow_instances
-		WHERE locked_by IS NOT NULL
-		AND lock_expires_at < NOW()
-		AND status IN ('running', 'waiting_for_event', 'waiting_for_timer')
-		AND framework = 'go'
-		LIMIT 100
-	`)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-
-	var stale []StaleWorkflowInfo
-	for rows.Next() {
-		var info StaleWorkflowInfo
-		if err := rows.Scan(&info.InstanceID, &info.WorkflowName); err != nil {
-			return nil, err
-		}
-		stale = append(stale, info)
-	}
-
-	// Clear stale locks (only for 'go' framework)
-	_, err = conn.ExecContext(ctx, `
-		UPDATE workflow_instances
-		SET locked_by = NULL, locked_at = NULL, lock_expires_at = NULL, updated_at = NOW()
-		WHERE locked_by IS NOT NULL AND lock_expires_at < NOW() AND framework = 'go'
-	`)
-	if err != nil {
-		return nil, err
-	}
-
-	return stale, nil
-}
 
 // --- History Manager ---
 
@@ -653,12 +495,18 @@ func (s *PostgresStorage) GetHistoryCount(ctx context.Context, instanceID string
 
 // RegisterTimerSubscription registers a timer for a workflow.
 func (s *PostgresStorage) RegisterTimerSubscription(ctx context.Context, sub *TimerSubscription) error {
-	conn := s.getConn(ctx)
-	_, err := conn.ExecContext(ctx, `
+	err := (fenceStore{s}).withFence(ctx, contextFence(ctx, sub.InstanceID), func(conn Executor) error {
+		_, err := conn.ExecContext(ctx, `
 		INSERT INTO workflow_timer_subscriptions (instance_id, timer_id, expires_at, activity_id)
 		VALUES ($1, $2, $3, $4)
 		ON CONFLICT (instance_id, timer_id) DO NOTHING
 	`, sub.InstanceID, sub.TimerID, sub.ExpiresAt.UTC(), sub.ActivityID)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
 	if err != nil {
 		return err
 	}
@@ -676,82 +524,14 @@ func (s *PostgresStorage) RegisterTimerSubscription(ctx context.Context, sub *Ti
 	return nil
 }
 
-// RegisterTimerSubscriptionAndReleaseLock atomically registers timer and releases lock.
-func (s *PostgresStorage) RegisterTimerSubscriptionAndReleaseLock(ctx context.Context, sub *TimerSubscription, instanceID, workerID string) error {
-	var needTx bool
-	if !s.InTransaction(ctx) {
-		var err error
-		ctx, err = s.BeginTransaction(ctx)
-		if err != nil {
-			return err
-		}
-		needTx = true
-		defer func() {
-			if needTx {
-				_ = s.RollbackTransaction(ctx)
-			}
-		}()
-	}
-
-	conn := s.getConn(ctx)
-
-	// Register timer
-	_, err := conn.ExecContext(ctx, `
-		INSERT INTO workflow_timer_subscriptions (instance_id, timer_id, expires_at, activity_id)
-		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (instance_id, timer_id) DO NOTHING
-	`, sub.InstanceID, sub.TimerID, sub.ExpiresAt.UTC(), sub.ActivityID)
-	if err != nil {
-		return err
-	}
-
-	// Update status
-	_, err = conn.ExecContext(ctx, `
-		UPDATE workflow_instances
-		SET status = 'waiting_for_timer', updated_at = NOW()
-		WHERE instance_id = $1
-	`, instanceID)
-	if err != nil {
-		return err
-	}
-
-	// Release lock
-	_, err = conn.ExecContext(ctx, `
-		UPDATE workflow_instances
-		SET locked_by = NULL, locked_at = NULL, lock_expires_at = NULL
-		WHERE instance_id = $1 AND locked_by = $2
-	`, instanceID, workerID)
-	if err != nil {
-		return err
-	}
-
-	if needTx {
-		if err := s.CommitTransaction(ctx); err != nil {
-			return err
-		}
-		needTx = false
-	}
-
-	// Send notification for timer registered (after commit)
-	timerPayload := map[string]string{
-		"instance_id": sub.InstanceID,
-		"timer_id":    sub.TimerID,
-		"expires_at":  sub.ExpiresAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
-	}
-	if payloadBytes, err := json.Marshal(timerPayload); err == nil {
-		s.sendNotify(ctx, notify.ChannelTimerExpired, string(payloadBytes))
-	}
-
-	return nil
-}
-
 // RemoveTimerSubscription removes a timer subscription.
 func (s *PostgresStorage) RemoveTimerSubscription(ctx context.Context, instanceID, timerID string) error {
-	conn := s.getConn(ctx)
-	_, err := conn.ExecContext(ctx, `
+	return (fenceStore{s}).withFence(ctx, contextFence(ctx, instanceID), func(conn Executor) error {
+		_, err := conn.ExecContext(ctx, `
 		DELETE FROM workflow_timer_subscriptions WHERE instance_id = $1 AND timer_id = $2
 	`, instanceID, timerID)
-	return err
+		return err
+	})
 }
 
 // FindExpiredTimers finds expired timers.
@@ -764,7 +544,7 @@ func (s *PostgresStorage) FindExpiredTimers(ctx context.Context, limit int) ([]*
 		SELECT t.id, t.instance_id, t.timer_id, t.expires_at, t.activity_id, t.created_at
 		FROM workflow_timer_subscriptions t
 		JOIN workflow_instances w ON t.instance_id = w.instance_id
-		WHERE t.expires_at <= NOW() AND w.framework = 'go'
+		WHERE t.expires_at <= NOW()
 		ORDER BY t.expires_at ASC
 		LIMIT $1
 	`, limit)
@@ -794,21 +574,7 @@ func (s *PostgresStorage) FindExpiredTimers(ctx context.Context, limit int) ([]*
 
 // PublishToChannel publishes a message to a channel.
 func (s *PostgresStorage) PublishToChannel(ctx context.Context, channelName string, dataJSON, metadata []byte) (int64, error) {
-	conn := s.getConn(ctx)
-	var dataStr, metadataStr sql.NullString
-	if dataJSON != nil {
-		dataStr = sql.NullString{String: string(dataJSON), Valid: true}
-	}
-	if metadata != nil {
-		metadataStr = sql.NullString{String: string(metadata), Valid: true}
-	}
-
-	var id int64
-	err := conn.QueryRowContext(ctx, `
-		INSERT INTO channel_messages (channel, data, metadata, message_id, data_type)
-		VALUES ($1, $2, $3, gen_random_uuid()::text, 'json')
-		RETURNING id
-	`, channelName, dataStr, metadataStr).Scan(&id)
+	id, err := publishChannel(ctx, s, channelName, dataJSON, metadata)
 	if err != nil {
 		return 0, err
 	}
@@ -829,34 +595,34 @@ func (s *PostgresStorage) PublishToChannel(ctx context.Context, channelName stri
 // For broadcast mode, it initializes the delivery cursor to the current max message ID
 // so that only messages published after subscription are received.
 func (s *PostgresStorage) SubscribeToChannel(ctx context.Context, instanceID, channelName string, mode ChannelMode) error {
-	conn := s.getConn(ctx)
-
-	// Insert subscription
-	_, err := conn.ExecContext(ctx, `
+	return (fenceStore{s}).withFence(ctx, contextFence(ctx, instanceID), func(conn Executor) error {
+		// Insert subscription
+		_, err := conn.ExecContext(ctx, `
 		INSERT INTO channel_subscriptions (instance_id, channel, mode)
 		VALUES ($1, $2, $3)
 		ON CONFLICT (instance_id, channel) DO UPDATE SET mode = EXCLUDED.mode
 	`, instanceID, channelName, string(mode))
-	if err != nil {
-		return err
-	}
+		if err != nil {
+			return err
+		}
 
-	// For broadcast mode, initialize the delivery cursor to current max message ID
-	// This ensures new subscribers only receive messages published after subscription
-	if mode == ChannelModeBroadcast {
-		_, err = conn.ExecContext(ctx, `
+		// For broadcast mode, initialize the delivery cursor to current max message ID
+		// This ensures new subscribers only receive messages published after subscription
+		if mode == ChannelModeBroadcast {
+			_, err = conn.ExecContext(ctx, `
 			INSERT INTO channel_delivery_cursors (instance_id, channel, last_delivered_id)
 			SELECT $1, $2, COALESCE(MAX(id), 0)
 			FROM channel_messages
 			WHERE channel = $2
 			ON CONFLICT (instance_id, channel) DO NOTHING
 		`, instanceID, channelName)
-		if err != nil {
-			return err
+			if err != nil {
+				return err
+			}
 		}
-	}
 
-	return nil
+		return nil
+	})
 }
 
 // GetChannelSubscription retrieves a subscription for an instance and channel.
@@ -903,37 +669,16 @@ func (s *PostgresStorage) GetChannelMode(ctx context.Context, channelName string
 	return ChannelMode(modeStr), nil
 }
 
-// RegisterChannelReceiveAndReleaseLock atomically registers a channel receive wait and releases the lock.
-func (s *PostgresStorage) RegisterChannelReceiveAndReleaseLock(ctx context.Context, instanceID, channelName, workerID, activityID string, timeoutAt *time.Time) error {
-	conn := s.getConn(ctx)
-
-	// Update subscription to set timeout and activity ID
-	_, err := conn.ExecContext(ctx, `
-		UPDATE channel_subscriptions
-		SET timeout_at = $1, activity_id = $2
-		WHERE instance_id = $3 AND channel = $4
-	`, timeoutAt, activityID, instanceID, channelName)
-	if err != nil {
+// RegisterChannelReceive atomically registers a channel receive wait and releases the lock.
+func (s *PostgresStorage) RegisterChannelReceive(ctx context.Context, instanceID, channelName, activityID string, timeoutAt *time.Time) error {
+	return (fenceStore{s}).withFence(ctx, contextFence(ctx, instanceID), func(conn Executor) error {
+		var timeout any
+		if timeoutAt != nil {
+			timeout = timeoutAt.UTC().Format(time.RFC3339Nano)
+		}
+		_, err := conn.ExecContext(ctx, `UPDATE channel_subscriptions SET timeout_at=$1, activity_id=$2 WHERE instance_id=$3 AND channel=$4`, timeout, activityID, instanceID, channelName)
 		return err
-	}
-
-	// Update instance status
-	_, err = conn.ExecContext(ctx, `
-		UPDATE workflow_instances
-		SET status = $1, updated_at = NOW()
-		WHERE instance_id = $2
-	`, StatusWaitingForMessage, instanceID)
-	if err != nil {
-		return err
-	}
-
-	// Release lock
-	_, err = conn.ExecContext(ctx, `
-		UPDATE workflow_instances
-		SET locked_by = NULL, locked_at = NULL, lock_expires_at = NULL, updated_at = NOW()
-		WHERE instance_id = $1 AND locked_by = $2
-	`, instanceID, workerID)
-	return err
+	})
 }
 
 // GetPendingChannelMessagesForInstance gets pending messages for a specific subscriber.
@@ -1007,13 +752,14 @@ func (s *PostgresStorage) GetPendingChannelMessagesForInstance(ctx context.Conte
 
 // UpdateDeliveryCursor updates the delivery cursor for broadcast mode.
 func (s *PostgresStorage) UpdateDeliveryCursor(ctx context.Context, instanceID, channelName string, lastMessageID int64) error {
-	conn := s.getConn(ctx)
-	_, err := conn.ExecContext(ctx, `
+	return (fenceStore{s}).withFence(ctx, contextFence(ctx, instanceID), func(conn Executor) error {
+		_, err := conn.ExecContext(ctx, `
 		INSERT INTO channel_delivery_cursors (instance_id, channel, last_delivered_id)
 		VALUES ($1, $2, $3)
 		ON CONFLICT (instance_id, channel) DO UPDATE SET last_delivered_id = EXCLUDED.last_delivered_id, updated_at = NOW()
 	`, instanceID, channelName, lastMessageID)
-	return err
+		return err
+	})
 }
 
 // GetChannelSubscribersWaiting finds subscribers waiting for messages on a channel.
@@ -1050,141 +796,14 @@ func (s *PostgresStorage) GetChannelSubscribersWaiting(ctx context.Context, chan
 
 // ClearChannelWaitingState clears the waiting state for an instance's channel subscription.
 func (s *PostgresStorage) ClearChannelWaitingState(ctx context.Context, instanceID, channelName string) error {
-	conn := s.getConn(ctx)
-	_, err := conn.ExecContext(ctx, `
+	return (fenceStore{s}).withFence(ctx, contextFence(ctx, instanceID), func(conn Executor) error {
+		_, err := conn.ExecContext(ctx, `
 		UPDATE channel_subscriptions
 		SET activity_id = NULL, timeout_at = NULL
 		WHERE instance_id = $1 AND channel = $2
 	`, instanceID, channelName)
-	return err
-}
-
-// DeliverChannelMessageWithLock delivers a message using Lock-First pattern.
-// Returns nil result if lock could not be acquired (another worker will handle it).
-func (s *PostgresStorage) DeliverChannelMessageWithLock(
-	ctx context.Context,
-	instanceID string,
-	channelName string,
-	message *ChannelMessage,
-	workerID string,
-	lockTimeoutSec int,
-) (*ChannelDeliveryResult, error) {
-	conn := s.getConn(ctx)
-
-	// Step 1: Try to acquire lock (Lock-First pattern)
-	acquired, err := s.TryAcquireLock(ctx, instanceID, workerID, lockTimeoutSec)
-	if err != nil {
-		return nil, err
-	}
-	if !acquired {
-		// Another worker has the lock, skip this delivery
-		return nil, nil
-	}
-
-	// Step 2: Get workflow info and subscription activity ID
-	var workflowName string
-	err = conn.QueryRowContext(ctx, `
-		SELECT workflow_name FROM workflow_instances WHERE instance_id = $1
-	`, instanceID).Scan(&workflowName)
-	if err != nil {
-		_ = s.ReleaseLock(ctx, instanceID, workerID)
-		return nil, fmt.Errorf("failed to get workflow info: %w", err)
-	}
-
-	// Get the activity ID and mode from the event subscription.
-	var historyActivityID, subscriptionMode string
-	err = conn.QueryRowContext(ctx, `
-		SELECT COALESCE(activity_id, ''), mode FROM channel_subscriptions
-		WHERE instance_id = $1 AND channel = $2
-	`, instanceID, channelName).Scan(&historyActivityID, &subscriptionMode)
-	if err != nil {
-		_ = s.ReleaseLock(ctx, instanceID, workerID)
-		return nil, fmt.Errorf("failed to get subscription info: %w", err)
-	}
-	// Fallback to legacy format if no activity ID stored
-	if historyActivityID == "" {
-		historyActivityID = fmt.Sprintf("channel:%s:%d", channelName, message.ID)
-	}
-
-	// Step 3: Record message in history using the correct activity ID
-	// Wrap the event in the existing history format for WaitEvent replay.
-	wrappedData := map[string]any{
-		"id":           message.ID,
-		"channel_name": channelName,
-		"created_at":   message.PublishedAt,
-	}
-	// The message.Data contains the actual data - unmarshal and re-wrap
-	var msgData any
-	if len(message.Data) > 0 {
-		_ = json.Unmarshal(message.Data, &msgData)
-	}
-	wrappedData["data"] = msgData
-	if len(message.Metadata) > 0 {
-		var metadata map[string]any
-		_ = json.Unmarshal(message.Metadata, &metadata)
-		wrappedData["metadata"] = metadata
-	}
-	wrappedJSON, _ := json.Marshal(wrappedData)
-
-	_, err = s.RecordHistory(ctx, nil, &HistoryEvent{
-		InstanceID: instanceID, ActivityID: historyActivityID, Command: "receive:" + channelName,
-		EventType: HistoryChannelMessageReceived, EventData: wrappedJSON, DataType: "json",
+		return err
 	})
-	if err != nil {
-		_ = s.ReleaseLock(ctx, instanceID, workerID)
-		return nil, fmt.Errorf("failed to record history: %w", err)
-	}
-
-	// Step 3.5: Update delivery cursor for broadcast mode
-	// This prevents duplicate message delivery when workflow resumes
-	if subscriptionMode == string(ChannelModeBroadcast) {
-		_, err = conn.ExecContext(ctx, `
-			INSERT INTO channel_delivery_cursors (instance_id, channel, last_delivered_id)
-			VALUES ($1, $2, $3)
-			ON CONFLICT (instance_id, channel)
-			DO UPDATE SET last_delivered_id = EXCLUDED.last_delivered_id, updated_at = NOW()
-		`, instanceID, channelName, message.ID)
-		if err != nil {
-			_ = s.ReleaseLock(ctx, instanceID, workerID)
-			return nil, fmt.Errorf("failed to update delivery cursor: %w", err)
-		}
-	}
-
-	// Step 4: Clear waiting state
-	if err := s.ClearChannelWaitingState(ctx, instanceID, channelName); err != nil {
-		_ = s.ReleaseLock(ctx, instanceID, workerID)
-		return nil, fmt.Errorf("failed to clear waiting state: %w", err)
-	}
-
-	// Step 5: Update status to 'running'
-	_, err = conn.ExecContext(ctx, `
-		UPDATE workflow_instances SET status = $1, updated_at = NOW()
-		WHERE instance_id = $2
-	`, StatusRunning, instanceID)
-	if err != nil {
-		_ = s.ReleaseLock(ctx, instanceID, workerID)
-		return nil, fmt.Errorf("failed to update status: %w", err)
-	}
-
-	// Step 6: Release lock (workflow will be picked up by resumption task)
-	if err := s.ReleaseLock(ctx, instanceID, workerID); err != nil {
-		return nil, fmt.Errorf("failed to release lock: %w", err)
-	}
-
-	// Send notification that workflow is resumable
-	wfPayload := map[string]string{
-		"instance_id":   instanceID,
-		"workflow_name": workflowName,
-	}
-	if payloadBytes, err := json.Marshal(wfPayload); err == nil {
-		s.sendNotify(ctx, notify.ChannelWorkflowResumable, string(payloadBytes))
-	}
-
-	return &ChannelDeliveryResult{
-		InstanceID:   instanceID,
-		WorkflowName: workflowName,
-		ActivityID:   historyActivityID,
-	}, nil
 }
 
 // CleanupOldChannelMessages removes old channel messages.
@@ -1208,7 +827,7 @@ func (s *PostgresStorage) FindExpiredChannelSubscriptions(ctx context.Context, l
 		FROM channel_subscriptions cs
 		JOIN workflow_instances w ON cs.instance_id = w.instance_id
 		WHERE cs.activity_id IS NOT NULL AND cs.timeout_at IS NOT NULL AND cs.timeout_at < NOW()
-		AND w.framework = 'go'
+
 		ORDER BY cs.timeout_at ASC
 		LIMIT $1
 	`, limit)
@@ -1240,10 +859,10 @@ func (s *PostgresStorage) FindExpiredChannelSubscriptions(ctx context.Context, l
 // ========================================
 
 // TryAcquireSystemLock attempts to acquire a system lock.
-func (s *PostgresStorage) TryAcquireSystemLock(ctx context.Context, lockName, workerID string, timeoutSec int) (bool, error) {
+func (s *PostgresStorage) TryAcquireSystemLock(ctx context.Context, lockName, workerID string, ttl time.Duration) (bool, error) {
 	conn := s.getConn(ctx)
 	now := time.Now().UTC()
-	expiresAt := now.Add(time.Duration(timeoutSec) * time.Second)
+	expiresAt := now.Add(ttl)
 
 	// Try to insert or update if expired or same worker
 	result, err := conn.ExecContext(ctx, `
@@ -1282,4 +901,30 @@ func (s *PostgresStorage) CleanupExpiredSystemLocks(ctx context.Context) error {
 		DELETE FROM system_locks WHERE lock_expires_at < NOW()
 	`)
 	return err
+}
+
+// notifyRunnable publishes only after the mutation's transaction commits. The
+// notification is a hint to all dispatchers; the runnable flag remains durable.
+func (s *PostgresStorage) notifyRunnable(ctx context.Context, instanceID string) {
+	if !s.notifyEnabled {
+		return
+	}
+	send := func() error { s.sendRunnableNotify(ctx, instanceID); return nil }
+	if s.InTransaction(ctx) {
+		_ = s.RegisterPostCommitCallback(ctx, send)
+	} else {
+		_ = send()
+	}
+}
+
+// sendRunnableNotify uses the pool because the mutation has already committed.
+func (s *PostgresStorage) sendRunnableNotify(ctx context.Context, instanceID string) {
+	if !s.notifyEnabled {
+		return
+	}
+	payload, _ := json.Marshal(notify.WorkflowNotification{InstanceID: instanceID})
+	_, err := s.db.ExecContext(ctx, "SELECT pg_notify($1, $2)", string(notify.ChannelWorkflowResumable), string(payload))
+	if err != nil {
+		slog.Debug("failed to notify runnable workflow", "error", err)
+	}
 }

@@ -229,3 +229,9 @@ func nonRetryableApplication(err error) bool {
 	}
 	return false
 }
+
+// ErrLeaseLost means the execution abandoned its expired local lease belief.
+var ErrLeaseLost = replay.ErrLeaseLost
+
+// ErrFenced means another execution owns the instance.
+var ErrFenced = storage.ErrFenced

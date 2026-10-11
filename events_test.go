@@ -83,9 +83,9 @@ func testWorkflowWithWaitEvent(t *testing.T, createApp func(*testing.T, ...Optio
 	if err != nil {
 		t.Fatalf("failed to get instance: %v", err)
 	}
-	// WaitEvent now uses channel system internally, so status is waiting_for_message
-	if instance.Status != storage.StatusWaitingForMessage {
-		t.Errorf("expected status 'waiting_for_message', got '%s'", instance.Status)
+	// Waiting workflows retain the running status.
+	if instance.Status != storage.StatusRunning {
+		t.Errorf("expected status 'running', got '%s'", instance.Status)
 	}
 
 	// Deliver the payment event through the public API.
@@ -188,7 +188,7 @@ func TestWorkflowWithSleep(t *testing.T) {
 	defer cleanup()
 
 	// Sleep duration is generous enough that loaded CI runners can still
-	// observe the waiting_for_timer status before the timer fires.
+	// observe the active workflow before the timer fires.
 	const sleepDuration = 2 * time.Second
 
 	sleepWorkflow := DefineWorkflow[string, string](
@@ -217,10 +217,10 @@ func TestWorkflowWithSleep(t *testing.T) {
 		t.Fatalf("failed to start workflow: %v", err)
 	}
 
-	// Poll until workflow registers the sleep timer.
-	if !waitForStatus(t, ctx, app, instanceID, storage.StatusWaitingForTimer, sleepDuration) {
+	// Poll until the instance is visible as running.
+	if !waitForStatus(t, ctx, app, instanceID, storage.StatusRunning, sleepDuration) {
 		instance, _ := app.GetInstance(ctx, instanceID)
-		t.Fatalf("expected status 'waiting_for_timer', got '%s'", instance.Status)
+		t.Fatalf("expected status 'running', got '%s'", instance.Status)
 	}
 
 	// Poll until workflow completes (timer fires + resumption + commit).

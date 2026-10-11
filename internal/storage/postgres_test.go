@@ -138,7 +138,7 @@ func TestPostgresStorage_UpdateInstanceStatus(t *testing.T) {
 	}
 	store.CreateInstance(ctx, instance)
 
-	if err := store.UpdateInstanceStatus(ctx, "test-status-1", StatusRunning, ""); err != nil {
+	if err := store.UpdateInstanceStatus(fixtureContext(t, store, ctx, "test-status-1"), "test-status-1", StatusRunning, ""); err != nil {
 		t.Fatalf("UpdateInstanceStatus failed: %v", err)
 	}
 
@@ -165,41 +165,41 @@ func TestPostgresStorage_LockOperations(t *testing.T) {
 	store.CreateInstance(ctx, instance)
 
 	// Acquire lock
-	acquired, err := store.TryAcquireLock(ctx, "test-lock-1", "worker-1", 300)
+	f, acquired, err := store.AcquireLease(ctx, "test-lock-1", "worker-1", time.Second)
 	if err != nil {
-		t.Fatalf("TryAcquireLock failed: %v", err)
+		t.Fatalf("AcquireLease failed: %v", err)
 	}
 	if !acquired {
 		t.Error("Expected to acquire lock")
 	}
 
 	// Another worker cannot acquire lock
-	acquired2, err := store.TryAcquireLock(ctx, "test-lock-1", "worker-2", 300)
+	_, acquired2, err := store.AcquireLease(ctx, "test-lock-1", "worker-2", time.Second)
 	if err != nil {
-		t.Fatalf("TryAcquireLock (worker-2) failed: %v", err)
+		t.Fatalf("AcquireLease (worker-2) failed: %v", err)
 	}
 	if acquired2 {
 		t.Error("Worker-2 should not acquire lock")
 	}
 
-	// Same worker can re-acquire (re-entrant)
-	acquired3, err := store.TryAcquireLock(ctx, "test-lock-1", "worker-1", 300)
+	// A live lease cannot be re-entered, even with the same owner.
+	_, acquired3, err := store.AcquireLease(ctx, "test-lock-1", "worker-1", time.Second)
 	if err != nil {
-		t.Fatalf("TryAcquireLock (re-entrant) failed: %v", err)
+		t.Fatalf("AcquireLease (re-entrant) failed: %v", err)
 	}
-	if !acquired3 {
-		t.Error("Same worker should be able to re-acquire lock")
+	if acquired3 {
+		t.Error("Same owner must not re-acquire a live lease")
 	}
 
 	// Release lock
-	if err := store.ReleaseLock(ctx, "test-lock-1", "worker-1"); err != nil {
-		t.Fatalf("ReleaseLock failed: %v", err)
+	if err := store.ReleaseLease(ctx, f, true); err != nil {
+		t.Fatalf("ReleaseLease failed: %v", err)
 	}
 
 	// Now worker-2 can acquire
-	acquired4, err := store.TryAcquireLock(ctx, "test-lock-1", "worker-2", 300)
+	_, acquired4, err := store.AcquireLease(ctx, "test-lock-1", "worker-2", time.Second)
 	if err != nil {
-		t.Fatalf("TryAcquireLock after release failed: %v", err)
+		t.Fatalf("AcquireLease after release failed: %v", err)
 	}
 	if !acquired4 {
 		t.Error("Worker-2 should acquire lock after release")
@@ -232,7 +232,7 @@ func TestPostgresStorage_HistoryOperations(t *testing.T) {
 		DataType:   "json",
 	}
 
-	if _, err := store.RecordHistory(ctx, nil, event); err != nil {
+	if _, err := fixtureRecord(ctx, store, event); err != nil {
 		t.Fatalf("RecordHistory failed: %v", err)
 	}
 
@@ -265,7 +265,7 @@ func TestPostgresStorage_TimerSubscription(t *testing.T) {
 	instance := &WorkflowInstance{
 		InstanceID:   "test-timer-1",
 		WorkflowName: "test_workflow",
-		Status:       StatusWaitingForTimer,
+		Status:       StatusRunning,
 		StartedAt:    now,
 		UpdatedAt:    now,
 	}
@@ -279,7 +279,7 @@ func TestPostgresStorage_TimerSubscription(t *testing.T) {
 		ActivityID: "activity:1",
 	}
 
-	if err := store.RegisterTimerSubscription(ctx, sub); err != nil {
+	if err := store.RegisterTimerSubscription(fixtureContext(t, store, ctx, "test-timer-1"), sub); err != nil {
 		t.Fatalf("RegisterTimerSubscription failed: %v", err)
 	}
 
@@ -294,7 +294,7 @@ func TestPostgresStorage_TimerSubscription(t *testing.T) {
 	}
 
 	// Remove timer
-	if err := store.RemoveTimerSubscription(ctx, "test-timer-1", "timer-1"); err != nil {
+	if err := store.FireTimer(ctx, sub); err != nil {
 		t.Fatalf("RemoveTimerSubscription failed: %v", err)
 	}
 }

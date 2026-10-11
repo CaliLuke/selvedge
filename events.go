@@ -123,8 +123,8 @@ func WithEventTimeout(d time.Duration) WaitEventOption {
 // During replay, if the timer already fired, this returns immediately.
 // Otherwise, it returns a SuspendSignal that signals the engine to:
 // 1. Register a timer subscription
-// 2. Update workflow status to "waiting_for_timer"
-// 3. Release the workflow lock
+// 2. Register the timer under the execution fence
+// 3. Release the lease without changing the runnable flag
 //
 // When the timer expires, the workflow will be resumed.
 func Sleep(ctx *WorkflowContext, duration time.Duration, opts ...SleepOption) error {

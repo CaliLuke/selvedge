@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/CaliLuke/selvedge/hooks"
+	"github.com/CaliLuke/selvedge/internal/replay"
 )
 
 // Option configures an App.
@@ -12,6 +13,7 @@ type Option func(*appConfig)
 
 // appConfig holds the configuration for an App.
 type appConfig struct {
+	lease replay.LeaseConfig
 	// Database
 	databaseURL string
 
@@ -24,8 +26,6 @@ type appConfig struct {
 	notifyReconnectDelay time.Duration // Delay before reconnecting after connection failure
 
 	// Background task intervals
-	staleLockInterval          time.Duration
-	staleLockTimeout           time.Duration
 	timerCheckInterval         time.Duration
 	eventTimeoutInterval       time.Duration
 	messageCheckInterval       time.Duration
@@ -62,11 +62,10 @@ type appConfig struct {
 func defaultConfig() *appConfig {
 	return &appConfig{
 		databaseURL:                "file:selvedge.db",
+		lease:                      replay.DefaultLeaseConfig(),
 		serviceName:                "selvedge-service",
 		useListenNotify:            nil, // auto-detect
 		notifyReconnectDelay:       60 * time.Second,
-		staleLockInterval:          60 * time.Second,
-		staleLockTimeout:           300 * time.Second, // 5 minutes
 		timerCheckInterval:         10 * time.Second,
 		eventTimeoutInterval:       30 * time.Second,
 		messageCheckInterval:       5 * time.Second,
@@ -146,17 +145,10 @@ func WithWorkerID(id string) Option {
 	}
 }
 
-// WithStaleLockInterval sets the interval for stale lock cleanup.
-func WithStaleLockInterval(d time.Duration) Option {
+// WithLease configures execution leases. Start rejects unsafe configurations.
+func WithLease(ttl, renewInterval, margin, maxSkew time.Duration) Option {
 	return func(c *appConfig) {
-		c.staleLockInterval = d
-	}
-}
-
-// WithStaleLockTimeout sets the timeout after which a lock is considered stale.
-func WithStaleLockTimeout(d time.Duration) Option {
-	return func(c *appConfig) {
-		c.staleLockTimeout = d
+		c.lease = replay.LeaseConfig{TTL: ttl, RenewInterval: renewInterval, Margin: margin, MaxSkew: maxSkew}
 	}
 }
 
@@ -210,8 +202,7 @@ func WithChannelMessageRetention(d time.Duration) Option {
 }
 
 // WithWorkflowResumptionInterval sets the interval for the workflow resumption task.
-// This task finds workflows with status='running' that don't have an active lock
-// and resumes them. This is essential for load balancing in multi-worker environments.
+// This task finds runnable workflows and expired leases, then dispatches them. This is essential for load balancing in multi-worker environments.
 // Default: 1 second.
 func WithWorkflowResumptionInterval(d time.Duration) Option {
 	return func(c *appConfig) {

@@ -264,7 +264,7 @@ func TestEngine_StartWorkflow(t *testing.T) {
 				return tt.runnerResult, tt.runnerErr
 			}
 
-			err := engine.StartWorkflow(context.Background(), instance.InstanceID, "test_workflow", nil, runner)
+			err := engine.Run(context.Background(), instance.InstanceID, runner)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -295,12 +295,12 @@ func TestEngine_StartWorkflow_TimerSuspend(t *testing.T) {
 		return nil, NewTimerSuspend(execCtx.InstanceID(), "timer-1", "timer-1", expiresAt)
 	}
 
-	err := engine.StartWorkflow(context.Background(), instance.InstanceID, "test_workflow", nil, runner)
+	err := engine.Run(context.Background(), instance.InstanceID, runner)
 	require.NoError(t, err)
 
 	gotInstance, err := store.GetInstance(context.Background(), instance.InstanceID)
 	require.NoError(t, err)
-	assert.Equal(t, storage.StatusWaitingForTimer, gotInstance.Status)
+	assert.Equal(t, storage.StatusRunning, gotInstance.Status)
 }
 
 func TestEngine_RecordActivityResult(t *testing.T) {

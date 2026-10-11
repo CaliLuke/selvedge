@@ -34,11 +34,11 @@ func testReceiveGoEnvelopeOnly(t *testing.T, factory schemaBackendFactory) {
 			if err := b.store.CreateInstance(ctx, &storage.WorkflowInstance{InstanceID: "receive", WorkflowName: "receiver", Status: storage.StatusRunning, InputData: []byte(`{}`), StartedAt: time.Now(), UpdatedAt: time.Now()}); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := b.store.RecordHistory(ctx, nil, &storage.HistoryEvent{InstanceID: "receive", ActivityID: "receive_messages:1", Command: "receive:messages", EventType: storage.HistoryChannelMessageReceived, DataType: "json", EventData: []byte(tc.envelope)}); err != nil {
+			if _, err := fixtureRecord(ctx, b.store, &storage.HistoryEvent{InstanceID: "receive", ActivityID: "receive_messages:1", Command: "receive:messages", EventType: storage.HistoryChannelMessageReceived, DataType: "json", EventData: []byte(tc.envelope)}); err != nil {
 				t.Fatal(err)
 			}
 			engine := replay.NewEngine(b.store, &hooks.NoOpHooks{}, "worker", errorCodec{})
-			err := engine.ResumeWorkflow(ctx, "receive", func(ec *replay.ExecutionContext) (any, error) {
+			err := engine.Run(ctx, "receive", func(ec *replay.ExecutionContext) (any, error) {
 				msg, err := receiveEvent[string](NewWorkflowContextFromExecution(ec), "messages")
 				if err != nil {
 					return nil, err

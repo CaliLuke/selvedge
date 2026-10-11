@@ -47,9 +47,9 @@ func testHistoryKeyWrittenOnce(t *testing.T, factory replayAppFactory) {
 		s := h.app.storage
 		ctx := h.app.ctx
 		require.NoError(t, s.CreateInstance(ctx, &storage.WorkflowInstance{InstanceID: "writes", WorkflowName: "writes", Status: storage.StatusRunning}))
-		first, err := s.RecordHistory(ctx, nil, &storage.HistoryEvent{InstanceID: "writes", ActivityID: "k", Command: "activity:A", EventType: storage.HistoryActivityCompleted, EventData: []byte(`"first"`), DataType: "json"})
+		first, err := fixtureRecord(ctx, s, &storage.HistoryEvent{InstanceID: "writes", ActivityID: "k", Command: "activity:A", EventType: storage.HistoryActivityCompleted, EventData: []byte(`"first"`), DataType: "json"})
 		require.NoError(t, err)
-		second, err := s.RecordHistory(ctx, nil, &storage.HistoryEvent{InstanceID: "writes", ActivityID: "k", Command: "activity:A", EventType: storage.HistoryActivityFailed, EventData: []byte(`"second"`), DataType: "json"})
+		second, err := fixtureRecord(ctx, s, &storage.HistoryEvent{InstanceID: "writes", ActivityID: "k", Command: "activity:A", EventType: storage.HistoryActivityFailed, EventData: []byte(`"second"`), DataType: "json"})
 		require.NoError(t, err)
 		require.Equal(t, first, second)
 		first, err = s.SetHistoryValueIfNull(ctx, nil, "writes", "timer", "sleep", storage.HistoryTimerExpired, []byte(`true`))
@@ -68,7 +68,7 @@ func testHistoryKeyWrittenOnce(t *testing.T, factory replayAppFactory) {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newTypedReplayHarness(t, factory)
 			a := DefineActivity("A", func(ctx context.Context, _ string) (string, error) {
-				_, err := h.app.storage.RecordHistory(ctx, nil, &storage.HistoryEvent{InstanceID: GetWorkflowContext(ctx).InstanceID(), ActivityID: "k", Command: tc.command, EventType: storage.HistoryActivityCompleted, EventData: []byte(`"other writer"`), DataType: "json"})
+				_, err := fixtureRecord(ctx, h.app.storage, &storage.HistoryEvent{InstanceID: GetWorkflowContext(ctx).InstanceID(), ActivityID: "k", Command: tc.command, EventType: storage.HistoryActivityCompleted, EventData: []byte(`"other writer"`), DataType: "json"})
 				require.NoError(t, err)
 				return "live", nil
 			})
@@ -141,7 +141,7 @@ func testReplayCommandMismatchFailsFast(t *testing.T, factory replayAppFactory) 
 				return "ignored", nil
 			})
 			id := seedErrorWorkflow(t, h, w)
-			original, err := h.app.storage.RecordHistory(h.app.ctx, nil, &storage.HistoryEvent{InstanceID: id, ActivityID: tc.key, Command: tc.command, EventType: storage.HistoryActivityCompleted, EventData: []byte(`"recorded"`), DataType: "json"})
+			original, err := fixtureRecord(h.app.ctx, h.app.storage, &storage.HistoryEvent{InstanceID: id, ActivityID: tc.key, Command: tc.command, EventType: storage.HistoryActivityCompleted, EventData: []byte(`"recorded"`), DataType: "json"})
 			require.NoError(t, err)
 			require.ErrorIs(t, h.RunOnce(id), ErrDeterminismViolation)
 			require.Zero(t, calls)
@@ -171,20 +171,21 @@ func testHistoryWriteClassesStorageConformance(t *testing.T, factory replayAppFa
 	missing, err := s.GetHistoryEvent(ctx, "classes", "missing")
 	require.NoError(t, err)
 	require.Nil(t, missing)
-	first, err := s.ReserveHistory(ctx, nil, "classes", "k", "sleep")
+	f := fixtureFence(t, s, "classes")
+	first, err := s.ReserveHistory(ctx, f, "classes", "k", "sleep")
 	require.NoError(t, err)
 	require.Equal(t, storage.HistoryReserved, first.EventType)
 	require.Nil(t, first.EventData)
 	require.Positive(t, first.ID)
 	require.False(t, first.CreatedAt.IsZero())
-	again, err := s.ReserveHistory(ctx, nil, "classes", "k", "sleep")
+	again, err := s.ReserveHistory(ctx, f, "classes", "k", "sleep")
 	require.NoError(t, err)
 	require.Equal(t, first, again)
-	_, err = s.ReserveHistory(ctx, nil, "classes", "k", "receive:x")
+	_, err = s.ReserveHistory(ctx, f, "classes", "k", "receive:x")
 	require.ErrorIs(t, err, ErrHistoryKeyConflict)
-	_, err = s.RecordHistory(ctx, nil, &storage.HistoryEvent{InstanceID: "classes", ActivityID: "k", Command: "activity:A", EventType: storage.HistoryActivityCompleted, EventData: []byte(`1`), DataType: "json"})
+	_, err = fixtureRecord(ctx, s, &storage.HistoryEvent{InstanceID: "classes", ActivityID: "k", Command: "activity:A", EventType: storage.HistoryActivityCompleted, EventData: []byte(`1`), DataType: "json"})
 	require.ErrorIs(t, err, ErrHistoryKeyConflict)
-	_, err = s.SetHistoryValueIfNull(ctx, nil, "classes", "k", "receive:x", storage.HistoryChannelMessageReceived, []byte(`2`))
+	_, err = s.SetHistoryValueIfNull(ctx, f, "classes", "k", "receive:x", storage.HistoryChannelMessageReceived, []byte(`2`))
 	require.ErrorIs(t, err, ErrHistoryKeyConflict)
 	unchanged, err := s.GetHistoryEvent(ctx, "classes", "k")
 	require.NoError(t, err)
@@ -199,7 +200,7 @@ func testHistoryWriteClassesStorageConformance(t *testing.T, factory replayAppFa
 	require.Equal(t, filled, again, "JSON null is a recorded value, not SQL NULL")
 	tx, err := s.BeginTransaction(ctx)
 	require.NoError(t, err)
-	_, err = s.RecordHistory(tx, nil, &storage.HistoryEvent{InstanceID: "classes", ActivityID: "rollback", Command: "activity:A", EventType: storage.HistoryActivityCompleted, EventData: []byte(`1`), DataType: "json"})
+	_, err = fixtureRecord(tx, s, &storage.HistoryEvent{InstanceID: "classes", ActivityID: "rollback", Command: "activity:A", EventType: storage.HistoryActivityCompleted, EventData: []byte(`1`), DataType: "json"})
 	require.NoError(t, err)
 	require.NoError(t, s.RollbackTransaction(tx))
 	missing, err = s.GetHistoryEvent(ctx, "classes", "rollback")
@@ -287,7 +288,7 @@ func testReservedActivityIDsRejected(t *testing.T, factory replayAppFactory) {
 		require.Equal(t, 1, calls)
 		instance, err := h.app.storage.GetInstance(h.app.ctx, id)
 		require.NoError(t, err)
-		require.Equal(t, storage.StatusWaitingForTimer, instance.Status)
+		require.Equal(t, storage.StatusRunning, instance.Status)
 		row, err := h.app.storage.GetHistoryEvent(h.app.ctx, id, "subscribe_timer:1")
 		require.NoError(t, err)
 		require.NotNil(t, row)
@@ -337,7 +338,7 @@ func testHistoryConcurrentFirstWriterWins(t *testing.T, factory replayAppFactory
 			ctx := h.app.ctx
 			require.NoError(t, s.CreateInstance(ctx, &storage.WorkflowInstance{InstanceID: "race", WorkflowName: "race", Status: storage.StatusRunning}))
 			if fill {
-				_, err := s.ReserveHistory(ctx, nil, "race", "k", "sleep")
+				_, err := s.ReserveHistory(ctx, fixtureFence(t, s, "race"), "race", "k", "sleep")
 				require.NoError(t, err)
 			}
 			type outcome struct {
@@ -355,7 +356,7 @@ func testHistoryConcurrentFirstWriterWins(t *testing.T, factory replayAppFactory
 					if fill {
 						row, err = s.SetHistoryValueIfNull(ctx, nil, "race", "k", "sleep", storage.HistoryTimerExpired, data)
 					} else {
-						row, err = s.RecordHistory(ctx, nil, &storage.HistoryEvent{InstanceID: "race", ActivityID: "k", Command: "activity:A", EventType: storage.HistoryActivityCompleted, EventData: data, DataType: "json"})
+						row, err = fixtureRecord(ctx, s, &storage.HistoryEvent{InstanceID: "race", ActivityID: "k", Command: "activity:A", EventType: storage.HistoryActivityCompleted, EventData: data, DataType: "json"})
 					}
 					results <- outcome{row, err}
 				}()
@@ -416,7 +417,7 @@ func testSleepReservationReplaysUntilFilled(t *testing.T, factory replayAppFacto
 	require.NoError(t, h.RunOnce(id))
 	inst, err := h.app.storage.GetInstance(h.app.ctx, id)
 	require.NoError(t, err)
-	require.Equal(t, storage.StatusWaitingForTimer, inst.Status)
+	require.Equal(t, storage.StatusRunning, inst.Status)
 	h.forceFire(t, id)
 	require.NoError(t, h.RunOnce(id))
 	result, err := GetWorkflowResult[string](h.app.ctx, h.app, id)

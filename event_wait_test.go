@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/CaliLuke/selvedge/internal/storage"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -39,14 +41,14 @@ func TestWithReceiveTimeout(t *testing.T) {
 	}
 }
 
-func TestSubscribe_ReplayCacheHit(t *testing.T) {
+func TestSubscribe_ReleasedExecutionIsFenced(t *testing.T) {
 	historyCache := map[string]any{
 		"subscribe_test-channel:1": true,
 	}
 	wfCtx := workflowContextWithRecordedHistory(t, historyCache)
 
 	err := subscribeEvent(wfCtx, "test-channel")
-	require.NoError(t, err)
+	require.ErrorIs(t, err, storage.ErrFenced)
 }
 
 func TestSubscribe_NoStorage(t *testing.T) {

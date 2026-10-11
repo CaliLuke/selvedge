@@ -14,6 +14,10 @@ CREATE INDEX IF NOT EXISTS idx_definitions_hash ON workflow_definitions(source_h
 
 -- Workflow instances with distributed locking support
 CREATE TABLE IF NOT EXISTS workflow_instances (
+    lease_owner TEXT NULL,
+    lease_epoch BIGINT NOT NULL DEFAULT 0,
+    lease_expires_ms BIGINT NULL,
+    runnable BOOLEAN NOT NULL DEFAULT FALSE,
     instance_id TEXT PRIMARY KEY,
     workflow_name TEXT NOT NULL,
     source_hash TEXT NOT NULL,
@@ -26,12 +30,8 @@ CREATE TABLE IF NOT EXISTS workflow_instances (
     updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
     input_data TEXT NOT NULL,
     output_data TEXT,
-    locked_by TEXT,
-    locked_at TIMESTAMP,
-    lock_timeout_seconds INTEGER,
-    lock_expires_at TIMESTAMP,
     CONSTRAINT valid_status CHECK (
-        status IN ('running', 'completed', 'failed', 'waiting_for_event', 'waiting_for_timer', 'waiting_for_message', 'cancelled')
+        status IN ('running', 'completed', 'failed', 'cancelled')
     ),
     FOREIGN KEY (continued_from) REFERENCES workflow_instances(instance_id),
     FOREIGN KEY (workflow_name, source_hash) REFERENCES workflow_definitions(workflow_name, source_hash)
@@ -41,12 +41,9 @@ CREATE INDEX IF NOT EXISTS idx_instances_status ON workflow_instances(status);
 CREATE INDEX IF NOT EXISTS idx_instances_workflow ON workflow_instances(workflow_name);
 CREATE INDEX IF NOT EXISTS idx_instances_owner ON workflow_instances(owner_service);
 CREATE INDEX IF NOT EXISTS idx_instances_framework ON workflow_instances(framework);
-CREATE INDEX IF NOT EXISTS idx_instances_locked ON workflow_instances(locked_by, locked_at);
-CREATE INDEX IF NOT EXISTS idx_instances_lock_expires ON workflow_instances(lock_expires_at);
 CREATE INDEX IF NOT EXISTS idx_instances_updated ON workflow_instances(updated_at);
 CREATE INDEX IF NOT EXISTS idx_instances_hash ON workflow_instances(source_hash);
 CREATE INDEX IF NOT EXISTS idx_instances_continued_from ON workflow_instances(continued_from);
-CREATE INDEX IF NOT EXISTS idx_instances_resumable ON workflow_instances(status, locked_by);
 
 -- Workflow execution history (for deterministic replay)
 CREATE TABLE IF NOT EXISTS workflow_history (
@@ -155,6 +152,8 @@ CREATE TABLE IF NOT EXISTS system_locks (
 
 CREATE INDEX IF NOT EXISTS idx_system_locks_expires ON system_locks(lock_expires_at);
 
+CREATE INDEX IF NOT EXISTS idx_instances_dispatch ON workflow_instances(status, runnable, lease_expires_ms);
+
 -- migrate:down
 
 DROP INDEX IF EXISTS idx_channel_message_claims_instance;
@@ -183,7 +182,7 @@ DROP TABLE IF EXISTS workflow_history;
 DROP INDEX IF EXISTS idx_instances_continued_from;
 DROP INDEX IF EXISTS idx_instances_hash;
 DROP INDEX IF EXISTS idx_instances_updated;
-DROP INDEX IF EXISTS idx_instances_locked;
+DROP INDEX IF EXISTS idx_instances_dispatch;
 DROP INDEX IF EXISTS idx_instances_framework;
 DROP INDEX IF EXISTS idx_instances_owner;
 DROP INDEX IF EXISTS idx_instances_workflow;

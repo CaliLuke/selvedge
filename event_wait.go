@@ -136,13 +136,6 @@ func receiveEvent[T any](ctx *WorkflowContext, channelName string, opts ...recei
 		// Message is already available - process it immediately
 		msg := pendingMessages[0]
 
-		// Update cursor for broadcast mode
-		if sub.Mode == storage.ChannelModeBroadcast {
-			if err := s.UpdateDeliveryCursor(ctx.Context(), ctx.InstanceID(), channelName, msg.ID); err != nil {
-				return nil, fmt.Errorf("failed to update cursor: %w", err)
-			}
-		}
-
 		// Deserialize the message
 		var data T
 		if err := json.Unmarshal(msg.Data, &data); err != nil {
@@ -165,7 +158,14 @@ func receiveEvent[T any](ctx *WorkflowContext, channelName string, opts ...recei
 		}
 
 		// Record to history for replay (synchronous message processing)
-		stored, err := ctx.recordActivityResult(activityID, result, nil)
+		payload, err := json.Marshal(result)
+		if err != nil {
+			return nil, err
+		}
+		stored, err := s.ConsumeChannelMessage(ctx.Context(), ctx.execCtx.Fence(), channelName, msg.ID, &storage.HistoryEvent{InstanceID: ctx.InstanceID(), ActivityID: activityID, Command: "receive:" + channelName, EventType: storage.HistoryChannelMessageReceived, EventData: payload, DataType: "json"})
+		if err != nil {
+			ctx.execCtx.Fail(err)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("failed to record activity result: %w", err)
 		}

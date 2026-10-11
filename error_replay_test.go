@@ -318,6 +318,6 @@ func testLiveCorruptFailureFailsRunEvenWhenCaught(t *testing.T, factory replayAp
 	instance, getErr := h.app.storage.GetInstance(h.app.ctx, id)
 	require.NoError(t, getErr)
 	require.Equal(t, storage.StatusFailed, instance.Status)
-	require.ErrorAs(t, h.RunOnce(id), &decodeErr)
+	require.NoError(t, h.RunOnce(id)) // A terminal instance is not dispatched again.
 	require.Equal(t, 1, calls)
 }

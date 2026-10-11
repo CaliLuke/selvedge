@@ -9,13 +9,10 @@ import (
 type WorkflowStatus string
 
 const (
-	StatusRunning           WorkflowStatus = "running"
-	StatusCompleted         WorkflowStatus = "completed"
-	StatusFailed            WorkflowStatus = "failed"
-	StatusCancelled         WorkflowStatus = "cancelled"
-	StatusWaitingForEvent   WorkflowStatus = "waiting_for_event"
-	StatusWaitingForTimer   WorkflowStatus = "waiting_for_timer"
-	StatusWaitingForMessage WorkflowStatus = "waiting_for_message"
+	StatusRunning   WorkflowStatus = "running"
+	StatusCompleted WorkflowStatus = "completed"
+	StatusFailed    WorkflowStatus = "failed"
+	StatusCancelled WorkflowStatus = "cancelled"
 )
 
 // WorkflowInstance represents a single execution of a workflow.
@@ -29,12 +26,13 @@ type WorkflowInstance struct {
 	CurrentActivityID string         `json:"current_activity_id"` // Last executed activity ID
 	SourceHash        string         `json:"source_hash"`         // Source code hash
 	OwnerService      string         `json:"owner_service"`       // Service that owns this workflow
-	LockedBy          string         `json:"locked_by"`           // Worker ID holding the lock
-	LockedAt          *time.Time     `json:"locked_at"`           // When the lock was acquired
-	LockTimeoutSec    *int           `json:"lock_timeout_seconds"`
-	LockExpiresAt     *time.Time     `json:"lock_expires_at"`
-	StartedAt         time.Time      `json:"started_at"` // When the workflow was created
-	UpdatedAt         time.Time      `json:"updated_at"`
+	LeaseOwner        string         `json:"lease_owner"`
+	LeaseEpoch        int64          `json:"lease_epoch"`
+	LeaseExpiresMS    *int64         `json:"lease_expires_ms"`
+	Runnable          bool           `json:"runnable"`
+
+	StartedAt time.Time `json:"started_at"` // When the workflow was created
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // HistoryEventType represents the type of history event.
@@ -85,19 +83,6 @@ type TimerSubscription struct {
 	ExpiresAt  time.Time `json:"expires_at"`
 	ActivityID string    `json:"activity_id"` // Activity ID for replay matching
 	CreatedAt  time.Time `json:"created_at"`
-}
-
-// StaleWorkflowInfo contains information about a workflow with a stale lock.
-type StaleWorkflowInfo struct {
-	InstanceID   string
-	WorkflowName string
-}
-
-// ResumableWorkflow contains information about a workflow ready to be resumed.
-// These are workflows with status='running' that don't have an active lock.
-type ResumableWorkflow struct {
-	InstanceID   string
-	WorkflowName string
 }
 
 // ========================================

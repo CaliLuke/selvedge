@@ -22,8 +22,6 @@ func TestDefaultConfig(t *testing.T) {
 	// Feature defaults
 
 	// Background task interval defaults
-	assert.Equal(t, 60*time.Second, cfg.staleLockInterval)
-	assert.Equal(t, 300*time.Second, cfg.staleLockTimeout)
 	assert.Equal(t, 10*time.Second, cfg.timerCheckInterval)
 	assert.Equal(t, 30*time.Second, cfg.eventTimeoutInterval)
 	assert.Equal(t, 5*time.Second, cfg.messageCheckInterval)
@@ -140,62 +138,6 @@ func TestWithWorkerID(t *testing.T) {
 			cfg := defaultConfig()
 			WithWorkerID(tt.workerID)(cfg)
 			assert.Equal(t, tt.workerID, cfg.workerID)
-		})
-	}
-}
-
-func TestWithStaleLockInterval(t *testing.T) {
-	tests := []struct {
-		name     string
-		interval time.Duration
-	}{
-		{
-			name:     "30 seconds",
-			interval: 30 * time.Second,
-		},
-		{
-			name:     "1 minute",
-			interval: 1 * time.Minute,
-		},
-		{
-			name:     "5 minutes",
-			interval: 5 * time.Minute,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := defaultConfig()
-			WithStaleLockInterval(tt.interval)(cfg)
-			assert.Equal(t, tt.interval, cfg.staleLockInterval)
-		})
-	}
-}
-
-func TestWithStaleLockTimeout(t *testing.T) {
-	tests := []struct {
-		name    string
-		timeout time.Duration
-	}{
-		{
-			name:    "1 minute",
-			timeout: 1 * time.Minute,
-		},
-		{
-			name:    "5 minutes",
-			timeout: 5 * time.Minute,
-		},
-		{
-			name:    "10 minutes",
-			timeout: 10 * time.Minute,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := defaultConfig()
-			WithStaleLockTimeout(tt.timeout)(cfg)
-			assert.Equal(t, tt.timeout, cfg.staleLockTimeout)
 		})
 	}
 }
@@ -574,14 +516,10 @@ func TestOptionChaining(t *testing.T) {
 		{
 			name: "timing configuration",
 			options: []Option{
-				WithStaleLockInterval(2 * time.Minute),
-				WithStaleLockTimeout(10 * time.Minute),
 				WithTimerCheckInterval(5 * time.Second),
 				WithEventTimeoutInterval(1 * time.Minute),
 			},
 			check: func(t *testing.T, cfg *appConfig) {
-				assert.Equal(t, 2*time.Minute, cfg.staleLockInterval)
-				assert.Equal(t, 10*time.Minute, cfg.staleLockTimeout)
 				assert.Equal(t, 5*time.Second, cfg.timerCheckInterval)
 				assert.Equal(t, 1*time.Minute, cfg.eventTimeoutInterval)
 			},

@@ -4,6 +4,7 @@ import "fmt"
 
 // Driver abstracts database-specific SQL operations.
 type Driver interface {
+	NowMillisExpr() string
 	// DriverName returns the driver name (e.g., "sqlite", "postgres")
 	DriverName() string
 
@@ -154,4 +155,30 @@ func NewDriver(dbURL string) Driver {
 	}
 	// Default to SQLite
 	return &SQLiteDriver{}
+}
+
+// NowMillisExpr returns SQL for the store clock in Unix milliseconds.
+func (d *SQLiteDriver) NowMillisExpr() string { return "CAST(unixepoch('subsec')*1000 AS INTEGER)" }
+
+// NowMillisExpr returns SQL for the store clock in Unix milliseconds.
+func (d *PostgresDriver) NowMillisExpr() string {
+	return "(EXTRACT(EPOCH FROM clock_timestamp())*1000)::BIGINT"
+}
+
+type testClockDriver struct{ Driver }
+
+// NowMillisExpr reads the deterministic clock table installed by the test harness.
+func (d testClockDriver) NowMillisExpr() string { return "(SELECT now_ms FROM selvedge_test_clock)" }
+
+// WithTestStoreClock selects a clock table created by the test harness.
+// Apply only before concurrent access. Production schemas never create the table.
+func WithTestStoreClock() func(Storage) {
+	return func(s Storage) {
+		switch s := s.(type) {
+		case *SQLiteStorage:
+			s.driver = testClockDriver{s.driver}
+		case *PostgresStorage:
+			s.driver = testClockDriver{s.driver}
+		}
+	}
 }

@@ -68,7 +68,7 @@ func TestSQLiteStorage(t *testing.T) {
 	})
 
 	t.Run("UpdateInstanceStatus", func(t *testing.T) {
-		err := storage.UpdateInstanceStatus(ctx, "test-instance-1", StatusRunning, "")
+		err := storage.UpdateInstanceStatus(fixtureContext(t, storage, ctx, "test-instance-1"), "test-instance-1", StatusRunning, "")
 		if err != nil {
 			t.Fatalf("failed to update status: %v", err)
 		}
@@ -83,8 +83,8 @@ func TestSQLiteStorage(t *testing.T) {
 		}
 	})
 
-	t.Run("TryAcquireLock", func(t *testing.T) {
-		acquired, err := storage.TryAcquireLock(ctx, "test-instance-1", "worker-1", 300)
+	t.Run("AcquireLease", func(t *testing.T) {
+		f, acquired, err := storage.AcquireLease(ctx, "test-instance-1", "worker-1", time.Second)
 		if err != nil {
 			t.Fatalf("failed to acquire lock: %v", err)
 		}
@@ -93,7 +93,7 @@ func TestSQLiteStorage(t *testing.T) {
 		}
 
 		// Try to acquire the same lock with a different worker
-		acquired2, err := storage.TryAcquireLock(ctx, "test-instance-1", "worker-2", 300)
+		_, acquired2, err := storage.AcquireLease(ctx, "test-instance-1", "worker-2", time.Second)
 		if err != nil {
 			t.Fatalf("failed to try acquire lock: %v", err)
 		}
@@ -102,19 +102,21 @@ func TestSQLiteStorage(t *testing.T) {
 		}
 
 		// Release the lock
-		err = storage.ReleaseLock(ctx, "test-instance-1", "worker-1")
+		err = storage.ReleaseLease(ctx, f, true)
 		if err != nil {
 			t.Fatalf("failed to release lock: %v", err)
 		}
 
 		// Now worker-2 should be able to acquire
-		acquired3, err := storage.TryAcquireLock(ctx, "test-instance-1", "worker-2", 300)
+		f2, acquired3, err := storage.AcquireLease(ctx, "test-instance-1", "worker-2", time.Second)
 		if err != nil {
 			t.Fatalf("failed to acquire lock: %v", err)
 		}
 		if !acquired3 {
 			t.Error("expected to acquire released lock")
 		}
+		_ = storage.ReleaseLease(ctx, f2, true)
+		_ = storage.ReleaseLease(ctx, f2, true)
 	})
 
 	t.Run("AppendAndGetHistory", func(t *testing.T) {
@@ -125,7 +127,7 @@ func TestSQLiteStorage(t *testing.T) {
 			EventData:  []byte(`{"result":"success"}`),
 			DataType:   "json",
 		}
-		_, err := storage.RecordHistory(ctx, nil, historyEvent)
+		_, err := fixtureRecord(ctx, storage, historyEvent)
 		if err != nil {
 			t.Fatalf("failed to append history: %v", err)
 		}
@@ -159,7 +161,7 @@ func TestSQLiteStorage(t *testing.T) {
 			ExpiresAt:  expiresAt,
 			ActivityID: "timer:1",
 		}
-		err := storage.RegisterTimerSubscription(ctx, timer)
+		err := storage.RegisterTimerSubscription(fixtureContext(t, storage, ctx, "test-instance-1"), timer)
 		if err != nil {
 			t.Fatalf("failed to register timer subscription: %v", err)
 		}
@@ -306,13 +308,12 @@ func TestSQLiteStorage(t *testing.T) {
 		}
 	})
 
-	t.Run("DeliverChannelMessageWithLock_BroadcastNoDuplicate", func(t *testing.T) {
+	t.Run("ConsumeChannelMessage_BroadcastNoDuplicate", func(t *testing.T) {
 		// This test verifies that broadcast mode delivery updates the cursor
 		// to prevent duplicate message delivery when workflow resumes.
 
 		instanceID := "test-broadcast-dedup"
 		channelName := "test-broadcast-channel"
-		workerID := "worker-broadcast"
 
 		// 1. Create workflow instance
 		instance := &WorkflowInstance{
@@ -327,27 +328,16 @@ func TestSQLiteStorage(t *testing.T) {
 			t.Fatalf("failed to create instance: %v", err)
 		}
 
+		f := fixtureFence(t, storage, instanceID)
+		ctx := ContextWithFence(ctx, *f)
 		// 2. Subscribe to channel in broadcast mode
 		if err := storage.SubscribeToChannel(ctx, instanceID, channelName, ChannelModeBroadcast); err != nil {
 			t.Fatalf("failed to subscribe to channel: %v", err)
 		}
 
-		// 3. Acquire lock and set waiting state (simulates workflow calling Receive)
-		acquired, err := storage.TryAcquireLock(ctx, instanceID, workerID, 300)
-		if err != nil {
-			t.Fatalf("failed to acquire lock: %v", err)
-		}
-		if !acquired {
-			t.Fatal("expected to acquire lock")
-		}
-
-		if err := storage.RegisterChannelReceiveAndReleaseLock(ctx, instanceID, channelName, workerID, "receive:1", nil); err != nil {
-			t.Fatalf("failed to register channel receive: %v", err)
-		}
-
 		// 4. Publish a message to the channel
 		data := []byte(`{"content": "test broadcast message"}`)
-		_, err = storage.PublishToChannel(ctx, channelName, data, nil)
+		_, err := storage.PublishToChannel(ctx, channelName, data, nil)
 		if err != nil {
 			t.Fatalf("failed to publish message: %v", err)
 		}
@@ -362,7 +352,7 @@ func TestSQLiteStorage(t *testing.T) {
 		}
 
 		// 6. Deliver the message (this is what DeliverChannelMessageWithLock does)
-		result, err := storage.DeliverChannelMessageWithLock(ctx, instanceID, channelName, messages[0], workerID, 300)
+		result, err := storage.ConsumeChannelMessage(ctx, f, channelName, messages[0].ID, &HistoryEvent{InstanceID: instanceID, ActivityID: "receive:1", Command: "receive:" + channelName, EventType: HistoryChannelMessageReceived, EventData: messages[0].Data, DataType: "json"})
 		if err != nil {
 			t.Fatalf("failed to deliver message: %v", err)
 		}
@@ -520,7 +510,7 @@ func TestSQLiteStorage_InputFilters(t *testing.T) {
 
 	t.Run("combined with status filter", func(t *testing.T) {
 		// Update one instance to completed (filter-test-1 is gold)
-		if err := storage.UpdateInstanceStatus(ctx, "filter-test-1", StatusCompleted, ""); err != nil {
+		if err := storage.UpdateInstanceStatus(fixtureContext(t, storage, ctx, "filter-test-1"), "filter-test-1", StatusCompleted, ""); err != nil {
 			t.Fatalf("failed to update status: %v", err)
 		}
 

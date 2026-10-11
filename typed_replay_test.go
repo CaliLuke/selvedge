@@ -20,7 +20,8 @@ type replayAppFactory func(*testing.T, ...Option) (*App, func())
 // typedReplayHarness drives dispatch and timer delivery without background loops.
 // It uses the existing backend factories without changing the shared schema helpers.
 type typedReplayHarness struct {
-	app *App
+	app        *App
+	storeClock bool
 }
 
 func newTypedReplayHarness(t *testing.T, factory replayAppFactory, opts ...Option) *typedReplayHarness {
@@ -44,9 +45,7 @@ func (h *typedReplayHarness) RunOnce(instanceID string) error {
 
 func (h *typedReplayHarness) forceFire(t *testing.T, instanceID string) {
 	t.Helper()
-	require.NoError(t, h.app.storage.RemoveTimerSubscription(h.app.ctx, instanceID, "pause"))
-	_, err := h.app.storage.SetHistoryValueIfNull(h.app.ctx, nil, instanceID, "pause", "sleep", storage.HistoryTimerExpired, []byte(`true`))
-	require.NoError(t, err)
+	require.NoError(t, h.app.storage.FireTimer(h.app.ctx, &storage.TimerSubscription{InstanceID: instanceID, TimerID: "pause"}))
 }
 
 func addTypedReplayWorkflow[O any](t *testing.T, h *typedReplayHarness, activity *Activity[string, O], values *[]O) string {
@@ -214,7 +213,7 @@ func workflowContextWithRecordedHistory(t *testing.T, history map[string]any) *W
 		require.NoError(t, err)
 	}
 	var wfCtx *WorkflowContext
-	require.NoError(t, h.app.engine.ResumeWorkflow(h.app.ctx, instanceID, func(ec *replay.ExecutionContext) (any, error) {
+	require.NoError(t, h.app.engine.Run(h.app.ctx, instanceID, func(ec *replay.ExecutionContext) (any, error) {
 		wfCtx = NewWorkflowContextFromExecution(ec)
 		return nil, nil
 	}))
@@ -262,13 +261,13 @@ func testLiveDecodeErrorFailsRunEvenWhenCaught(t *testing.T, factory replayAppFa
 	require.Equal(t, storage.StatusFailed, instance.Status)
 	// The success row must remain durable even when decoding on first execution fails.
 	err = h.RunOnce(instanceID)
-	require.ErrorAs(t, err, &decodeErr)
+	require.NoError(t, err) // Terminal instances are no longer dispatched.
 	require.Equal(t, 1, calls)
 }
 
 func requireRecordedHistory(t *testing.T, s storage.Storage, ctx context.Context, event *storage.HistoryEvent) {
 	t.Helper()
-	_, err := s.RecordHistory(ctx, nil, event)
+	_, err := fixtureRecord(ctx, s, event)
 	require.NoError(t, err)
 }
 

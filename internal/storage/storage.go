@@ -39,8 +39,8 @@ type Storage interface {
 	// Workflow Instance Operations
 	InstanceManager
 
-	// Locking Operations
-	LockManager
+	// Lease operations
+	LeaseManager
 
 	// History Operations
 	HistoryManager
@@ -105,13 +105,6 @@ type InstanceManager interface {
 	// ListInstances lists workflow instances with optional filtering and pagination.
 	// Returns PaginationResult with cursor-based pagination.
 	ListInstances(ctx context.Context, opts ListInstancesOptions) (*PaginationResult, error)
-
-	// FindResumableWorkflows finds workflows that are ready to be resumed.
-	// Returns workflows with status='running' that don't have an active lock.
-	// These are typically workflows that had a message delivered and are waiting
-	// for a worker to pick them up and resume execution.
-	// limit specifies the maximum number of workflows to return (0 = default 100).
-	FindResumableWorkflows(ctx context.Context, limit int) ([]*ResumableWorkflow, error)
 }
 
 // ListInstancesOptions defines options for listing instances.
@@ -136,24 +129,7 @@ type ListInstancesOptions struct {
 	Offset int
 }
 
-// LockManager handles distributed locking operations.
-type LockManager interface {
-	// TryAcquireLock attempts to acquire a lock on a workflow instance.
-	// Returns true if the lock was acquired, false if already locked.
-	TryAcquireLock(ctx context.Context, instanceID, workerID string, timeoutSec int) (bool, error)
-
-	// ReleaseLock releases the lock on a workflow instance.
-	ReleaseLock(ctx context.Context, instanceID, workerID string) error
-
-	// RefreshLock extends the lock timeout.
-	RefreshLock(ctx context.Context, instanceID, workerID string, timeoutSec int) error
-
-	// CleanupStaleLocks releases locks that have expired and returns
-	// information about running workflows that need to be resumed.
-	CleanupStaleLocks(ctx context.Context, timeoutSec int) ([]StaleWorkflowInfo, error)
-}
-
-// Fence identifies an execution lease. S3 accepts and ignores it; S4 enforces it.
+// Fence identifies one execution lease.
 type Fence struct {
 	InstanceID, Owner string
 	Epoch             int64
@@ -184,16 +160,10 @@ type HistoryManager interface {
 
 // TimerSubscriptionManager handles timer subscriptions.
 type TimerSubscriptionManager interface {
+	// FireTimer atomically records a timer result, wakes its instance, and removes the subscription.
+	FireTimer(context.Context, *TimerSubscription) error
 	// RegisterTimerSubscription registers a workflow to wait for a timer.
 	RegisterTimerSubscription(ctx context.Context, sub *TimerSubscription) error
-
-	// RegisterTimerSubscriptionAndReleaseLock atomically registers a timer
-	// and releases the workflow lock.
-	RegisterTimerSubscriptionAndReleaseLock(
-		ctx context.Context,
-		sub *TimerSubscription,
-		instanceID, workerID string,
-	) error
 
 	// FindExpiredTimers finds timers that have expired.
 	// limit specifies the maximum number of timers to return (0 = default 100).
@@ -209,6 +179,8 @@ type TimerSubscriptionManager interface {
 
 // ChannelManager handles channel-based messaging operations.
 type ChannelManager interface {
+	// ConsumeChannelMessage records a fenced observation and advances its cursor atomically.
+	ConsumeChannelMessage(context.Context, *Fence, string, int64, *HistoryEvent) (*HistoryEvent, error)
 	// PublishToChannel publishes a message to a channel.
 	PublishToChannel(ctx context.Context, channelName string, dataJSON []byte, metadata []byte) (int64, error)
 
@@ -222,11 +194,10 @@ type ChannelManager interface {
 	// Returns empty string if no subscriptions exist.
 	GetChannelMode(ctx context.Context, channelName string) (ChannelMode, error)
 
-	// RegisterChannelReceiveAndReleaseLock atomically registers a channel receive wait
-	// and releases the workflow lock.
-	RegisterChannelReceiveAndReleaseLock(
+	// RegisterChannelReceive records a fenced wait before the separate lease release.
+	RegisterChannelReceive(
 		ctx context.Context,
-		instanceID, channelName, workerID, activityID string,
+		instanceID, channelName, activityID string,
 		timeoutAt *time.Time,
 	) error
 
@@ -242,23 +213,6 @@ type ChannelManager interface {
 
 	// ClearChannelWaitingState clears the waiting state for an instance's channel subscription.
 	ClearChannelWaitingState(ctx context.Context, instanceID, channelName string) error
-
-	// DeliverChannelMessageWithLock delivers a message using Lock-First pattern.
-	// This is used for load balancing in multi-worker environments:
-	// 1. Try to acquire lock on the target instance
-	// 2. If lock fails, return (nil, nil) - another worker will handle it
-	// 3. Record message in history
-	// 4. Update status to 'running'
-	// 5. Release lock
-	// Returns the delivery info if successful, nil if lock was not acquired.
-	DeliverChannelMessageWithLock(
-		ctx context.Context,
-		instanceID string,
-		channelName string,
-		message *ChannelMessage,
-		workerID string,
-		lockTimeoutSec int,
-	) (*ChannelDeliveryResult, error)
 
 	// CleanupOldChannelMessages removes old channel messages.
 	CleanupOldChannelMessages(ctx context.Context, olderThan time.Duration) error
@@ -276,7 +230,7 @@ type ChannelManager interface {
 type SystemLockManager interface {
 	// TryAcquireSystemLock attempts to acquire a system lock.
 	// Returns true if the lock was acquired.
-	TryAcquireSystemLock(ctx context.Context, lockName, workerID string, timeoutSec int) (bool, error)
+	TryAcquireSystemLock(ctx context.Context, lockName, workerID string, ttl time.Duration) (bool, error)
 
 	// ReleaseSystemLock releases a system lock.
 	ReleaseSystemLock(ctx context.Context, lockName, workerID string) error

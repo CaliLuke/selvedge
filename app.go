@@ -184,6 +184,9 @@ func (a *App) Shutdown(ctx context.Context) error {
 
 // initStorage initializes the storage backend.
 func (a *App) initStorage() error {
+	if err := a.config.lease.Validate(); err != nil {
+		return err
+	}
 	if a.config.databaseURL == "" {
 		a.config.databaseURL = "selvedge.db"
 	}
@@ -242,6 +245,9 @@ func (a *App) initStorage() error {
 
 	// Create the replay engine
 	a.engine = replay.NewEngine(a.storage, a.hooks, a.config.workerID, errorCodec{})
+	if err := a.engine.ConfigureLease(a.config.lease, nil); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -284,22 +290,7 @@ func (a *App) handleWorkflowResumableNotify(ctx context.Context, channel notify.
 
 	slog.Debug("received workflow resumable notification", "instance_id", n.InstanceID)
 
-	// Signal wake channel for adaptive backoff reset
-	select {
-	case a.resumeWakeEvent <- struct{}{}:
-	default: // Non-blocking
-	}
-
-	// Trigger immediate workflow resumption
-	if err := a.resumptionSem.Acquire(ctx, 1); err != nil {
-		return
-	}
-	go func() {
-		defer a.resumptionSem.Release(1)
-		if err := a.resumeWorkflow(ctx, n.InstanceID); err != nil {
-			slog.Debug("error resuming workflow from notify", "instance_id", n.InstanceID, "error", err)
-		}
-	}()
+	a.wakeDispatcher()
 }
 
 // handleTimerExpiredNotify handles timer expired notifications.
@@ -321,7 +312,7 @@ func (a *App) handleChannelMessageNotify(ctx context.Context, channel notify.Not
 		"channel_name", n.ChannelName, "message_id", n.MessageID, "target", n.TargetInstanceID)
 
 	// Trigger immediate message delivery
-	go a.wakeWaitingChannelSubscribersForNotify(ctx, n.ChannelName, n.TargetInstanceID)
+	a.wakeWaitingChannelSubscribersForNotify(ctx, n.ChannelName, n.TargetInstanceID)
 }
 
 // wakeWaitingChannelSubscribersForNotify triggers message delivery for waiting subscribers.
@@ -332,7 +323,7 @@ func (a *App) wakeWaitingChannelSubscribersForNotify(ctx context.Context, channe
 
 	// If targeted message, only wake the target subscriber
 	if targetInstanceID != "" {
-		a.deliverToWaitingSubscriber(ctx, targetInstanceID, channelName)
+		a.deliverToWaitingSubscriber(ctx, targetInstanceID)
 		return
 	}
 
@@ -347,36 +338,16 @@ func (a *App) wakeWaitingChannelSubscribersForNotify(ctx context.Context, channe
 		if ctx.Err() != nil {
 			break
 		}
-		a.deliverToWaitingSubscriber(ctx, sub.InstanceID, channelName)
+		a.deliverToWaitingSubscriber(ctx, sub.InstanceID)
 	}
 }
 
 // deliverToWaitingSubscriber attempts to deliver messages to a single waiting subscriber.
-func (a *App) deliverToWaitingSubscriber(ctx context.Context, instanceID, channelName string) {
-	if err := a.messageSem.Acquire(ctx, 1); err != nil {
-		return
+func (a *App) deliverToWaitingSubscriber(ctx context.Context, instanceID string) {
+	if err := a.storage.MarkRunnable(ctx, instanceID); err != nil {
+		slog.Debug("failed to wake subscriber", "error", err)
 	}
-	go func() {
-		defer a.messageSem.Release(1)
-
-		messages, err := a.storage.GetPendingChannelMessagesForInstance(ctx, instanceID, channelName)
-		if err != nil || len(messages) == 0 {
-			return
-		}
-
-		msg := messages[0]
-		result, err := a.storage.DeliverChannelMessageWithLock(
-			ctx, instanceID, channelName, msg,
-			a.config.workerID, int(a.config.staleLockTimeout.Seconds()))
-		if err != nil {
-			slog.Debug("failed to deliver message from notify", "instance_id", instanceID, "error", err)
-			return
-		}
-		if result != nil {
-			slog.Debug("delivered message from notify",
-				"instance_id", instanceID, "channel", channelName, "message_id", msg.ID)
-		}
-	}()
+	a.wakeDispatcher()
 }
 
 // addJitter adds random jitter (±25%) to a duration to prevent thundering herd.
@@ -422,12 +393,12 @@ func (a *App) startBackgroundTasks() {
 	a.wg.Add(1)
 	go a.runLeaderElection()
 
-	// Workflow resumption (all workers - uses lock arbitration for distributed coordination)
+	// Workflow resumption (all workers - uses execution leases for coordination)
 	a.wg.Add(1)
 	go a.runWorkflowResumption()
 
 	// Note: Leader-only tasks (timer check, event timeout, channel timeout,
-	// stale lock cleanup, event cleanup) are started dynamically
+	// event cleanup) are started dynamically
 	// when this worker becomes the leader via runLeaderElection().
 }
 
@@ -465,7 +436,7 @@ func (a *App) tryAcquireLeadership() {
 		a.ctx,
 		"selvedge_leader",
 		a.config.workerID,
-		int(a.config.leaderLeaseDuration.Seconds()),
+		a.config.leaderLeaseDuration,
 	)
 	if err != nil {
 		slog.Error("leader election error", "error", err)
@@ -510,10 +481,6 @@ func (a *App) startLeaderOnlyTasks() {
 	a.wg.Add(1)
 	go a.runChannelTimeoutCheckWithContext(a.leaderCtx)
 
-	// Stale lock cleanup
-	a.wg.Add(1)
-	go a.runStaleLockCleanupWithContext(a.leaderCtx)
-
 	// Channel message cleanup
 	a.wg.Add(1)
 	go a.runChannelCleanupWithContext(a.leaderCtx)
@@ -537,64 +504,6 @@ func (a *App) stopLeaderTasks() {
 	a.leaderTasksRunning = false
 
 	slog.Debug("stopped leader-only tasks")
-}
-
-// runStaleLockCleanupWithContext periodically cleans up stale locks with a cancellable context.
-func (a *App) runStaleLockCleanupWithContext(ctx context.Context) {
-	defer a.wg.Done()
-
-	ticker := time.NewTicker(addJitter(a.config.staleLockInterval))
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			// Leader runs directly (no singleton runner needed when using leader election)
-			if err := a.cleanupStaleLocks(); err != nil {
-				slog.Error("error cleaning up stale locks", "error", err)
-			}
-		}
-	}
-}
-
-// cleanupStaleLocks cleans up stale locks and resumes stuck workflows.
-func (a *App) cleanupStaleLocks() error {
-	if a.storage == nil {
-		return nil
-	}
-
-	timeoutSec := int(a.config.staleLockTimeout.Seconds())
-	staleWorkflows, err := a.storage.CleanupStaleLocks(a.ctx, timeoutSec)
-	if err != nil {
-		return err
-	}
-
-	// Resume stale workflows
-	var wg sync.WaitGroup
-	for _, info := range staleWorkflows {
-		if a.ctx.Err() != nil {
-			break
-		}
-
-		if err := a.resumptionSem.Acquire(a.ctx, 1); err != nil {
-			break
-		}
-
-		wg.Add(1)
-		go func(info storage.StaleWorkflowInfo) {
-			defer wg.Done()
-			defer a.resumptionSem.Release(1)
-
-			if err := a.resumeWorkflow(a.ctx, info.InstanceID); err != nil {
-				slog.Error("error resuming workflow", "instance_id", info.InstanceID, "error", err)
-			}
-		}(info)
-	}
-
-	wg.Wait()
-	return nil
 }
 
 // runTimerCheckWithContext periodically checks for expired timers with a cancellable context.
@@ -654,77 +563,22 @@ func (a *App) checkExpiredTimers() error {
 
 // handleExpiredTimer handles a single expired timer.
 func (a *App) handleExpiredTimer(timer *storage.TimerSubscription) error {
-	// Get instance to find workflow name
 	instance, err := a.storage.GetInstance(a.ctx, timer.InstanceID)
 	if err != nil {
 		return err
 	}
-	if instance == nil {
-		// Instance not found, skip (already deleted or invalid)
-		return nil
+	workflowName := ""
+	if instance != nil {
+		workflowName = instance.WorkflowName
 	}
-
-	// Check if we have this workflow registered
-	// If not, skip and let another worker handle it
-	a.workflowRunnersMu.RLock()
-	_, registered := a.workflowRunners[instance.WorkflowName]
-	a.workflowRunnersMu.RUnlock()
-
-	if !registered {
-		// This worker doesn't have the workflow registered, skip
-		slog.Debug("skipping timer for unregistered workflow",
-			"instance_id", timer.InstanceID,
-			"workflow_name", instance.WorkflowName,
-			"timer_id", timer.TimerID)
-		return nil
-	}
-
-	// Try to acquire lock
-	acquired, err := a.storage.TryAcquireLock(
-		a.ctx,
-		timer.InstanceID,
-		a.config.workerID,
-		int(a.config.staleLockTimeout.Seconds()),
-	)
-	if err != nil {
+	if err := a.storage.FireTimer(a.ctx, timer); err != nil {
 		return err
 	}
-	if !acquired {
-		// Another worker is handling this
-		return nil
-	}
-
-	// Remove the timer subscription
-	if err := a.storage.RemoveTimerSubscription(a.ctx, timer.InstanceID, timer.TimerID); err != nil {
-		_ = a.storage.ReleaseLock(a.ctx, timer.InstanceID, a.config.workerID)
-		return err
-	}
-
-	// Record the timer completion in history so replay can skip it
-	timerResult := map[string]any{
-		"timer_id":   timer.TimerID,
-		"expires_at": timer.ExpiresAt.Format(time.RFC3339),
-		"completed":  true,
-	}
-	timerData, err := json.Marshal(timerResult)
-	if err != nil {
-		return err
-	}
-	if _, err := a.storage.SetHistoryValueIfNull(a.ctx, nil, timer.InstanceID, timer.TimerID, "sleep", storage.HistoryTimerExpired, timerData); err != nil {
-		_ = a.storage.ReleaseLock(a.ctx, timer.InstanceID, a.config.workerID)
-		return fmt.Errorf("failed to record timer result: %w", err)
-	}
-
-	// Call OnTimerFired hook
-	a.hooks.OnTimerFired(a.ctx, hooks.TimerFiredInfo{
-		InstanceID:   timer.InstanceID,
-		WorkflowName: instance.WorkflowName,
-		TimerID:      timer.TimerID,
-		FiredAt:      time.Now(),
+	a.config.hooks.OnTimerFired(a.ctx, hooks.TimerFiredInfo{
+		InstanceID: timer.InstanceID, WorkflowName: workflowName, TimerID: timer.TimerID, FiredAt: time.Now(),
 	})
-
-	// Resume workflow with lock already held
-	return a.resumeWorkflowWithLock(a.ctx, timer.InstanceID)
+	a.wakeDispatcher()
+	return nil
 }
 
 // runEventTimeoutCheckWithContext periodically checks for event timeouts with a cancellable context.
@@ -806,31 +660,12 @@ func (a *App) startWorkflow(ctx context.Context, workflowName string, input any,
 		StartTime:    now,
 	})
 
-	// Start workflow execution asynchronously
-	go func() {
-		if err := a.runWorkflow(context.Background(), instanceID, workflowName); err != nil {
-			slog.Error("workflow failed", "instance_id", instanceID, "error", err)
-		}
-	}()
+	a.wakeDispatcher()
 
 	return instanceID, nil
 }
 
-// runWorkflow executes a workflow instance.
-func (a *App) runWorkflow(ctx context.Context, instanceID, workflowName string) error {
-	// Get the runner for this workflow
-	a.workflowRunnersMu.RLock()
-	runner, ok := a.workflowRunners[workflowName]
-	a.workflowRunnersMu.RUnlock()
-
-	if !ok {
-		return fmt.Errorf("workflow %s not registered", workflowName)
-	}
-
-	return a.engine.StartWorkflow(ctx, instanceID, workflowName, nil, runner)
-}
-
-// resumeWorkflow resumes a workflow (for stale lock recovery).
+// resumeWorkflow dispatches a registered workflow through the lease protocol.
 func (a *App) resumeWorkflow(ctx context.Context, instanceID string) error {
 	// Get the instance to find the workflow name
 	instance, err := a.storage.GetInstance(ctx, instanceID)
@@ -850,13 +685,7 @@ func (a *App) resumeWorkflow(ctx context.Context, instanceID string) error {
 		return fmt.Errorf("workflow %s not registered", instance.WorkflowName)
 	}
 
-	return a.engine.ResumeWorkflow(ctx, instanceID, runner)
-}
-
-// resumeWorkflowWithLock resumes a workflow with lock already held.
-func (a *App) resumeWorkflowWithLock(ctx context.Context, instanceID string) error {
-	// For now, just resume normally - the lock handling is in the engine
-	return a.resumeWorkflow(ctx, instanceID)
+	return a.engine.Run(ctx, instanceID, runner)
 }
 
 // GetInstance retrieves a workflow instance by ID.
@@ -942,20 +771,18 @@ func (a *App) cancelWorkflow(ctx context.Context, instanceID, reason string) err
 		return nil // Already cancelled, idempotent
 	}
 
-	// Try to acquire lock
-	acquired, err := a.storage.TryAcquireLock(
-		ctx,
-		instanceID,
-		a.config.workerID,
-		int(a.config.staleLockTimeout.Seconds()),
-	)
+	if err := a.storage.MarkRunnable(ctx, instanceID); err != nil {
+		return err
+	}
+	f, acquired, err := a.storage.AcquireLease(ctx, instanceID, a.config.workerID+"/"+uuid.NewString(), a.config.lease.TTL)
 	if err != nil {
-		return fmt.Errorf("failed to acquire lock: %w", err)
+		return err
 	}
 	if !acquired {
-		return fmt.Errorf("workflow is locked by another worker")
+		return fmt.Errorf("workflow is leased by another execution")
 	}
-	defer func() { _ = a.storage.ReleaseLock(ctx, instanceID, a.config.workerID) }()
+	ctx = storage.ContextWithFence(ctx, f)
+	defer func() { _ = a.storage.ReleaseLease(context.WithoutCancel(ctx), f, false) }()
 
 	// Note: Event subscription cleanup is handled by CancelInstance
 
@@ -1021,61 +848,26 @@ func (a *App) deliverEventToWaitingWorkflows(ctx context.Context, eventID, event
 	channelName := eventType
 
 	// Publish to channel using eventType as channel name
-	messageID, err := a.storage.PublishToChannel(ctx, channelName, dataJSON, nil)
+	_, err = a.storage.PublishToChannel(ctx, channelName, dataJSON, nil)
 	if err != nil {
 		return fmt.Errorf("failed to publish event to channel: %w", err)
 	}
 
 	// Wake up waiting subscribers using the unified channel system
-	// This uses DeliverChannelMessageWithLock which handles locking and history recording
-	a.wakeWaitingChannelSubscribers(ctx, channelName, messageID, dataJSON, nil)
+	// The durable input has already marked subscribers runnable.
+	a.wakeWaitingChannelSubscribers(ctx, channelName)
 
 	return nil
 }
 
 // wakeWaitingChannelSubscribers delivers a message to waiting channel subscribers.
-func (a *App) wakeWaitingChannelSubscribers(
-	ctx context.Context,
-	channelName string,
-	messageID int64,
-	dataJSON []byte,
-	metadataJSON []byte,
-) {
-	// Find waiting subscribers
-	waitingSubs, err := a.storage.GetChannelSubscribersWaiting(ctx, channelName)
+func (a *App) wakeWaitingChannelSubscribers(ctx context.Context, channelName string) {
+	subs, err := a.storage.GetChannelSubscribersWaiting(ctx, channelName)
 	if err != nil {
-		slog.Error("error getting waiting subscribers", "error", err)
 		return
 	}
-
-	if len(waitingSubs) == 0 {
-		return
-	}
-
-	// Create message for delivery
-	message := &storage.ChannelMessage{
-		ID:       messageID,
-		Channel:  channelName,
-		Data:     dataJSON,
-		Metadata: metadataJSON,
-	}
-
-	lockTimeoutSec := int(a.config.staleLockTimeout.Seconds())
-
-	for _, sub := range waitingSubs {
-		// Deliver using Lock-First pattern
-		_, err := a.storage.DeliverChannelMessageWithLock(
-			ctx,
-			sub.InstanceID,
-			channelName,
-			message,
-			a.config.workerID,
-			lockTimeoutSec,
-		)
-		if err != nil {
-			slog.Error("error delivering message", "instance_id", sub.InstanceID, "error", err)
-			continue
-		}
+	for _, sub := range subs {
+		a.deliverToWaitingSubscriber(ctx, sub.InstanceID)
 	}
 }
 
@@ -1153,20 +945,6 @@ func (a *App) checkChannelTimeouts() error {
 // Instead of failing the workflow directly, we record the timeout error in history
 // and set the workflow to 'running' so it can be resumed and handle the error gracefully.
 func (a *App) handleChannelTimeout(sub *storage.ChannelSubscription) error {
-	// Try to acquire lock
-	acquired, err := a.storage.TryAcquireLock(
-		a.ctx,
-		sub.InstanceID,
-		a.config.workerID,
-		int(a.config.staleLockTimeout.Seconds()),
-	)
-	if err != nil {
-		return err
-	}
-	if !acquired {
-		return nil
-	}
-
 	// Call OnEventTimeout hook
 	instance, _ := a.storage.GetInstance(a.ctx, sub.InstanceID)
 	workflowName := ""
@@ -1201,27 +979,11 @@ func (a *App) handleChannelTimeout(sub *storage.ChannelSubscription) error {
 		DataType:   "json",
 	}
 	if _, err := a.storage.RecordHistory(a.ctx, nil, historyEvent); err != nil {
-		_ = a.storage.ReleaseLock(a.ctx, sub.InstanceID, a.config.workerID)
 		return fmt.Errorf("failed to record timeout error: %w", err)
 	}
 
-	// Clear waiting state
-	if err := a.storage.ClearChannelWaitingState(a.ctx, sub.InstanceID, sub.Channel); err != nil {
-		_ = a.storage.ReleaseLock(a.ctx, sub.InstanceID, a.config.workerID)
-		return err
-	}
-
-	// Update workflow status to running (so it will be resumed)
-	err = a.storage.UpdateInstanceStatus(
-		a.ctx,
-		sub.InstanceID,
-		storage.StatusRunning,
-		"",
-	)
-
-	_ = a.storage.ReleaseLock(a.ctx, sub.InstanceID, a.config.workerID)
-
-	return err
+	a.wakeDispatcher()
+	return a.storage.MarkRunnable(a.ctx, sub.InstanceID)
 }
 
 // ========================================
@@ -1229,8 +991,7 @@ func (a *App) handleChannelTimeout(sub *storage.ChannelSubscription) error {
 // ========================================
 
 // runWorkflowResumption periodically checks for workflows ready to be resumed.
-// This task finds workflows with status='running' that don't have an active lock
-// (e.g., after message delivery) and resumes them. This is essential for load
+// This task dispatches runnable workflows and recovers expired leases. This is essential for load
 // balancing in multi-worker environments - any worker can pick up and resume
 // the workflow, not just the one that delivered the message.
 //
@@ -1252,7 +1013,7 @@ func (a *App) runWorkflowResumption() {
 		switch {
 		case err != nil:
 			slog.Error("error resuming workflows", "error", err)
-			consecutiveEmpty = 0
+			consecutiveEmpty++
 		case count == 0:
 			consecutiveEmpty++
 		default:
@@ -1276,14 +1037,14 @@ func (a *App) runWorkflowResumption() {
 }
 
 // resumeResumableWorkflows finds and resumes workflows that are ready.
-// Returns the number of workflows found and any error that occurred.
+// Returns the number of registered workflows dispatched and any error that occurred.
 func (a *App) resumeResumableWorkflows() (int, error) {
 	if a.storage == nil {
 		return 0, nil
 	}
 
-	// Find resumable workflows (status='running', no lock)
-	workflows, err := a.storage.FindResumableWorkflows(a.ctx, a.config.maxWorkflowsPerBatch)
+	// Find runnable instances with free leases and orphaned expired leases.
+	workflows, err := a.storage.FindDispatchable(a.ctx, a.config.maxWorkflowsPerBatch)
 	if err != nil {
 		return 0, fmt.Errorf("failed to find resumable workflows: %w", err)
 	}
@@ -1292,8 +1053,22 @@ func (a *App) resumeResumableWorkflows() (int, error) {
 		return 0, nil
 	}
 
-	var wg sync.WaitGroup
+	dispatched := 0
 	for _, wf := range workflows {
+		// Skip workflows this worker cannot execute so they do not reset backoff.
+		instance, err := a.storage.GetInstance(a.ctx, wf)
+		if err != nil {
+			return dispatched, err
+		}
+		if instance == nil {
+			continue
+		}
+		a.workflowRunnersMu.RLock()
+		_, registered := a.workflowRunners[instance.WorkflowName]
+		a.workflowRunnersMu.RUnlock()
+		if !registered {
+			continue
+		}
 		// Check context before acquiring semaphore
 		if a.ctx.Err() != nil {
 			break
@@ -1305,18 +1080,20 @@ func (a *App) resumeResumableWorkflows() (int, error) {
 			break
 		}
 
-		wg.Add(1)
-		go func(wf *storage.ResumableWorkflow) {
-			defer wg.Done()
+		dispatched++
+		a.wg.Add(1)
+		go func(wf string) {
+			defer a.wg.Done()
 			defer a.resumptionSem.Release(1)
 
 			// Error is expected when another worker picks up the workflow first
-			_ = a.resumeWorkflow(a.ctx, wf.InstanceID)
+			if err := a.resumeWorkflow(a.ctx, wf); err == nil {
+				a.wakeDispatcher()
+			}
 		}(wf)
 	}
 
-	wg.Wait()
-	return len(workflows), nil
+	return dispatched, nil
 }
 
 // ========================================
@@ -1354,4 +1131,11 @@ func (a *App) cleanupChannelMessages() error {
 	}
 
 	return nil
+}
+
+func (a *App) wakeDispatcher() {
+	select {
+	case a.resumeWakeEvent <- struct{}{}:
+	default:
+	}
 }
