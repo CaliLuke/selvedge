@@ -3,7 +3,7 @@ title: "Transactional Outbox"
 weight: 6
 ---
 
-Romancy provides built-in support for the **Transactional Outbox Pattern**, ensuring that events are published reliably and atomically with workflow execution.
+Selvedge provides built-in support for the **Transactional Outbox Pattern**, ensuring that events are published reliably and atomically with workflow execution.
 
 ## What is the Transactional Outbox Pattern?
 
@@ -45,7 +45,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 type CreateOrderResult struct {
@@ -53,17 +53,17 @@ type CreateOrderResult struct {
 	Status  string `json:"status"`
 }
 
-var createOrder = romancy.DefineActivity("create_order",
+var createOrder = selvedge.DefineActivity("create_order",
 	func(ctx context.Context, orderID string, amount float64) (CreateOrderResult, error) {
 		// Business logic
 		fmt.Printf("Creating order %s\n", orderID)
 
 		// Get workflow context for transactional event sending
-		wfCtx := romancy.GetWorkflowContext(ctx)
+		wfCtx := selvedge.GetWorkflowContext(ctx)
 
 		// Send event transactionally
 		// This writes to the outbox table in the same transaction
-		err := romancy.SendEventTransactional(wfCtx,
+		err := selvedge.SendEventTransactional(wfCtx,
 			"order.created",
 			"order-service",
 			map[string]any{
@@ -92,15 +92,15 @@ import (
 	"context"
 	"log"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 func main() {
-	app := romancy.NewApp(
-		romancy.WithDatabase("orders.db"),
-		romancy.WithWorkerID("worker-1"),
-		romancy.WithOutbox(true),                              // Enable outbox relayer
-		romancy.WithBrokerURL("http://localhost:8080/events"), // CloudEvents endpoint
+	app := selvedge.NewApp(
+		selvedge.WithDatabase("orders.db"),
+		selvedge.WithWorkerID("worker-1"),
+		selvedge.WithOutbox(true),                              // Enable outbox relayer
+		selvedge.WithBrokerURL("http://localhost:8080/events"), // CloudEvents endpoint
 	)
 
 	ctx := context.Background()
@@ -119,15 +119,15 @@ That's it! Events are now published reliably.
 
 ## Custom Database Operations (Advanced)
 
-For **true atomic transactions** between your business logic and event publishing, you can access Romancy's managed database session using `ctx.Session()`.
+For **true atomic transactions** between your business logic and event publishing, you can access Selvedge's managed database session using `ctx.Session()`.
 
 ### Why Use ctx.Session()?
 
-The basic approach (`SendEventTransactional()` inside activities) uses **Romancy's internal transaction** to write to the outbox table. This is sufficient for most use cases where your business logic is:
+The basic approach (`SendEventTransactional()` inside activities) uses **Selvedge's internal transaction** to write to the outbox table. This is sufficient for most use cases where your business logic is:
 
 - Read-only operations
 - External API calls
-- Romancy's own workflow history
+- Selvedge's own workflow history
 
 However, if you need to **write to your own database** and guarantee atomicity with event publishing, use `ctx.Session()`:
 
@@ -140,10 +140,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
-// Payment model (must be in the same database as Romancy)
+// Payment model (must be in the same database as Selvedge)
 type Payment struct {
 	OrderID string
 	Amount  float64
@@ -155,15 +155,15 @@ type ProcessPaymentResult struct {
 	Status  string `json:"status"`
 }
 
-var processPayment = romancy.DefineActivity("process_payment",
+var processPayment = selvedge.DefineActivity("process_payment",
 	func(ctx context.Context, orderID string, amount float64) (ProcessPaymentResult, error) {
 		// Get workflow context
-		wfCtx := romancy.GetWorkflowContext(ctx)
+		wfCtx := selvedge.GetWorkflowContext(ctx)
 
-		// Access Romancy-managed session (same database as Romancy)
+		// Access Selvedge-managed session (same database as Selvedge)
 		session := wfCtx.Session()
 
-		// Your business logic (same transaction as Romancy)
+		// Your business logic (same transaction as Selvedge)
 		payment := Payment{
 			OrderID: orderID,
 			Amount:  amount,
@@ -179,8 +179,8 @@ var processPayment = romancy.DefineActivity("process_payment",
 			return ProcessPaymentResult{}, err
 		}
 
-		// Romancy event (same transaction)
-		err = romancy.SendEventTransactional(wfCtx,
+		// Selvedge event (same transaction)
+		err = selvedge.SendEventTransactional(wfCtx,
 			"payment.processed",
 			"payment-service",
 			map[string]any{"order_id": orderID, "amount": amount},
@@ -189,10 +189,10 @@ var processPayment = romancy.DefineActivity("process_payment",
 			return ProcessPaymentResult{}, err
 		}
 
-		// Romancy automatically commits (or rolls back on exception):
+		// Selvedge automatically commits (or rolls back on exception):
 		// 1. Your payment record (same database)
-		// 2. Romancy's outbox event
-		// 3. Romancy's workflow history
+		// 2. Selvedge's outbox event
+		// 3. Selvedge's workflow history
 		return ProcessPaymentResult{OrderID: orderID, Status: "processed"}, nil
 	},
 )
@@ -207,26 +207,26 @@ type PaymentResult struct {
 	OrderID string `json:"order_id"`
 }
 
-var processPayment = romancy.DefineActivity("process_payment",
+var processPayment = selvedge.DefineActivity("process_payment",
 	func(ctx context.Context, orderID string, amount float64) (PaymentResult, error) {
-		wfCtx := romancy.GetWorkflowContext(ctx)
+		wfCtx := selvedge.GetWorkflowContext(ctx)
 
-		// Access Romancy-managed session
+		// Access Selvedge-managed session
 		session := wfCtx.Session()
 
 		// Your business logic
 		_, err := session.Exec("INSERT INTO payments ...")
 		if err != nil {
-			return PaymentResult{}, err // Romancy automatically rolls back
+			return PaymentResult{}, err // Selvedge automatically rolls back
 		}
 
 		// Events in same transaction
-		err = romancy.SendEventTransactional(wfCtx, ...)
+		err = selvedge.SendEventTransactional(wfCtx, ...)
 		if err != nil {
-			return PaymentResult{}, err // Romancy automatically rolls back
+			return PaymentResult{}, err // Selvedge automatically rolls back
 		}
 
-		// Romancy automatically commits on success
+		// Selvedge automatically commits on success
 		return PaymentResult{OrderID: orderID}, nil
 	},
 )
@@ -234,7 +234,7 @@ var processPayment = romancy.DefineActivity("process_payment",
 
 **How it works:**
 
-When you access `ctx.Session()` inside an activity, Romancy automatically:
+When you access `ctx.Session()` inside an activity, Selvedge automatically:
 
 1. **Provides managed session**: Returns the current transaction's session
 2. **Single transaction**: All operations use the same session
@@ -242,15 +242,15 @@ When you access `ctx.Session()` inside an activity, Romancy automatically:
 
 This results in:
 
-1. **Single Transaction**: Your payment data + Romancy's outbox + history commit together
+1. **Single Transaction**: Your payment data + Selvedge's outbox + history commit together
 2. **Atomic Guarantee**: Either all succeed or all fail (no data inconsistency)
 3. **Rollback Safety**: If any operation fails, everything rolls back
 
 ### Key Points
 
 - ✅ **Atomic Guarantee**: Your data + outbox event + history commit together
-- ✅ **Single Transaction**: All operations use Romancy's managed session
-- ✅ **Automatic Management**: Romancy handles begin/commit/rollback
+- ✅ **Single Transaction**: All operations use Selvedge's managed session
+- ✅ **Automatic Management**: Selvedge handles begin/commit/rollback
 - ✅ **Rollback Safety**: If any operation fails, everything rolls back
 - ⚠️ **Database Requirement**: See [Database Requirements](#database-requirements-for-custom-database-operations) below
 
@@ -283,9 +283,9 @@ type OrderWithPaymentResult struct {
 	Status  string `json:"status"`
 }
 
-var processOrderWithOptionalPayment = romancy.DefineActivity("process_order_with_optional_payment",
+var processOrderWithOptionalPayment = selvedge.DefineActivity("process_order_with_optional_payment",
 	func(ctx context.Context, orderID string) (OrderWithPaymentResult, error) {
-		wfCtx := romancy.GetWorkflowContext(ctx)
+		wfCtx := selvedge.GetWorkflowContext(ctx)
 		session := wfCtx.Session()
 
 		// Outer transaction (automatic, managed by activity)
@@ -297,7 +297,7 @@ var processOrderWithOptionalPayment = romancy.DefineActivity("process_order_with
 			return OrderWithPaymentResult{}, err
 		}
 
-		err = romancy.SendEventTransactional(wfCtx,
+		err = selvedge.SendEventTransactional(wfCtx,
 			"order.created",
 			"order-service",
 			map[string]any{"order_id": orderID},
@@ -309,7 +309,7 @@ var processOrderWithOptionalPayment = romancy.DefineActivity("process_order_with
 		// Nested transaction (savepoint)
 		err = wfCtx.Transaction(func() error {
 			// Risky payment operation
-			err := romancy.SendEventTransactional(wfCtx,
+			err := selvedge.SendEventTransactional(wfCtx,
 				"payment.attempted",
 				"payment-service",
 				map[string]any{"order_id": orderID},
@@ -333,7 +333,7 @@ var processOrderWithOptionalPayment = romancy.DefineActivity("process_order_with
 		if err != nil {
 			// Inner transaction rolled back to savepoint
 			// Order creation still succeeds, but payment failed
-			err = romancy.SendEventTransactional(wfCtx,
+			err = selvedge.SendEventTransactional(wfCtx,
 				"payment.failed",
 				"payment-service",
 				map[string]any{"order_id": orderID, "reason": "gateway_unavailable"},
@@ -429,11 +429,11 @@ sequenceDiagram
 ### Basic Configuration
 
 ```go
-app := romancy.NewApp(
-	romancy.WithDatabase("orders.db"),
-	romancy.WithWorkerID("worker-1"),
-	romancy.WithOutbox(true),
-	romancy.WithBrokerURL("http://localhost:8080/events"),
+app := selvedge.NewApp(
+	selvedge.WithDatabase("orders.db"),
+	selvedge.WithWorkerID("worker-1"),
+	selvedge.WithOutbox(true),
+	selvedge.WithBrokerURL("http://localhost:8080/events"),
 )
 ```
 
@@ -441,13 +441,13 @@ app := romancy.NewApp(
 
 ```go
 // Create custom relayer
-relayer := romancy.NewOutboxRelayer(
-	romancy.WithRelayerStorage(app.Storage()),
-	romancy.WithRelayerBrokerURL("http://localhost:8080/events"),
-	romancy.WithPollInterval(2*time.Second),  // Poll every 2 seconds
-	romancy.WithMaxRetries(5),                 // Retry up to 5 times
-	romancy.WithBatchSize(20),                 // Process 20 events per batch
-	romancy.WithMaxAgeHours(24.0),             // Expire events older than 24 hours
+relayer := selvedge.NewOutboxRelayer(
+	selvedge.WithRelayerStorage(app.Storage()),
+	selvedge.WithRelayerBrokerURL("http://localhost:8080/events"),
+	selvedge.WithPollInterval(2*time.Second),  // Poll every 2 seconds
+	selvedge.WithMaxRetries(5),                 // Retry up to 5 times
+	selvedge.WithBatchSize(20),                 // Process 20 events per batch
+	selvedge.WithMaxAgeHours(24.0),             // Expire events older than 24 hours
 )
 
 ctx := context.Background()
@@ -478,10 +478,10 @@ Events older than `max_age_hours` are automatically marked as `'expired'` and wi
 
 ```go
 // Example: Expire events older than 1 hour
-relayer := romancy.NewOutboxRelayer(
-	romancy.WithRelayerStorage(app.Storage()),
-	romancy.WithRelayerBrokerURL("http://localhost:8080/events"),
-	romancy.WithMaxAgeHours(1.0), // Events older than 1 hour → 'expired'
+relayer := selvedge.NewOutboxRelayer(
+	selvedge.WithRelayerStorage(app.Storage()),
+	selvedge.WithRelayerBrokerURL("http://localhost:8080/events"),
+	selvedge.WithMaxAgeHours(1.0), // Events older than 1 hour → 'expired'
 )
 ```
 
@@ -620,8 +620,8 @@ type OrderProcessingResult struct {
 	Status  string `json:"status"`
 }
 
-var orderProcessingWorkflow = romancy.DefineWorkflow("process_order",
-	func(ctx *romancy.WorkflowContext, orderID string, items []OrderItem) (OrderProcessingResult, error) {
+var orderProcessingWorkflow = selvedge.DefineWorkflow("process_order",
+	func(ctx *selvedge.WorkflowContext, orderID string, items []OrderItem) (OrderProcessingResult, error) {
 		// Step 1: Reserve inventory
 		// → Sends "inventory.reserved" event
 		inventory, err := reserveInventory.Execute(ctx, orderID, items)
@@ -644,7 +644,7 @@ var orderProcessingWorkflow = romancy.DefineWorkflow("process_order",
 		}
 
 		// Final event
-		err = romancy.SendEventTransactional(ctx,
+		err = selvedge.SendEventTransactional(ctx,
 			"order.completed",
 			"order-service",
 			map[string]any{"order_id": orderID, "status": "completed"},
@@ -663,14 +663,14 @@ var orderProcessingWorkflow = romancy.DefineWorkflow("process_order",
 Send events during compensation (rollback):
 
 ```go
-var releaseInventory = romancy.DefineCompensation("release_inventory",
+var releaseInventory = selvedge.DefineCompensation("release_inventory",
 	func(ctx context.Context, reservationID string) error {
 		fmt.Printf("Releasing inventory: %s\n", reservationID)
 
-		wfCtx := romancy.GetWorkflowContext(ctx)
+		wfCtx := selvedge.GetWorkflowContext(ctx)
 
 		// Send compensation event
-		return romancy.SendEventTransactional(wfCtx,
+		return selvedge.SendEventTransactional(wfCtx,
 			"inventory.released",
 			"order-service",
 			map[string]any{
@@ -685,12 +685,12 @@ var releaseInventory = romancy.DefineCompensation("release_inventory",
 ### 3. Saga Pattern Integration
 
 ```go
-var cancelReservation = romancy.DefineCompensation("cancel_hotel_reservation",
+var cancelReservation = selvedge.DefineCompensation("cancel_hotel_reservation",
 	func(ctx context.Context, reservationID string) error {
-		wfCtx := romancy.GetWorkflowContext(ctx)
+		wfCtx := selvedge.GetWorkflowContext(ctx)
 
 		// Send cancellation event
-		return romancy.SendEventTransactional(wfCtx,
+		return selvedge.SendEventTransactional(wfCtx,
 			"hotel.cancelled",
 			"booking-service",
 			map[string]any{"reservation_id": reservationID},
@@ -702,15 +702,15 @@ type ReserveHotelResult struct {
 	ReservationID string `json:"reservation_id"`
 }
 
-var reserveHotel = romancy.DefineActivity("reserve_hotel",
+var reserveHotel = selvedge.DefineActivity("reserve_hotel",
 	func(ctx context.Context, bookingID string) (ReserveHotelResult, error) {
-		wfCtx := romancy.GetWorkflowContext(ctx)
+		wfCtx := selvedge.GetWorkflowContext(ctx)
 
 		// Reserve hotel
 		reservationID := fmt.Sprintf("HOTEL-%s", bookingID)
 
 		// Send event transactionally
-		err := romancy.SendEventTransactional(wfCtx,
+		err := selvedge.SendEventTransactional(wfCtx,
 			"hotel.reserved",
 			"booking-service",
 			map[string]any{"reservation_id": reservationID},
@@ -721,7 +721,7 @@ var reserveHotel = romancy.DefineActivity("reserve_hotel",
 
 		return ReserveHotelResult{ReservationID: reservationID}, nil
 	},
-	romancy.WithCompensation(cancelReservation),
+	selvedge.WithCompensation(cancelReservation),
 )
 ```
 
@@ -739,14 +739,14 @@ type OrderActivityResult struct {
 }
 
 // ✅ Default: Automatic transaction (recommended)
-var createOrder = romancy.DefineActivity("create_order",
+var createOrder = selvedge.DefineActivity("create_order",
 	func(ctx context.Context, orderID string) (OrderActivityResult, error) {
-		wfCtx := romancy.GetWorkflowContext(ctx)
+		wfCtx := selvedge.GetWorkflowContext(ctx)
 
 		// All operations are automatically transactional:
 		// - Workflow history recording
 		// - Event publishing to outbox
-		err := romancy.SendEventTransactional(wfCtx, "order.created", "order-service", ...)
+		err := selvedge.SendEventTransactional(wfCtx, "order.created", "order-service", ...)
 		if err != nil {
 			return OrderActivityResult{}, err
 		}
@@ -756,11 +756,11 @@ var createOrder = romancy.DefineActivity("create_order",
 )
 
 // ✅ With session access for custom database operations
-var createOrderWithDB = romancy.DefineActivity("create_order_with_db",
+var createOrderWithDB = selvedge.DefineActivity("create_order_with_db",
 	func(ctx context.Context, orderID string) (OrderActivityResult, error) {
-		wfCtx := romancy.GetWorkflowContext(ctx)
+		wfCtx := selvedge.GetWorkflowContext(ctx)
 
-		// Access Romancy-managed session
+		// Access Selvedge-managed session
 		session := wfCtx.Session()
 
 		// Your database operations
@@ -770,7 +770,7 @@ var createOrderWithDB = romancy.DefineActivity("create_order_with_db",
 		}
 
 		// Events in same transaction
-		err = romancy.SendEventTransactional(wfCtx, "order.created", "order-service", ...)
+		err = selvedge.SendEventTransactional(wfCtx, "order.created", "order-service", ...)
 		if err != nil {
 			return OrderActivityResult{}, err
 		}
@@ -788,7 +788,7 @@ var createOrderWithDB = romancy.DefineActivity("create_order_with_db",
 
 ### 2. Use CloudEvents Standard
 
-Romancy publishes events as CloudEvents (HTTP), ensuring compatibility with:
+Selvedge publishes events as CloudEvents (HTTP), ensuring compatibility with:
 
 - ✅ Knative Eventing
 - ✅ CloudEvents SDK
@@ -891,8 +891,8 @@ This example demonstrates a real-world e-commerce order processing system using 
 
 ### Scenario
 
-1. Create order in your database tables (same database as Romancy)
-2. Send "order.created" event to Romancy's outbox
+1. Create order in your database tables (same database as Selvedge)
+2. Send "order.created" event to Selvedge's outbox
 3. Both operations are atomic (same transaction)
 
 ### Code
@@ -906,10 +906,10 @@ import (
 	"log"
 	"time"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
-// Order model (same database as Romancy)
+// Order model (same database as Selvedge)
 type Order struct {
 	OrderID       string
 	CustomerEmail string
@@ -924,14 +924,14 @@ type EcommerceOrderResult struct {
 }
 
 // Activity with custom database operations
-var createOrder = romancy.DefineActivity("create_order",
+var createOrder = selvedge.DefineActivity("create_order",
 	func(ctx context.Context, orderID, customerEmail string, amount float64) (EcommerceOrderResult, error) {
-		wfCtx := romancy.GetWorkflowContext(ctx)
+		wfCtx := selvedge.GetWorkflowContext(ctx)
 
-		// Access Romancy-managed session (same database)
+		// Access Selvedge-managed session (same database)
 		session := wfCtx.Session()
 
-		// 1. Save order to YOUR table (same database as Romancy)
+		// 1. Save order to YOUR table (same database as Selvedge)
 		_, err := session.Exec(`
 			INSERT INTO orders (order_id, customer_email, amount, status, created_at)
 			VALUES (?, ?, ?, ?, ?)
@@ -940,8 +940,8 @@ var createOrder = romancy.DefineActivity("create_order",
 			return EcommerceOrderResult{}, err
 		}
 
-		// 2. Publish event to Romancy's outbox (SAME transaction)
-		err = romancy.SendEventTransactional(wfCtx,
+		// 2. Publish event to Selvedge's outbox (SAME transaction)
+		err = selvedge.SendEventTransactional(wfCtx,
 			"order.created",
 			"order-service",
 			map[string]any{
@@ -955,7 +955,7 @@ var createOrder = romancy.DefineActivity("create_order",
 			return EcommerceOrderResult{}, err
 		}
 
-		// 3. Romancy automatically commits (or rolls back on error)
+		// 3. Selvedge automatically commits (or rolls back on error)
 		// If event publishing fails, order creation rolls back
 		// If order creation fails, event publishing rolls back
 
@@ -964,8 +964,8 @@ var createOrder = romancy.DefineActivity("create_order",
 )
 
 // Workflow
-var orderWorkflow = romancy.DefineWorkflow("order_workflow",
-	func(ctx *romancy.WorkflowContext, orderID, customerEmail string, amount float64) (EcommerceOrderResult, error) {
+var orderWorkflow = selvedge.DefineWorkflow("order_workflow",
+	func(ctx *selvedge.WorkflowContext, orderID, customerEmail string, amount float64) (EcommerceOrderResult, error) {
 		// Create order (atomic with event)
 		result, err := createOrder.Execute(ctx, orderID, customerEmail, amount)
 		if err != nil {
@@ -977,12 +977,12 @@ var orderWorkflow = romancy.DefineWorkflow("order_workflow",
 )
 
 func main() {
-	// Romancy app (all tables in same database)
-	app := romancy.NewApp(
-		romancy.WithDatabase("postgresql://user:password@localhost/ecommerce"),
-		romancy.WithWorkerID("worker-1"),
-		romancy.WithOutbox(true),
-		romancy.WithBrokerURL("http://localhost:8080/events"),
+	// Selvedge app (all tables in same database)
+	app := selvedge.NewApp(
+		selvedge.WithDatabase("postgresql://user:password@localhost/ecommerce"),
+		selvedge.WithWorkerID("worker-1"),
+		selvedge.WithOutbox(true),
+		selvedge.WithBrokerURL("http://localhost:8080/events"),
 	)
 
 	ctx := context.Background()
@@ -993,7 +993,7 @@ func main() {
 	defer app.Shutdown(ctx)
 
 	// Start workflow
-	instanceID, err := romancy.StartWorkflow(ctx, app, orderWorkflow, OrderInput{
+	instanceID, err := selvedge.StartWorkflow(ctx, app, orderWorkflow, OrderInput{
 		OrderID: "ORD-12345",
 		Email:   "customer@example.com",
 		Amount:  149.99,
@@ -1011,33 +1011,33 @@ func main() {
 
 ### Database Requirements for Custom Database Operations
 
-When using `ctx.Session()` to access Romancy's managed session for custom database operations, your application tables must be in the **same database** as Romancy's tables:
+When using `ctx.Session()` to access Selvedge's managed session for custom database operations, your application tables must be in the **same database** as Selvedge's tables:
 
 **PostgreSQL**:
 
-- **Requirement**: Your tables and Romancy's tables must be in the **same PostgreSQL database** (not just the same server/instance)
+- **Requirement**: Your tables and Selvedge's tables must be in the **same PostgreSQL database** (not just the same server/instance)
 - **Reason**: PostgreSQL connections are bound to a single database
-- **Example**: If Romancy uses `postgresql://user:pass@localhost/myapp`, your tables must also be in the `myapp` database
+- **Example**: If Selvedge uses `postgresql://user:pass@localhost/myapp`, your tables must also be in the `myapp` database
 
 **MySQL**:
 
-- **Requirement**: Your tables and Romancy's tables must be in the **same MySQL database**
+- **Requirement**: Your tables and Selvedge's tables must be in the **same MySQL database**
 - **Reason**: While MySQL technically allows cross-database transactions, we recommend using the same database for simplicity
-- **Example**: If Romancy uses `mysql://user:pass@localhost/myapp`, your tables should also be in the `myapp` database
+- **Example**: If Selvedge uses `mysql://user:pass@localhost/myapp`, your tables should also be in the `myapp` database
 
 **SQLite**:
 
-- **Requirement**: Your tables and Romancy's tables must be in the **same SQLite file**
+- **Requirement**: Your tables and Selvedge's tables must be in the **same SQLite file**
 - **Reason**: SQLite is file-based; cross-file transactions are not possible
-- **Example**: If Romancy uses `workflow.db`, your tables must also be in `workflow.db`
+- **Example**: If Selvedge uses `workflow.db`, your tables must also be in `workflow.db`
 
-**Best Practice**: Use the same database for both Romancy and your application tables. This simplifies deployment and ensures transactional consistency.
+**Best Practice**: Use the same database for both Selvedge and your application tables. This simplifies deployment and ensures transactional consistency.
 
 ### Key Points
 
 1. **Database Requirement**: See [Database Requirements](#database-requirements-for-custom-database-operations) above for PostgreSQL/MySQL/SQLite specifics
-2. **Session Access**: `ctx.Session()` provides Romancy's managed session
-3. **Automatic Management**: Romancy handles begin/commit/rollback automatically
+2. **Session Access**: `ctx.Session()` provides Selvedge's managed session
+3. **Automatic Management**: Selvedge handles begin/commit/rollback automatically
 4. **Atomic Guarantee**: Order creation + event publishing commit together
 5. **Rollback Safety**: If any step fails, everything rolls back
 
@@ -1045,7 +1045,7 @@ When using `ctx.Session()` to access Romancy's managed session for custom databa
 
 ```
 1. Order saved to YOUR database (orders table)
-2. Event saved to Romancy's outbox (outbox_events table)
+2. Event saved to Selvedge's outbox (outbox_events table)
 3. Both committed atomically (COMMIT)
 4. Outbox Relayer publishes event (async, background)
 5. Event delivered to broker (at-least-once guarantee)
@@ -1057,8 +1057,8 @@ When using `ctx.Session()` to access Romancy's managed session for custom databa
 
 - ✅ **Transactional Outbox Pattern**: Solves the dual-write problem
 - ✅ **SendEventTransactional()**: Writes events to outbox table
-- ✅ **ctx.Session()**: Access Romancy's managed session for custom database operations
-- ✅ **Automatic Transaction Management**: Romancy handles begin/commit/rollback
+- ✅ **ctx.Session()**: Access Selvedge's managed session for custom database operations
+- ✅ **Automatic Transaction Management**: Selvedge handles begin/commit/rollback
 - ✅ **Rollback Safety**: All operations roll back on failure
 - ✅ **Outbox Relayer**: Publishes events asynchronously with retry
 - ✅ **At-Least-Once Delivery**: Guaranteed event delivery

@@ -3,11 +3,11 @@ title: "Event Waiting & Timers"
 weight: 1
 ---
 
-Romancy provides powerful event waiting capabilities that allow workflows to pause and wait for external events or timers without blocking worker processes. This enables efficient resource utilization and event-driven workflow orchestration.
+Selvedge provides powerful event waiting capabilities that allow workflows to pause and wait for external events or timers without blocking worker processes. This enables efficient resource utilization and event-driven workflow orchestration.
 
 ## Overview
 
-Event waiting in Romancy allows workflows to:
+Event waiting in Selvedge allows workflows to:
 
 - **Pause execution** and wait for external events
 - **Release worker processes** while waiting (non-blocking)
@@ -28,7 +28,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 // PaymentResult represents the result of payment processing
@@ -37,11 +37,11 @@ type PaymentResult struct {
 	Amount    float64 `json:"amount"`
 }
 
-var myWorkflow = romancy.DefineWorkflow("my_workflow",
-	func(ctx *romancy.WorkflowContext, input string) (PaymentResult, error) {
+var myWorkflow = selvedge.DefineWorkflow("my_workflow",
+	func(ctx *selvedge.WorkflowContext, input string) (PaymentResult, error) {
 		// Wait for an event (with 5-minute timeout)
-		event, err := romancy.WaitEvent(ctx, "payment.completed",
-			romancy.WithTimeout(5*time.Minute),
+		event, err := selvedge.WaitEvent(ctx, "payment.completed",
+			selvedge.WithTimeout(5*time.Minute),
 		)
 		if err != nil {
 			return PaymentResult{}, err
@@ -70,17 +70,17 @@ import (
 	"context"
 	"time"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 type SleepResult struct {
 	Status string `json:"status"`
 }
 
-var myWorkflow = romancy.DefineWorkflow("my_workflow",
-	func(ctx *romancy.WorkflowContext, input string) (SleepResult, error) {
+var myWorkflow = selvedge.DefineWorkflow("my_workflow",
+	func(ctx *selvedge.WorkflowContext, input string) (SleepResult, error) {
 		// Sleep for 60 seconds
-		err := romancy.Sleep(ctx, 60*time.Second)
+		err := selvedge.Sleep(ctx, 60*time.Second)
 		if err != nil {
 			return SleepResult{}, err
 		}
@@ -128,11 +128,11 @@ func WaitEvent(
 #### Error Handling
 
 ```go
-event, err := romancy.WaitEvent(ctx, "payment.completed",
-	romancy.WithTimeout(5*time.Minute),
+event, err := selvedge.WaitEvent(ctx, "payment.completed",
+	selvedge.WithTimeout(5*time.Minute),
 )
 if err != nil {
-	if errors.Is(err, romancy.ErrTimeout) {
+	if errors.Is(err, selvedge.ErrTimeout) {
 		// Handle timeout
 		return nil, fmt.Errorf("payment timed out")
 	}
@@ -150,7 +150,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 // PaymentCompleted represents payment completion data
@@ -166,11 +166,11 @@ type PaymentWorkflowResult struct {
 	PaymentID string `json:"payment_id"`
 }
 
-var paymentWorkflow = romancy.DefineWorkflow("payment_workflow",
-	func(ctx *romancy.WorkflowContext, orderID string) (PaymentWorkflowResult, error) {
+var paymentWorkflow = selvedge.DefineWorkflow("payment_workflow",
+	func(ctx *selvedge.WorkflowContext, orderID string) (PaymentWorkflowResult, error) {
 		// Wait for event
-		event, err := romancy.WaitEvent(ctx, "payment.completed",
-			romancy.WithTimeout(5*time.Minute),
+		event, err := selvedge.WaitEvent(ctx, "payment.completed",
+			selvedge.WithTimeout(5*time.Minute),
 		)
 		if err != nil {
 			return PaymentWorkflowResult{}, err
@@ -232,7 +232,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 type ScheduledTaskResult struct {
@@ -240,15 +240,15 @@ type ScheduledTaskResult struct {
 	Status string `json:"status"`
 }
 
-var scheduledTask = romancy.DefineWorkflow("scheduled_task",
-	func(ctx *romancy.WorkflowContext, taskID string) (ScheduledTaskResult, error) {
+var scheduledTask = selvedge.DefineWorkflow("scheduled_task",
+	func(ctx *selvedge.WorkflowContext, taskID string) (ScheduledTaskResult, error) {
 		// Execute immediately
 		if _, err := performInitialTask.Execute(ctx, taskID); err != nil {
 			return ScheduledTaskResult{}, err
 		}
 
 		// Sleep for 1 hour
-		if err := romancy.Sleep(ctx, 1*time.Hour); err != nil {
+		if err := selvedge.Sleep(ctx, 1*time.Hour); err != nil {
 			return ScheduledTaskResult{}, err
 		}
 
@@ -271,7 +271,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 type PaymentInitResult struct {
@@ -282,8 +282,8 @@ type PaymentTimeoutResult struct {
 	Status string `json:"status"`
 }
 
-var paymentWithTimeout = romancy.DefineWorkflow("payment_with_timeout",
-	func(ctx *romancy.WorkflowContext, orderID string) (PaymentTimeoutResult, error) {
+var paymentWithTimeout = selvedge.DefineWorkflow("payment_with_timeout",
+	func(ctx *selvedge.WorkflowContext, orderID string) (PaymentTimeoutResult, error) {
 		// Initiate payment
 		paymentResult, err := initiatePayment.Execute(ctx, orderID)
 		if err != nil {
@@ -292,11 +292,11 @@ var paymentWithTimeout = romancy.DefineWorkflow("payment_with_timeout",
 		paymentID := paymentResult.PaymentID
 
 		// Wait for payment completion (5-minute timeout)
-		event, err := romancy.WaitEvent(ctx, "payment.completed",
-			romancy.WithTimeout(5*time.Minute),
+		event, err := selvedge.WaitEvent(ctx, "payment.completed",
+			selvedge.WithTimeout(5*time.Minute),
 		)
 		if err != nil {
-			if errors.Is(err, romancy.ErrTimeout) {
+			if errors.Is(err, selvedge.ErrTimeout) {
 				// Timeout occurred - cancel payment and order
 				if _, err := cancelPayment.Execute(ctx, paymentID); err != nil {
 					return PaymentTimeoutResult{}, err
@@ -336,7 +336,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 type ApprovalResult struct {
@@ -345,27 +345,27 @@ type ApprovalResult struct {
 	Escalated bool   `json:"escalated"`
 }
 
-var approvalWorkflow = romancy.DefineWorkflow("approval_workflow",
-	func(ctx *romancy.WorkflowContext, requestID string) (ApprovalResult, error) {
+var approvalWorkflow = selvedge.DefineWorkflow("approval_workflow",
+	func(ctx *selvedge.WorkflowContext, requestID string) (ApprovalResult, error) {
 		// Send approval request to manager
 		if _, err := sendApprovalRequest.Execute(ctx, requestID, "manager"); err != nil {
 			return ApprovalResult{}, err
 		}
 
 		// Wait for manager approval (24 hours)
-		event, err := romancy.WaitEvent(ctx, "approval.decision",
-			romancy.WithTimeout(24*time.Hour),
+		event, err := selvedge.WaitEvent(ctx, "approval.decision",
+			selvedge.WithTimeout(24*time.Hour),
 		)
 		if err != nil {
-			if errors.Is(err, romancy.ErrTimeout) {
+			if errors.Is(err, selvedge.ErrTimeout) {
 				// Escalate to director
 				if _, err := sendApprovalRequest.Execute(ctx, requestID, "director"); err != nil {
 					return ApprovalResult{}, err
 				}
 
 				// Wait for director approval (24 hours)
-				event, err = romancy.WaitEvent(ctx, "approval.decision",
-					romancy.WithTimeout(24*time.Hour),
+				event, err = selvedge.WaitEvent(ctx, "approval.decision",
+					selvedge.WithTimeout(24*time.Hour),
 				)
 				if err != nil {
 					return ApprovalResult{}, err
@@ -397,7 +397,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 // BatchItem represents an item to process
@@ -415,8 +415,8 @@ type BatchProcessorResult struct {
 	Results []BatchResult `json:"results"`
 }
 
-var batchProcessor = romancy.DefineWorkflow("batch_processor",
-	func(ctx *romancy.WorkflowContext, input BatchInput) (BatchProcessorResult, error) {
+var batchProcessor = selvedge.DefineWorkflow("batch_processor",
+	func(ctx *selvedge.WorkflowContext, input BatchInput) (BatchProcessorResult, error) {
 		batchSize := 10
 		results := make([]BatchResult, 0)
 
@@ -436,7 +436,7 @@ var batchProcessor = romancy.DefineWorkflow("batch_processor",
 
 			// Sleep between batches (except for last batch)
 			if end < len(input.Items) {
-				if err := romancy.Sleep(ctx, 5*time.Second); err != nil {
+				if err := selvedge.Sleep(ctx, 5*time.Second); err != nil {
 					return BatchProcessorResult{}, err
 				}
 			}
@@ -464,7 +464,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 type ServiceResult struct {
@@ -478,8 +478,8 @@ type OrchestrationResult struct {
 	ServiceC ServiceResult `json:"service_c"`
 }
 
-var multiServiceOrchestration = romancy.DefineWorkflow("multi_service_orchestration",
-	func(ctx *romancy.WorkflowContext, requestID string) (OrchestrationResult, error) {
+var multiServiceOrchestration = selvedge.DefineWorkflow("multi_service_orchestration",
+	func(ctx *selvedge.WorkflowContext, requestID string) (OrchestrationResult, error) {
 		// Start all services
 		if _, err := triggerServiceA.Execute(ctx, requestID); err != nil {
 			return OrchestrationResult{}, err
@@ -494,8 +494,8 @@ var multiServiceOrchestration = romancy.DefineWorkflow("multi_service_orchestrat
 		var result OrchestrationResult
 
 		// Wait for Service A
-		eventA, err := romancy.WaitEvent(ctx, "service.a.completed",
-			romancy.WithTimeout(10*time.Minute),
+		eventA, err := selvedge.WaitEvent(ctx, "service.a.completed",
+			selvedge.WithTimeout(10*time.Minute),
 		)
 		if err != nil {
 			return OrchestrationResult{}, err
@@ -506,8 +506,8 @@ var multiServiceOrchestration = romancy.DefineWorkflow("multi_service_orchestrat
 		}
 
 		// Wait for Service B
-		eventB, err := romancy.WaitEvent(ctx, "service.b.completed",
-			romancy.WithTimeout(10*time.Minute),
+		eventB, err := selvedge.WaitEvent(ctx, "service.b.completed",
+			selvedge.WithTimeout(10*time.Minute),
 		)
 		if err != nil {
 			return OrchestrationResult{}, err
@@ -518,8 +518,8 @@ var multiServiceOrchestration = romancy.DefineWorkflow("multi_service_orchestrat
 		}
 
 		// Wait for Service C
-		eventC, err := romancy.WaitEvent(ctx, "service.c.completed",
-			romancy.WithTimeout(10*time.Minute),
+		eventC, err := selvedge.WaitEvent(ctx, "service.c.completed",
+			selvedge.WithTimeout(10*time.Minute),
 		)
 		if err != nil {
 			return OrchestrationResult{}, err
@@ -569,7 +569,7 @@ func sendPaymentCompletedEvent() error {
 		return err
 	}
 
-	// Send to Romancy
+	// Send to Selvedge
 	req, err := http.NewRequest("POST", "http://localhost:8001/", bytes.NewBuffer(eventBytes))
 	if err != nil {
 		return err
@@ -616,21 +616,21 @@ package main
 import (
 	"context"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 type ProcessPaymentResult struct {
 	Processed bool `json:"processed"`
 }
 
-var processPayment = romancy.DefineActivity("process_payment",
+var processPayment = selvedge.DefineActivity("process_payment",
 	func(ctx context.Context, paymentData PaymentData) (ProcessPaymentResult, error) {
-		wfCtx := romancy.GetWorkflowContext(ctx)
+		wfCtx := selvedge.GetWorkflowContext(ctx)
 
 		// Process payment...
 
 		// Send event to resume waiting workflows
-		err := romancy.SendEvent(wfCtx,
+		err := selvedge.SendEvent(wfCtx,
 			"payment.completed",
 			"payment-processor",
 			map[string]any{
@@ -661,22 +661,22 @@ Prevent workflows from waiting indefinitely:
 
 ```go
 // Good: Has timeout
-event, err := romancy.WaitEvent(ctx, "payment.completed",
-	romancy.WithTimeout(5*time.Minute),
+event, err := selvedge.WaitEvent(ctx, "payment.completed",
+	selvedge.WithTimeout(5*time.Minute),
 )
 
 // Bad: No timeout (could wait forever)
-event, err := romancy.WaitEvent(ctx, "payment.completed")
+event, err := selvedge.WaitEvent(ctx, "payment.completed")
 ```
 
 ### 2. Handle Timeout Gracefully
 
 ```go
-event, err := romancy.WaitEvent(ctx, "approval.decision",
-	romancy.WithTimeout(1*time.Hour),
+event, err := selvedge.WaitEvent(ctx, "approval.decision",
+	selvedge.WithTimeout(1*time.Hour),
 )
 if err != nil {
-	if errors.Is(err, romancy.ErrTimeout) {
+	if errors.Is(err, selvedge.ErrTimeout) {
 		// Handle timeout scenario
 		return handleTimeoutScenario(ctx)
 	}
@@ -691,16 +691,16 @@ Avoid event type collisions:
 
 ```go
 // Good: Specific event types
-event, _ := romancy.WaitEvent(ctx, "order.payment.completed",
-	romancy.WithTimeout(5*time.Minute),
+event, _ := selvedge.WaitEvent(ctx, "order.payment.completed",
+	selvedge.WithTimeout(5*time.Minute),
 )
-event, _ := romancy.WaitEvent(ctx, "subscription.payment.completed",
-	romancy.WithTimeout(5*time.Minute),
+event, _ := selvedge.WaitEvent(ctx, "subscription.payment.completed",
+	selvedge.WithTimeout(5*time.Minute),
 )
 
 // Bad: Generic event type
-event, _ := romancy.WaitEvent(ctx, "completed",
-	romancy.WithTimeout(5*time.Minute),
+event, _ := selvedge.WaitEvent(ctx, "completed",
+	selvedge.WithTimeout(5*time.Minute),
 ) // Too generic
 ```
 
@@ -714,17 +714,17 @@ type OrderWorkflowResult struct {
 	Amount    float64 `json:"amount"`
 }
 
-var orderWorkflow = romancy.DefineWorkflow("order_workflow",
-	func(ctx *romancy.WorkflowContext, orderID string) (OrderWorkflowResult, error) {
+var orderWorkflow = selvedge.DefineWorkflow("order_workflow",
+	func(ctx *selvedge.WorkflowContext, orderID string) (OrderWorkflowResult, error) {
 		// Send order_id as part of event type for correlation
 		if _, err := initiatePayment.Execute(ctx, orderID); err != nil {
 			return OrderWorkflowResult{}, err
 		}
 
 		// Wait for event with matching order_id
-		event, err := romancy.WaitEvent(ctx,
+		event, err := selvedge.WaitEvent(ctx,
 			fmt.Sprintf("payment.completed.%s", orderID),
-			romancy.WithTimeout(5*time.Minute),
+			selvedge.WithTimeout(5*time.Minute),
 		)
 		if err != nil {
 			return OrderWorkflowResult{}, err
@@ -752,8 +752,8 @@ type IdempotentResult struct {
 	Status    string `json:"status"`
 }
 
-var idempotentWorkflow = romancy.DefineWorkflow("idempotent_workflow",
-	func(ctx *romancy.WorkflowContext, requestID string) (IdempotentResult, error) {
+var idempotentWorkflow = selvedge.DefineWorkflow("idempotent_workflow",
+	func(ctx *selvedge.WorkflowContext, requestID string) (IdempotentResult, error) {
 		// Check if already processed
 		result, err := isAlreadyProcessed.Execute(ctx, requestID)
 		if err != nil {
@@ -764,9 +764,9 @@ var idempotentWorkflow = romancy.DefineWorkflow("idempotent_workflow",
 		}
 
 		// Wait for event
-		event, err := romancy.WaitEvent(ctx,
+		event, err := selvedge.WaitEvent(ctx,
 			fmt.Sprintf("process.%s", requestID),
-			romancy.WithTimeout(10*time.Minute),
+			selvedge.WithTimeout(10*time.Minute),
 		)
 		if err != nil {
 			return IdempotentResult{}, err
@@ -789,17 +789,17 @@ type MultiEventResult struct {
 	Status string `json:"status"`
 }
 
-var multiEventWorkflow = romancy.DefineWorkflow("multi_event_workflow",
-	func(ctx *romancy.WorkflowContext, orderID string) (MultiEventResult, error) {
+var multiEventWorkflow = selvedge.DefineWorkflow("multi_event_workflow",
+	func(ctx *selvedge.WorkflowContext, orderID string) (MultiEventResult, error) {
 		// Option 1: Sequential checks with short timeouts
-		event, err := romancy.WaitEvent(ctx, "payment.completed",
-			romancy.WithTimeout(1*time.Minute),
+		event, err := selvedge.WaitEvent(ctx, "payment.completed",
+			selvedge.WithTimeout(1*time.Minute),
 		)
 		if err != nil {
-			if errors.Is(err, romancy.ErrTimeout) {
+			if errors.Is(err, selvedge.ErrTimeout) {
 				// Try waiting for failure event
-				event, err = romancy.WaitEvent(ctx, "payment.failed",
-					romancy.WithTimeout(1*time.Minute),
+				event, err = selvedge.WaitEvent(ctx, "payment.failed",
+					selvedge.WithTimeout(1*time.Minute),
 				)
 				if err != nil {
 					return MultiEventResult{}, err
@@ -828,12 +828,12 @@ type FilteredEventResult struct {
 	Status string `json:"status"`
 }
 
-var filteredEventWorkflow = romancy.DefineWorkflow("filtered_event_workflow",
-	func(ctx *romancy.WorkflowContext, userID string) (FilteredEventResult, error) {
+var filteredEventWorkflow = selvedge.DefineWorkflow("filtered_event_workflow",
+	func(ctx *selvedge.WorkflowContext, userID string) (FilteredEventResult, error) {
 		// Wait for event specific to this user
-		event, err := romancy.WaitEvent(ctx,
+		event, err := selvedge.WaitEvent(ctx,
 			fmt.Sprintf("user.action.%s", userID),
-			romancy.WithTimeout(5*time.Minute),
+			selvedge.WithTimeout(5*time.Minute),
 		)
 		if err != nil {
 			return FilteredEventResult{}, err
@@ -860,14 +860,14 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 // Cancel via HTTP API
 // POST /cancel/{instance_id}
 
 // Or programmatically
-func cancelWaitingWorkflow(ctx context.Context, app *romancy.App, instanceID string) error {
+func cancelWaitingWorkflow(ctx context.Context, app *selvedge.App, instanceID string) error {
 	return app.CancelWorkflow(ctx, instanceID)
 }
 ```
@@ -876,7 +876,7 @@ func cancelWaitingWorkflow(ctx context.Context, app *romancy.App, instanceID str
 
 ### Viewer UI
 
-The Romancy Viewer shows waiting workflows:
+The Selvedge Viewer shows waiting workflows:
 
 - Status: `waiting_for_event` or `waiting_for_timer`
 - Event type being waited for
@@ -895,19 +895,19 @@ import (
 	"log"
 	"time"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 type LoggedResult struct {
 	EventID string `json:"event_id"`
 }
 
-var loggedWorkflow = romancy.DefineWorkflow("logged_workflow",
-	func(ctx *romancy.WorkflowContext, input string) (LoggedResult, error) {
+var loggedWorkflow = selvedge.DefineWorkflow("logged_workflow",
+	func(ctx *selvedge.WorkflowContext, input string) (LoggedResult, error) {
 		log.Printf("Waiting for payment event, instance: %s", ctx.InstanceID())
 
-		event, err := romancy.WaitEvent(ctx, "payment.completed",
-			romancy.WithTimeout(5*time.Minute),
+		event, err := selvedge.WaitEvent(ctx, "payment.completed",
+			selvedge.WithTimeout(5*time.Minute),
 		)
 		if err != nil {
 			log.Printf("Wait event error: %v", err)
@@ -930,11 +930,11 @@ import (
 	"context"
 	"log"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 type DebugHooks struct {
-	romancy.HooksBase
+	selvedge.HooksBase
 }
 
 func (h *DebugHooks) OnEventReceived(ctx context.Context, instanceID, eventType string, eventData any) {
@@ -942,9 +942,9 @@ func (h *DebugHooks) OnEventReceived(ctx context.Context, instanceID, eventType 
 }
 
 func main() {
-	app := romancy.NewApp(
-		romancy.WithDatabase("workflow.db"),
-		romancy.WithHooks(&DebugHooks{}),
+	app := selvedge.NewApp(
+		selvedge.WithDatabase("workflow.db"),
+		selvedge.WithHooks(&DebugHooks{}),
 	)
 	// ...
 }

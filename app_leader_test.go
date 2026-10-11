@@ -1,4 +1,4 @@
-package romancy
+package selvedge
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/i2y/romancy/internal/storage"
+	"github.com/CaliLuke/selvedge/internal/storage"
 )
 
 func TestLeaderElection_SingleWorker(t *testing.T) {
@@ -135,11 +135,11 @@ func TestLeaderElection_LeaderTasksRunning(t *testing.T) {
 // Shutdown, a fresh App pointed at the same database can immediately
 // acquire leadership without waiting for the previous worker's lease
 // TTL to expire. Regression test for the bug where Shutdown left the
-// "romancy_leader" system lock in place, costing single-node
+// "selvedge_leader" system lock in place, costing single-node
 // deployments up to LeaseDuration of unavailability after every
 // graceful restart.
 func TestLeaderElection_PostShutdownTakeover(t *testing.T) {
-	tmpFile, err := os.CreateTemp("", "romancy-takeover-*.db")
+	tmpFile, err := os.CreateTemp("", "selvedge-takeover-*.db")
 	if err != nil {
 		t.Fatalf("create temp db: %v", err)
 	}

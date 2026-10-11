@@ -1,4 +1,4 @@
-module github.com/i2y/romancy
+module github.com/CaliLuke/selvedge
 
 go 1.24.3
 

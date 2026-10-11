@@ -3,7 +3,7 @@ title: "Workflows & Activities"
 weight: 1
 ---
 
-This guide covers the basics of creating workflows and activities in Romancy.
+This guide covers the basics of creating workflows and activities in Selvedge.
 
 ## DefineWorkflow
 
@@ -15,7 +15,7 @@ This guide covers the basics of creating workflows and activities in Romancy.
 package main
 
 import (
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 type MyInput struct {
@@ -28,8 +28,8 @@ type MyResult struct {
 	Param2 int    `json:"param2"`
 }
 
-var myWorkflow = romancy.DefineWorkflow("my_workflow",
-	func(ctx *romancy.WorkflowContext, input MyInput) (MyResult, error) {
+var myWorkflow = selvedge.DefineWorkflow("my_workflow",
+	func(ctx *selvedge.WorkflowContext, input MyInput) (MyResult, error) {
 		// Orchestration logic here
 		result, err := someActivity.Execute(ctx, input.Param1)
 		if err != nil {
@@ -44,13 +44,13 @@ var myWorkflow = romancy.DefineWorkflow("my_workflow",
 
 | Option | Description |
 |--------|-------------|
-| `romancy.WithEventHandler(true)` | Automatically registers as CloudEvents handler |
+| `selvedge.WithEventHandler(true)` | Automatically registers as CloudEvents handler |
 
 ### Starting Workflows
 
 ```go
 // Start a workflow programmatically
-instanceID, err := romancy.StartWorkflow(ctx, app, myWorkflow, MyInput{
+instanceID, err := selvedge.StartWorkflow(ctx, app, myWorkflow, MyInput{
 	Param1: "hello",
 	Param2: 42,
 })
@@ -68,20 +68,20 @@ type OrderResult struct {
 	OrderID string `json:"order_id"`
 }
 
-var orderWorkflow = romancy.DefineWorkflow("order_workflow",
-	func(ctx *romancy.WorkflowContext, orderID string) (OrderResult, error) {
+var orderWorkflow = selvedge.DefineWorkflow("order_workflow",
+	func(ctx *selvedge.WorkflowContext, orderID string) (OrderResult, error) {
 		// This workflow will automatically handle CloudEvents
 		// with type="order_workflow"
 		return OrderResult{Status: "completed", OrderID: orderID}, nil
 	},
-	romancy.WithEventHandler(true), // Enable CloudEvents auto-registration
+	selvedge.WithEventHandler(true), // Enable CloudEvents auto-registration
 )
 ```
 
 **How it works:**
 
 1. CloudEvent arrives with `type="order_workflow"`
-2. Romancy extracts `data` from the event
+2. Selvedge extracts `data` from the event
 3. Workflow starts with `data` as parameters
 4. Workflow instance ID is returned
 
@@ -99,7 +99,7 @@ type EmailResult struct {
 	MessageID string `json:"message_id"`
 }
 
-var sendEmail = romancy.DefineActivity("send_email",
+var sendEmail = selvedge.DefineActivity("send_email",
 	func(ctx context.Context, email, subject string) (EmailResult, error) {
 		// Call external service
 		response, err := emailService.Send(email, subject)
@@ -123,7 +123,7 @@ type OrderResult struct {
 	OrderID string `json:"order_id"`
 }
 
-var createOrder = romancy.DefineActivity("create_order",
+var createOrder = selvedge.DefineActivity("create_order",
 	func(ctx context.Context, orderID string) (OrderResult, error) {
 		// All operations in a single transaction:
 		// 1. Activity execution
@@ -139,10 +139,10 @@ var createOrder = romancy.DefineActivity("create_order",
 For atomic operations with your own database tables, use the session from WorkflowContext:
 
 ```go
-var createOrderWithDB = romancy.DefineActivity("create_order_with_db",
+var createOrderWithDB = selvedge.DefineActivity("create_order_with_db",
 	func(ctx context.Context, orderID string) (OrderResult, error) {
 		// Access workflow context for session
-		wfCtx := romancy.GetWorkflowContext(ctx)
+		wfCtx := selvedge.GetWorkflowContext(ctx)
 		session := wfCtx.Session()
 
 		// Your database operations
@@ -151,7 +151,7 @@ var createOrderWithDB = romancy.DefineActivity("create_order_with_db",
 			return OrderResult{}, err
 		}
 
-		// Romancy automatically commits (or rolls back on error)
+		// Selvedge automatically commits (or rolls back on error)
 		return OrderResult{OrderID: orderID}, nil
 	},
 )
@@ -170,7 +170,7 @@ type PaymentResult struct {
 	TransactionID string `json:"transaction_id"`
 }
 
-var callPaymentAPI = romancy.DefineActivity("call_payment_api",
+var callPaymentAPI = selvedge.DefineActivity("call_payment_api",
 	func(ctx context.Context, amount float64) (PaymentResult, error) {
 		// Default: 5 attempts with exponential backoff
 		response, err := paymentService.Charge(amount)
@@ -201,7 +201,7 @@ type PaymentStatusResult struct {
 	Status string `json:"status"`
 }
 
-var criticalPayment = romancy.DefineActivity("critical_payment",
+var criticalPayment = selvedge.DefineActivity("critical_payment",
 	func(ctx context.Context, orderID string) (PaymentStatusResult, error) {
 		response, err := paymentService.Process(orderID)
 		if err != nil {
@@ -209,7 +209,7 @@ var criticalPayment = romancy.DefineActivity("critical_payment",
 		}
 		return PaymentStatusResult{Status: response.Status}, nil
 	},
-	romancy.WithRetryPolicy(&retry.Policy{
+	selvedge.WithRetryPolicy(&retry.Policy{
 		MaxAttempts:     10,                      // More attempts for critical operations
 		InitialInterval: 500 * time.Millisecond, // Faster initial retry
 		Multiplier:      1.5,                    // Slower exponential growth
@@ -232,9 +232,9 @@ var criticalPayment = romancy.DefineActivity("critical_payment",
 Set a default retry policy for all activities in your application:
 
 ```go
-app := romancy.NewApp(
-	romancy.WithDatabase("postgres://localhost/workflows"),
-	romancy.WithDefaultRetryPolicy(&retry.Policy{
+app := selvedge.NewApp(
+	selvedge.WithDatabase("postgres://localhost/workflows"),
+	selvedge.WithDefaultRetryPolicy(&retry.Policy{
 		MaxAttempts:     10,
 		InitialInterval: 2 * time.Second,
 		MaxInterval:     2 * time.Minute,
@@ -258,7 +258,7 @@ type ValidationResult struct {
 	Valid   bool   `json:"valid"`
 }
 
-var validateOrder = romancy.DefineActivity("validate_order",
+var validateOrder = selvedge.DefineActivity("validate_order",
 	func(ctx context.Context, orderID string) (ValidationResult, error) {
 		order, err := db.GetOrder(orderID)
 		if err != nil {
@@ -267,12 +267,12 @@ var validateOrder = romancy.DefineActivity("validate_order",
 
 		if order == nil {
 			// Don't retry - order doesn't exist
-			return ValidationResult{}, romancy.TerminalError(fmt.Errorf("order %s not found", orderID))
+			return ValidationResult{}, selvedge.TerminalError(fmt.Errorf("order %s not found", orderID))
 		}
 
 		if order.Status == "cancelled" {
 			// Business rule violation - don't retry
-			return ValidationResult{}, romancy.TerminalError(fmt.Errorf("order %s is cancelled", orderID))
+			return ValidationResult{}, selvedge.TerminalError(fmt.Errorf("order %s is cancelled", orderID))
 		}
 
 		return ValidationResult{OrderID: orderID, Valid: true}, nil
@@ -289,63 +289,63 @@ var validateOrder = romancy.DefineActivity("validate_order",
 
 ### Built-in Retry Policies
 
-Romancy provides helper functions for common scenarios:
+Selvedge provides helper functions for common scenarios:
 
 ```go
-import "github.com/i2y/romancy/retry"
+import "github.com/CaliLuke/selvedge/retry"
 
 type ProcessResult struct {
 	Processed bool `json:"processed"`
 }
 
 // Default policy (5 attempts, exponential backoff)
-var defaultActivity = romancy.DefineActivity("default_activity",
+var defaultActivity = selvedge.DefineActivity("default_activity",
 	func(ctx context.Context, data string) (ProcessResult, error) {
 		return ProcessResult{Processed: true}, nil
 	},
-	romancy.WithRetryPolicy(retry.DefaultPolicy()),
+	selvedge.WithRetryPolicy(retry.DefaultPolicy()),
 )
 
 // No retries - fail immediately
-var noRetryActivity = romancy.DefineActivity("no_retry_activity",
+var noRetryActivity = selvedge.DefineActivity("no_retry_activity",
 	func(ctx context.Context, data string) (ProcessResult, error) {
 		return ProcessResult{Processed: true}, nil
 	},
-	romancy.WithRetryPolicy(retry.NoRetry()),
+	selvedge.WithRetryPolicy(retry.NoRetry()),
 )
 
 // Fixed interval retries
-var fixedRetryActivity = romancy.DefineActivity("fixed_retry_activity",
+var fixedRetryActivity = selvedge.DefineActivity("fixed_retry_activity",
 	func(ctx context.Context, data string) (ProcessResult, error) {
 		return ProcessResult{Processed: true}, nil
 	},
-	romancy.WithRetryPolicy(retry.Fixed(5, 2*time.Second)), // 5 attempts, 2s interval
+	selvedge.WithRetryPolicy(retry.Fixed(5, 2*time.Second)), // 5 attempts, 2s interval
 )
 
 // Exponential backoff
-var exponentialActivity = romancy.DefineActivity("exponential_activity",
+var exponentialActivity = selvedge.DefineActivity("exponential_activity",
 	func(ctx context.Context, data string) (ProcessResult, error) {
 		return ProcessResult{Processed: true}, nil
 	},
-	romancy.WithRetryPolicy(retry.Exponential(10, 100*time.Millisecond, 30*time.Second)),
+	selvedge.WithRetryPolicy(retry.Exponential(10, 100*time.Millisecond, 30*time.Second)),
 )
 ```
 
 ## Activity IDs and Deterministic Replay
 
-Romancy automatically assigns IDs to activities for deterministic replay after crashes. Understanding when to use manual IDs vs. auto-generated IDs is important.
+Selvedge automatically assigns IDs to activities for deterministic replay after crashes. Understanding when to use manual IDs vs. auto-generated IDs is important.
 
 ### Auto-Generated IDs (Default - Recommended)
 
-For **sequential execution**, Romancy automatically generates IDs in the format `"{function_name}:{counter}"`:
+For **sequential execution**, Selvedge automatically generates IDs in the format `"{function_name}:{counter}"`:
 
 ```go
 type WorkflowResult struct {
 	Status string `json:"status"`
 }
 
-var myWorkflow = romancy.DefineWorkflow("my_workflow",
-	func(ctx *romancy.WorkflowContext, orderID string) (WorkflowResult, error) {
+var myWorkflow = selvedge.DefineWorkflow("my_workflow",
+	func(ctx *selvedge.WorkflowContext, orderID string) (WorkflowResult, error) {
 		// Auto-generated IDs: "validate:1", "process:1", "notify:1"
 		_, _ = validate.Execute(ctx, orderID)    // "validate:1"
 		_, _ = process.Execute(ctx, orderID)     // "process:1"
@@ -373,8 +373,8 @@ type LoanResult struct {
 	ApplicantID string `json:"applicant_id"`
 }
 
-var loanApproval = romancy.DefineWorkflow("loan_approval",
-	func(ctx *romancy.WorkflowContext, applicantID string) (LoanResult, error) {
+var loanApproval = selvedge.DefineWorkflow("loan_approval",
+	func(ctx *selvedge.WorkflowContext, applicantID string) (LoanResult, error) {
 		creditResult, _ := checkCredit.Execute(ctx, applicantID) // "check_credit:1"
 
 		if creditResult.Score >= 700 {
@@ -402,8 +402,8 @@ type ConcurrentResult struct {
 	Results []FetchResult `json:"results"`
 }
 
-var concurrentWorkflow = romancy.DefineWorkflow("concurrent_workflow",
-	func(ctx *romancy.WorkflowContext, urls []string) (ConcurrentResult, error) {
+var concurrentWorkflow = selvedge.DefineWorkflow("concurrent_workflow",
+	func(ctx *selvedge.WorkflowContext, urls []string) (ConcurrentResult, error) {
 		// Manual IDs required for concurrent execution
 		var wg sync.WaitGroup
 		results := make([]FetchResult, len(urls))
@@ -414,7 +414,7 @@ var concurrentWorkflow = romancy.DefineWorkflow("concurrent_workflow",
 				defer wg.Done()
 				// Use WithActivityID for concurrent execution
 				result, _ := fetchData.Execute(ctx, u,
-					romancy.WithActivityID(fmt.Sprintf("fetch_data:%d", idx+1)))
+					selvedge.WithActivityID(fmt.Sprintf("fetch_data:%d", idx+1)))
 				results[idx] = result
 			}(i, url)
 		}
@@ -441,8 +441,8 @@ result2, _ := activityTwo.Execute(ctx, data)
 ❌ **Don't:** Manually specify IDs for sequential execution
 ```go
 // Unnecessary - adds noise
-result1, _ := activityOne.Execute(ctx, data, romancy.WithActivityID("activity_one:1"))
-result2, _ := activityTwo.Execute(ctx, data, romancy.WithActivityID("activity_two:1"))
+result1, _ := activityOne.Execute(ctx, data, selvedge.WithActivityID("activity_one:1"))
+result2, _ := activityTwo.Execute(ctx, data, selvedge.WithActivityID("activity_two:1"))
 ```
 
 ## Workflow vs. Activity: When to Use Which?
@@ -466,8 +466,8 @@ type AccountResult struct {
 	Email     string `json:"email"`
 }
 
-var userOnboarding = romancy.DefineWorkflow("user_onboarding",
-	func(ctx *romancy.WorkflowContext, userID string) (OnboardingResult, error) {
+var userOnboarding = selvedge.DefineWorkflow("user_onboarding",
+	func(ctx *selvedge.WorkflowContext, userID string) (OnboardingResult, error) {
 		// Orchestration logic
 		account, _ := createAccount.Execute(ctx, userID)
 		_, _ = sendWelcomeEmail.Execute(ctx, account.Email)
@@ -488,7 +488,7 @@ var userOnboarding = romancy.DefineWorkflow("user_onboarding",
 **Example:**
 
 ```go
-var createAccount = romancy.DefineActivity("create_account",
+var createAccount = selvedge.DefineActivity("create_account",
 	func(ctx context.Context, userID string) (AccountResult, error) {
 		// Business logic
 		account, err := db.CreateUser(userID)
@@ -515,7 +515,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 // Data models
@@ -553,7 +553,7 @@ type UserProfileResult struct {
 }
 
 // Activities
-var createDatabaseRecord = romancy.DefineActivity("create_database_record",
+var createDatabaseRecord = selvedge.DefineActivity("create_database_record",
 	func(ctx context.Context, userID, email, name string) (DatabaseRecordResult, error) {
 		fmt.Printf("Creating user %s in database\n", userID)
 		// Simulate database write
@@ -565,7 +565,7 @@ var createDatabaseRecord = romancy.DefineActivity("create_database_record",
 	},
 )
 
-var sendWelcomeEmail = romancy.DefineActivity("send_welcome_email",
+var sendWelcomeEmail = selvedge.DefineActivity("send_welcome_email",
 	func(ctx context.Context, email, name string) (WelcomeEmailResult, error) {
 		fmt.Printf("Sending welcome email to %s\n", email)
 		// Simulate email service
@@ -573,7 +573,7 @@ var sendWelcomeEmail = romancy.DefineActivity("send_welcome_email",
 	},
 )
 
-var createUserProfile = romancy.DefineActivity("create_user_profile",
+var createUserProfile = selvedge.DefineActivity("create_user_profile",
 	func(ctx context.Context, accountID, name string) (UserProfileResult, error) {
 		fmt.Printf("Creating profile for %s\n", accountID)
 		// Simulate profile creation
@@ -585,8 +585,8 @@ var createUserProfile = romancy.DefineActivity("create_user_profile",
 )
 
 // Workflow
-var userRegistrationWorkflow = romancy.DefineWorkflow("user_registration",
-	func(ctx *romancy.WorkflowContext, input UserInput) (UserResult, error) {
+var userRegistrationWorkflow = selvedge.DefineWorkflow("user_registration",
+	func(ctx *selvedge.WorkflowContext, input UserInput) (UserResult, error) {
 		// Step 1: Database record
 		account, err := createDatabaseRecord.Execute(ctx, input.UserID, input.Email, input.Name)
 		if err != nil {
@@ -614,9 +614,9 @@ var userRegistrationWorkflow = romancy.DefineWorkflow("user_registration",
 )
 
 func main() {
-	app := romancy.NewApp(
-		romancy.WithDatabase("users.db"),
-		romancy.WithWorkerID("worker-1"),
+	app := selvedge.NewApp(
+		selvedge.WithDatabase("users.db"),
+		selvedge.WithWorkerID("worker-1"),
 	)
 
 	ctx := context.Background()
@@ -627,7 +627,7 @@ func main() {
 	defer app.Shutdown(ctx)
 
 	// Start workflow
-	instanceID, err := romancy.StartWorkflow(ctx, app, userRegistrationWorkflow, UserInput{
+	instanceID, err := selvedge.StartWorkflow(ctx, app, userRegistrationWorkflow, UserInput{
 		UserID: "user_123",
 		Email:  "user@example.com",
 		Name:   "John Doe",
@@ -655,8 +655,8 @@ type InventoryResult struct {
 	Total float64 `json:"total"`
 }
 
-var processOrder = romancy.DefineWorkflow("process_order",
-	func(ctx *romancy.WorkflowContext, orderID string) (OrderProcessResult, error) {
+var processOrder = selvedge.DefineWorkflow("process_order",
+	func(ctx *selvedge.WorkflowContext, orderID string) (OrderProcessResult, error) {
 		inventory, _ := reserveInventory.Execute(ctx, orderID)
 		_, _ = processPayment.Execute(ctx, inventory.Total)
 		_, _ = shipOrder.Execute(ctx, orderID)
@@ -668,8 +668,8 @@ var processOrder = romancy.DefineWorkflow("process_order",
 ❌ **Bad:**
 
 ```go
-var processOrder = romancy.DefineWorkflow("process_order",
-	func(ctx *romancy.WorkflowContext, orderID string) (OrderProcessResult, error) {
+var processOrder = selvedge.DefineWorkflow("process_order",
+	func(ctx *selvedge.WorkflowContext, orderID string) (OrderProcessResult, error) {
 		// Don't put business logic in workflows!
 		inventoryData := db.Query("SELECT ...")  // ❌
 		total := calculateTotal(inventoryData)    // ❌
@@ -688,7 +688,7 @@ type SendEmailResult struct {
 	Sent bool `json:"sent"`
 }
 
-var sendEmail = romancy.DefineActivity("send_email",
+var sendEmail = selvedge.DefineActivity("send_email",
 	func(ctx context.Context, email, subject string) (SendEmailResult, error) {
 		// Single responsibility: send email
 		_, err := emailService.Send(email, subject)
@@ -703,7 +703,7 @@ var sendEmail = romancy.DefineActivity("send_email",
 ❌ **Bad:**
 
 ```go
-var sendEmailAndUpdateDBAndLog = romancy.DefineActivity("send_email_and_update_db_and_log",
+var sendEmailAndUpdateDBAndLog = selvedge.DefineActivity("send_email_and_update_db_and_log",
 	func(ctx context.Context, ...) (SendEmailResult, error) {
 		// Too many responsibilities!
 		emailService.Send(...)
@@ -730,8 +730,8 @@ type OrderWorkflowResult struct {
 	OrderID string `json:"order_id"`
 }
 
-var orderWorkflow = romancy.DefineWorkflow("order_workflow",
-	func(ctx *romancy.WorkflowContext, input OrderInput) (OrderWorkflowResult, error) {
+var orderWorkflow = selvedge.DefineWorkflow("order_workflow",
+	func(ctx *selvedge.WorkflowContext, input OrderInput) (OrderWorkflowResult, error) {
 		// Type-safe, structured input and output
 		return OrderWorkflowResult{Status: "completed", OrderID: input.OrderID}, nil
 	},
@@ -741,8 +741,8 @@ var orderWorkflow = romancy.DefineWorkflow("order_workflow",
 ❌ **Bad:**
 
 ```go
-var orderWorkflow = romancy.DefineWorkflow("order_workflow",
-	func(ctx *romancy.WorkflowContext, orderID string, amount float64) (OrderWorkflowResult, error) {
+var orderWorkflow = selvedge.DefineWorkflow("order_workflow",
+	func(ctx *selvedge.WorkflowContext, orderID string, amount float64) (OrderWorkflowResult, error) {
 		// Multiple parameters - harder to extend, no validation
 		return OrderWorkflowResult{}, nil
 	},
@@ -751,7 +751,7 @@ var orderWorkflow = romancy.DefineWorkflow("order_workflow",
 
 ## Managing Workflow Instances
 
-Romancy provides several methods for querying and managing workflow instances.
+Selvedge provides several methods for querying and managing workflow instances.
 
 ### Get a Specific Instance
 
@@ -769,7 +769,7 @@ fmt.Println(instance.Status, instance.WorkflowName)
 ### List Instances with Filters
 
 ```go
-import "github.com/i2y/romancy/internal/storage"
+import "github.com/CaliLuke/selvedge/internal/storage"
 
 result, err := app.ListInstances(ctx, storage.ListInstancesOptions{
     WorkflowNameFilter: "order",      // Partial match
@@ -851,7 +851,7 @@ result, err := app.FindInstancesWithOptions(ctx, storage.ListInstancesOptions{
 
 ## Next Steps
 
-- **[Durable Execution](/docs/core-features/durable-execution/replay)**: Learn how Romancy ensures workflows never lose progress
+- **[Durable Execution](/docs/core-features/durable-execution/replay)**: Learn how Selvedge ensures workflows never lose progress
 - **[Saga Pattern](/docs/core-features/saga-compensation)**: Automatic compensation on failure
 - **[Event Handling](/docs/core-features/events/wait-event)**: Wait for external events in workflows
 - **[Examples](/docs/examples/simple)**: See workflows and activities in action

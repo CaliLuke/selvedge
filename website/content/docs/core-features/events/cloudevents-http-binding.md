@@ -3,11 +3,11 @@ title: "CloudEvents HTTP Binding"
 weight: 2
 ---
 
-Romancy fully supports the [CloudEvents HTTP Protocol Binding specification](https://github.com/cloudevents/spec/blob/v1.0.2/cloudevents/bindings/http-protocol-binding), ensuring reliable event delivery and proper error handling.
+Selvedge fully supports the [CloudEvents HTTP Protocol Binding specification](https://github.com/cloudevents/spec/blob/v1.0.2/cloudevents/bindings/http-protocol-binding), ensuring reliable event delivery and proper error handling.
 
 ## Server Setup
 
-Romancy's `App` implements `http.Handler`, allowing easy integration with any HTTP server or router.
+Selvedge's `App` implements `http.Handler`, allowing easy integration with any HTTP server or router.
 
 ### Standalone Server
 
@@ -20,13 +20,13 @@ import (
 	"context"
 	"log"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 func main() {
 	ctx := context.Background()
 
-	app := romancy.NewApp(romancy.WithDatabase("app.db"))
+	app := selvedge.NewApp(selvedge.WithDatabase("app.db"))
 	if err := app.Start(ctx); err != nil {
 		log.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func main() {
 Mount the handler on an existing HTTP server:
 
 ```go
-app := romancy.NewApp(romancy.WithDatabase("app.db"))
+app := selvedge.NewApp(selvedge.WithDatabase("app.db"))
 app.Start(ctx)
 
 // Mount as http.Handler
@@ -84,7 +84,7 @@ The `app.Handler()` returns an `http.Handler` that provides:
 
 ## CloudEvents Content Modes
 
-Romancy supports both CloudEvents content modes:
+Selvedge supports both CloudEvents content modes:
 
 **Structured Mode (Recommended)**:
 - All CloudEvents attributes in JSON body
@@ -104,11 +104,11 @@ curl -X POST http://localhost:8001/ \
   -d '{"amount": 99.99}'
 ```
 
-Both modes are fully supported by Romancy's CloudEvents implementation.
+Both modes are fully supported by Selvedge's CloudEvents implementation.
 
 ## HTTP Response Status Codes
 
-Romancy returns appropriate HTTP status codes according to the CloudEvents specification:
+Selvedge returns appropriate HTTP status codes according to the CloudEvents specification:
 
 ### Success (202 Accepted)
 
@@ -241,7 +241,7 @@ import (
 	"time"
 )
 
-// ErrorResponse represents Romancy error response
+// ErrorResponse represents Selvedge error response
 type ErrorResponse struct {
 	Error     string `json:"error"`
 	ErrorType string `json:"error_type"`
@@ -328,14 +328,14 @@ func main() {
 
 ## CloudEvents Specification Compliance
 
-Romancy complies with the following CloudEvents specifications:
+Selvedge complies with the following CloudEvents specifications:
 
 ### HTTP Protocol Binding v1.0.2
 
 ✅ **Success Responses:**
 
 - `202 Accepted` - Event accepted for async processing (recommended for async systems)
-- `200 OK` - Event processed synchronously (not used by Romancy)
+- `200 OK` - Event processed synchronously (not used by Selvedge)
 
 ✅ **Client Error Responses (Non-Retryable):**
 
@@ -353,7 +353,7 @@ Romancy complies with the following CloudEvents specifications:
 
 ### Error Response Extensions
 
-Romancy extends the CloudEvents specification with additional error metadata:
+Selvedge extends the CloudEvents specification with additional error metadata:
 
 ```json
 {
@@ -402,7 +402,7 @@ func main() {
 		"amount":   99.99,
 	})
 
-	// Send to Romancy
+	// Send to Selvedge
 	ctx := context.Background()
 	result := c.Send(ctx, event)
 

@@ -3,21 +3,21 @@ title: "Installation"
 weight: 1
 ---
 
-This guide will help you install Romancy and set up your development environment.
+This guide will help you install Selvedge and set up your development environment.
 
 ## Prerequisites
 
 - **Go 1.24 or higher**
 
-## Installing Romancy
+## Installing Selvedge
 
-Add Romancy to your Go project:
+Add Selvedge to your Go project:
 
 ```bash
-go get github.com/i2y/romancy
+go get github.com/CaliLuke/selvedge
 ```
 
-This installs Romancy with SQLite support, which is perfect for:
+This installs Selvedge with SQLite support, which is perfect for:
 
 - Local development
 - Testing
@@ -37,7 +37,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 // Result type
@@ -46,15 +46,15 @@ type HelloResult struct {
 }
 
 // Define an activity
-var helloActivity = romancy.DefineActivity("hello",
+var helloActivity = selvedge.DefineActivity("hello",
 	func(ctx context.Context, name string) (string, error) {
 		return fmt.Sprintf("Hello, %s!", name), nil
 	},
 )
 
 // Define a workflow
-var helloWorkflow = romancy.DefineWorkflow("hello_workflow",
-	func(ctx *romancy.WorkflowContext, name string) (HelloResult, error) {
+var helloWorkflow = selvedge.DefineWorkflow("hello_workflow",
+	func(ctx *selvedge.WorkflowContext, name string) (HelloResult, error) {
 		result, err := helloActivity.Execute(ctx, name)
 		if err != nil {
 			return HelloResult{}, err
@@ -65,9 +65,9 @@ var helloWorkflow = romancy.DefineWorkflow("hello_workflow",
 
 func main() {
 	// Create app with in-memory SQLite
-	app := romancy.NewApp(
-		romancy.WithDatabase(":memory:"),
-		romancy.WithWorkerID("worker-1"),
+	app := selvedge.NewApp(
+		selvedge.WithDatabase(":memory:"),
+		selvedge.WithWorkerID("worker-1"),
 	)
 
 	ctx := context.Background()
@@ -79,7 +79,7 @@ func main() {
 	defer app.Shutdown(ctx)
 
 	// Start workflow
-	instanceID, err := romancy.StartWorkflow(ctx, app, helloWorkflow, "World")
+	instanceID, err := selvedge.StartWorkflow(ctx, app, helloWorkflow, "World")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -123,13 +123,13 @@ No additional setup required! SQLite databases are created automatically:
 
 ```go
 // File-based SQLite (single-process only)
-app := romancy.NewApp(
-	romancy.WithDatabase("workflow.db"),
+app := selvedge.NewApp(
+	selvedge.WithDatabase("workflow.db"),
 )
 
 // In-memory (testing only)
-app := romancy.NewApp(
-	romancy.WithDatabase(":memory:"),
+app := selvedge.NewApp(
+	selvedge.WithDatabase(":memory:"),
 )
 ```
 
@@ -160,14 +160,14 @@ app := romancy.NewApp(
 2. **Create a database**:
 
 ```sql
-CREATE DATABASE romancy_workflows;
+CREATE DATABASE selvedge_workflows;
 ```
 
 3. **Configure connection**:
 
 ```go
-app := romancy.NewApp(
-	romancy.WithDatabase("postgres://user:password@localhost/romancy_workflows"),
+app := selvedge.NewApp(
+	selvedge.WithDatabase("postgres://user:password@localhost/selvedge_workflows"),
 )
 ```
 
@@ -184,14 +184,14 @@ app := romancy.NewApp(
 2. **Create a database**:
 
 ```sql
-CREATE DATABASE romancy_workflows;
+CREATE DATABASE selvedge_workflows;
 ```
 
 3. **Configure connection**:
 
 ```go
-app := romancy.NewApp(
-	romancy.WithDatabase("mysql://user:password@localhost:3306/romancy_workflows"),
+app := selvedge.NewApp(
+	selvedge.WithDatabase("mysql://user:password@localhost:3306/selvedge_workflows"),
 )
 ```
 
@@ -203,15 +203,15 @@ app := romancy.NewApp(
 
 ## Database Migrations
 
-Romancy **automatically applies database migrations** on startup. No manual setup is required!
+Selvedge **automatically applies database migrations** on startup. No manual setup is required!
 
 ### How It Works
 
-Migration files are embedded in the Romancy binary and applied during `app.Start()`:
+Migration files are embedded in the Selvedge binary and applied during `app.Start()`:
 
 ```go
-app := romancy.NewApp(
-    romancy.WithDatabase("postgres://user:password@localhost/db"),
+app := selvedge.NewApp(
+    selvedge.WithDatabase("postgres://user:password@localhost/db"),
 )
 if err := app.Start(ctx); err != nil {  // Migrations run here
     log.Fatal(err)
@@ -229,9 +229,9 @@ if err := app.Start(ctx); err != nil {  // Migrations run here
 If you prefer to manage migrations externally (e.g., in CI/CD), disable auto-migration:
 
 ```go
-app := romancy.NewApp(
-    romancy.WithDatabase("postgres://..."),
-    romancy.WithAutoMigrate(false),  // Disable auto-migration
+app := selvedge.NewApp(
+    selvedge.WithDatabase("postgres://..."),
+    selvedge.WithAutoMigrate(false),  // Disable auto-migration
 )
 ```
 

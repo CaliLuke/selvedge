@@ -3,7 +3,7 @@ title: "Recur Pattern"
 weight: 4
 ---
 
-Romancy provides an Erlang-style tail recursion pattern called `Recur` for long-running workflows. This pattern prevents unbounded history growth by archiving old history and continuing with fresh state.
+Selvedge provides an Erlang-style tail recursion pattern called `Recur` for long-running workflows. This pattern prevents unbounded history growth by archiving old history and continuing with fresh state.
 
 ## The Problem
 
@@ -11,11 +11,11 @@ In durable execution frameworks, every activity result is stored in the workflow
 
 ```go
 // Problem: History grows with each iteration
-var longRunningWorkflow = romancy.DefineWorkflow("processor",
-    func(ctx *romancy.WorkflowContext, input ProcessInput) (ProcessResult, error) {
+var longRunningWorkflow = selvedge.DefineWorkflow("processor",
+    func(ctx *selvedge.WorkflowContext, input ProcessInput) (ProcessResult, error) {
         for {
             // Each iteration adds to history
-            item, _ := romancy.Receive[Item](ctx, "items")
+            item, _ := selvedge.Receive[Item](ctx, "items")
             processItem.Execute(ctx, item)  // History grows!
 
             // After 1000 iterations, history has 2000+ entries
@@ -34,12 +34,12 @@ var longRunningWorkflow = romancy.DefineWorkflow("processor",
 4. Creating a new instance that continues from the current state
 
 ```go
-var longRunningWorkflow = romancy.DefineWorkflow("processor",
-    func(ctx *romancy.WorkflowContext, input ProcessInput) (ProcessResult, error) {
+var longRunningWorkflow = selvedge.DefineWorkflow("processor",
+    func(ctx *selvedge.WorkflowContext, input ProcessInput) (ProcessResult, error) {
         // Process a batch of items
         for i := 0; i < 100; i++ {
-            item, err := romancy.Receive[Item](ctx, "items",
-                romancy.WithReceiveTimeout(5*time.Second),
+            item, err := selvedge.Receive[Item](ctx, "items",
+                selvedge.WithReceiveTimeout(5*time.Second),
             )
             if err != nil {
                 break // No more items
@@ -50,7 +50,7 @@ var longRunningWorkflow = romancy.DefineWorkflow("processor",
 
         // Continue with fresh history (tail recursion)
         if input.ProcessedCount < input.MaxItems {
-            return romancy.Recur(ctx, input) // Archives history, continues
+            return selvedge.Recur(ctx, input) // Archives history, continues
         }
 
         return ProcessResult{Total: input.ProcessedCount}, nil
@@ -95,7 +95,7 @@ var longRunningWorkflow = romancy.DefineWorkflow("processor",
 package main
 
 import (
-    "github.com/i2y/romancy"
+    "github.com/CaliLuke/selvedge"
 )
 
 // Input includes state that persists across recurs
@@ -108,8 +108,8 @@ type CounterResult struct {
     FinalCount int `json:"final_count"`
 }
 
-var counterWorkflow = romancy.DefineWorkflow("counter",
-    func(ctx *romancy.WorkflowContext, input CounterInput) (CounterResult, error) {
+var counterWorkflow = selvedge.DefineWorkflow("counter",
+    func(ctx *selvedge.WorkflowContext, input CounterInput) (CounterResult, error) {
         // Do some work
         for i := 0; i < 10; i++ {
             input.Count++
@@ -119,7 +119,7 @@ var counterWorkflow = romancy.DefineWorkflow("counter",
         // Check if we should continue
         if input.Count < input.MaxCount {
             // Tail recursion: archive history and continue
-            return romancy.Recur(ctx, input)
+            return selvedge.Recur(ctx, input)
         }
 
         // Done - return final result
@@ -163,8 +163,8 @@ type BatchInput struct {
     ProcessedIDs []string `json:"processed_ids"`
 }
 
-var batchProcessor = romancy.DefineWorkflow("batch_processor",
-    func(ctx *romancy.WorkflowContext, input BatchInput) (BatchResult, error) {
+var batchProcessor = selvedge.DefineWorkflow("batch_processor",
+    func(ctx *selvedge.WorkflowContext, input BatchInput) (BatchResult, error) {
         // Process one batch
         items := fetchItems(input.Offset, input.BatchSize)
         for _, item := range items {
@@ -176,7 +176,7 @@ var batchProcessor = romancy.DefineWorkflow("batch_processor",
         input.Offset += input.BatchSize
 
         if input.Offset < input.TotalCount {
-            return romancy.Recur(ctx, input) // Continue with next batch
+            return selvedge.Recur(ctx, input) // Continue with next batch
         }
 
         return BatchResult{
@@ -195,15 +195,15 @@ type DaemonInput struct {
     Iteration int `json:"iteration"`
 }
 
-var daemonWorkflow = romancy.DefineWorkflow("daemon",
-    func(ctx *romancy.WorkflowContext, input DaemonInput) (DaemonResult, error) {
+var daemonWorkflow = selvedge.DefineWorkflow("daemon",
+    func(ctx *selvedge.WorkflowContext, input DaemonInput) (DaemonResult, error) {
         // Subscribe to events
-        romancy.Subscribe(ctx, "commands", romancy.ModeBroadcast)
+        selvedge.Subscribe(ctx, "commands", selvedge.ModeBroadcast)
 
         // Process events for a while
         for i := 0; i < 100; i++ {
-            msg, err := romancy.Receive[Command](ctx, "commands",
-                romancy.WithReceiveTimeout(1*time.Minute),
+            msg, err := selvedge.Receive[Command](ctx, "commands",
+                selvedge.WithReceiveTimeout(1*time.Minute),
             )
             if err != nil {
                 continue // Timeout - check again
@@ -218,7 +218,7 @@ var daemonWorkflow = romancy.DefineWorkflow("daemon",
 
         // Recur to prevent history buildup
         input.Iteration++
-        return romancy.Recur(ctx, input)
+        return selvedge.Recur(ctx, input)
     },
 )
 ```
@@ -233,18 +233,18 @@ type ScheduledInput struct {
     LastRun  time.Time `json:"last_run"`
 }
 
-var scheduledTask = romancy.DefineWorkflow("scheduled_task",
-    func(ctx *romancy.WorkflowContext, input ScheduledInput) (ScheduledResult, error) {
+var scheduledTask = selvedge.DefineWorkflow("scheduled_task",
+    func(ctx *selvedge.WorkflowContext, input ScheduledInput) (ScheduledResult, error) {
         // Do the scheduled work
         performTask.Execute(ctx, input)
         input.RunCount++
         input.LastRun = time.Now()
 
         // Wait until next run
-        romancy.Sleep(ctx, 1*time.Hour)
+        selvedge.Sleep(ctx, 1*time.Hour)
 
         // Recur to keep history bounded
-        return romancy.Recur(ctx, input)
+        return selvedge.Recur(ctx, input)
     },
 )
 ```
@@ -256,15 +256,15 @@ var scheduledTask = romancy.DefineWorkflow("scheduled_task",
 ```go
 // Too small: Frequent recurs, more overhead
 for i := 0; i < 10; i++ { ... }
-return romancy.Recur(ctx, input) // Every 10 items
+return selvedge.Recur(ctx, input) // Every 10 items
 
 // Too large: History grows too much before recur
 for i := 0; i < 10000; i++ { ... }
-return romancy.Recur(ctx, input) // History has 10000 entries
+return selvedge.Recur(ctx, input) // History has 10000 entries
 
 // Good balance: Recur every ~100-1000 operations
 for i := 0; i < 100; i++ { ... }
-return romancy.Recur(ctx, input)
+return selvedge.Recur(ctx, input)
 ```
 
 ### 2. Preserve Important State in Input
@@ -284,8 +284,8 @@ type ProcessInput struct {
 ### 3. Handle Termination Conditions
 
 ```go
-var workflow = romancy.DefineWorkflow("bounded_processor",
-    func(ctx *romancy.WorkflowContext, input ProcessInput) (ProcessResult, error) {
+var workflow = selvedge.DefineWorkflow("bounded_processor",
+    func(ctx *selvedge.WorkflowContext, input ProcessInput) (ProcessResult, error) {
         // Process batch...
 
         // Multiple termination conditions
@@ -299,7 +299,7 @@ var workflow = romancy.DefineWorkflow("bounded_processor",
             return ProcessResult{Status: "timeout"}, nil
         }
 
-        return romancy.Recur(ctx, input)
+        return selvedge.Recur(ctx, input)
     },
 )
 ```

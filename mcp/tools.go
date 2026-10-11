@@ -6,7 +6,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 // RegisterWorkflow registers a workflow with the MCP server and auto-generates
@@ -36,7 +36,7 @@ import (
 //   - order_workflow_status(instance_id) -> status
 //   - order_workflow_result(instance_id) -> OrderResult
 //   - order_workflow_cancel(instance_id, reason) -> success
-func RegisterWorkflow[I, O any](server *Server, workflow romancy.Workflow[I, O], opts ...WorkflowToolOption) {
+func RegisterWorkflow[I, O any](server *Server, workflow selvedge.Workflow[I, O], opts ...WorkflowToolOption) {
 	config := defaultWorkflowToolConfig()
 	for _, opt := range opts {
 		opt(config)
@@ -51,8 +51,8 @@ func RegisterWorkflow[I, O any](server *Server, workflow romancy.Workflow[I, O],
 	// Store workflow info
 	server.registerWorkflow(name, workflow, config)
 
-	// Register with Romancy App
-	romancy.RegisterWorkflow(server.app, workflow)
+	// Register with Selvedge App
+	selvedge.RegisterWorkflow(server.app, workflow)
 
 	// Register the four MCP tools
 	registerStartTool[I, O](server, workflow, prefix, config)
@@ -72,7 +72,7 @@ type StartOutput struct {
 }
 
 // registerStartTool registers the {workflow}_start tool.
-func registerStartTool[I, O any](server *Server, workflow romancy.Workflow[I, O], prefix string, config *workflowToolConfig) {
+func registerStartTool[I, O any](server *Server, workflow selvedge.Workflow[I, O], prefix string, config *workflowToolConfig) {
 	toolName := prefix + "_start"
 
 	desc := config.startDescription
@@ -83,7 +83,7 @@ func registerStartTool[I, O any](server *Server, workflow romancy.Workflow[I, O]
 	// Create the start tool handler
 	handler := func(ctx context.Context, req *mcp.CallToolRequest, input I) (*mcp.CallToolResult, StartOutput, error) {
 		// Start the workflow
-		instanceID, err := romancy.StartWorkflow(ctx, server.app, workflow, input)
+		instanceID, err := selvedge.StartWorkflow(ctx, server.app, workflow, input)
 		if err != nil {
 			return nil, StartOutput{}, fmt.Errorf("failed to start workflow: %w", err)
 		}
@@ -165,7 +165,7 @@ func registerResultTool[O any](server *Server, prefix string, config *workflowTo
 	}
 
 	handler := func(ctx context.Context, req *mcp.CallToolRequest, input ResultInput) (*mcp.CallToolResult, ResultOutput[O], error) {
-		result, err := romancy.GetWorkflowResult[O](ctx, server.app, input.InstanceID)
+		result, err := selvedge.GetWorkflowResult[O](ctx, server.app, input.InstanceID)
 		if err != nil {
 			return nil, ResultOutput[O]{}, fmt.Errorf("failed to get result: %w", err)
 		}
@@ -211,7 +211,7 @@ func registerCancelTool(server *Server, prefix string, config *workflowToolConfi
 	}
 
 	handler := func(ctx context.Context, req *mcp.CallToolRequest, input CancelInput) (*mcp.CallToolResult, CancelOutput, error) {
-		err := romancy.CancelWorkflow(ctx, server.app, input.InstanceID, input.Reason)
+		err := selvedge.CancelWorkflow(ctx, server.app, input.InstanceID, input.Reason)
 		if err != nil {
 			return nil, CancelOutput{
 				Success: false,

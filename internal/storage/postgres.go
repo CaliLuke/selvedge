@@ -1,4 +1,4 @@
-// Package storage provides the storage layer for Romancy.
+// Package storage provides the storage layer for Selvedge.
 package storage
 
 import (
@@ -12,7 +12,7 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
-	"github.com/i2y/romancy/internal/notify"
+	"github.com/CaliLuke/selvedge/internal/notify"
 )
 
 // PostgresStorage implements the Storage interface using PostgreSQL.

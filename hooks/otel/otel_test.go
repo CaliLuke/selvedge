@@ -12,7 +12,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/i2y/romancy/hooks"
+	"github.com/CaliLuke/selvedge/hooks"
 )
 
 // setupTest creates a test tracer provider and returns the hooks and span recorder.
@@ -78,8 +78,8 @@ func TestWorkflowLifecycle(t *testing.T) {
 
 	// Check attributes
 	attrs := span.Attributes()
-	checkAttribute(t, attrs, "romancy.instance_id", "wf-123")
-	checkAttribute(t, attrs, "romancy.workflow_name", "order_workflow")
+	checkAttribute(t, attrs, "selvedge.instance_id", "wf-123")
+	checkAttribute(t, attrs, "selvedge.workflow_name", "order_workflow")
 }
 
 func TestWorkflowFailed(t *testing.T) {
@@ -138,7 +138,7 @@ func TestWorkflowCancelled(t *testing.T) {
 	}
 
 	attrs := span.Attributes()
-	checkAttribute(t, attrs, "romancy.cancel_reason", "user request")
+	checkAttribute(t, attrs, "selvedge.cancel_reason", "user request")
 }
 
 func TestActivityLifecycle(t *testing.T) {
@@ -179,7 +179,7 @@ func TestActivityLifecycle(t *testing.T) {
 	}
 
 	attrs := span.Attributes()
-	checkAttribute(t, attrs, "romancy.activity_id", "reserve_inventory:1")
+	checkAttribute(t, attrs, "selvedge.activity_id", "reserve_inventory:1")
 }
 
 func TestActivityFailed(t *testing.T) {
@@ -447,8 +447,8 @@ func TestReplayLifecycle(t *testing.T) {
 	}
 
 	attrs := span.Attributes()
-	checkAttributeInt(t, attrs, "romancy.cache_hits", 3)
-	checkAttributeInt(t, attrs, "romancy.new_activities", 2)
+	checkAttributeInt(t, attrs, "selvedge.cache_hits", 3)
+	checkAttributeInt(t, attrs, "selvedge.new_activities", 2)
 }
 
 func TestImplementsInterface(t *testing.T) {

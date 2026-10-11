@@ -12,10 +12,10 @@ In this tutorial, you'll build a complete **order processing workflow** with com
 
 ## Prerequisites
 
-Before starting, make sure you have Romancy installed:
+Before starting, make sure you have Selvedge installed:
 
 ```bash
-go get github.com/i2y/romancy
+go get github.com/CaliLuke/selvedge
 ```
 
 If you haven't set up your Go environment, see the [Installation Guide](/docs/getting-started/installation).
@@ -43,7 +43,7 @@ import (
 	"log"
 	"regexp"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 // OrderItem represents a single item in an order
@@ -84,14 +84,14 @@ Add the three main activities with compensation:
 
 ```go
 // Compensation functions
-var cancelInventoryReservation = romancy.DefineCompensation("cancel_inventory_reservation",
+var cancelInventoryReservation = selvedge.DefineCompensation("cancel_inventory_reservation",
 	func(ctx context.Context, orderID string) error {
 		fmt.Printf("❌ Cancelling inventory reservation for %s\n", orderID)
 		return nil
 	},
 )
 
-var refundPayment = romancy.DefineCompensation("refund_payment",
+var refundPayment = selvedge.DefineCompensation("refund_payment",
 	func(ctx context.Context, orderID string, amount float64) error {
 		fmt.Printf("❌ Refunding payment for %s: $%.2f\n", orderID, amount)
 		return nil
@@ -116,7 +116,7 @@ type ShipmentResult struct {
 }
 
 // Activities with compensation links
-var reserveInventory = romancy.DefineActivity("reserve_inventory",
+var reserveInventory = selvedge.DefineActivity("reserve_inventory",
 	func(ctx context.Context, orderID string, items []OrderItem) (ReservationResult, error) {
 		var total float64
 		for _, item := range items {
@@ -130,10 +130,10 @@ var reserveInventory = romancy.DefineActivity("reserve_inventory",
 			TotalAmount:   total,
 		}, nil
 	},
-	romancy.WithCompensation(cancelInventoryReservation),
+	selvedge.WithCompensation(cancelInventoryReservation),
 )
 
-var processPayment = romancy.DefineActivity("process_payment",
+var processPayment = selvedge.DefineActivity("process_payment",
 	func(ctx context.Context, orderID string, amount float64, customerEmail string) (PaymentResult, error) {
 		fmt.Printf("💳 Processing payment for %s: $%.2f\n", orderID, amount)
 
@@ -143,11 +143,11 @@ var processPayment = romancy.DefineActivity("process_payment",
 			Status:        "completed",
 		}, nil
 	},
-	romancy.WithCompensation(refundPayment),
+	selvedge.WithCompensation(refundPayment),
 )
 
 // Activity 3: Ship Order (no compensation - final step)
-var shipOrder = romancy.DefineActivity("ship_order",
+var shipOrder = selvedge.DefineActivity("ship_order",
 	func(ctx context.Context, orderID string, address ShippingAddress) (ShipmentResult, error) {
 		fmt.Printf("🚚 Shipping %s to %s, %s\n", orderID, address.City, address.Country)
 
@@ -164,8 +164,8 @@ var shipOrder = romancy.DefineActivity("ship_order",
 Now orchestrate the activities:
 
 ```go
-var orderProcessingWorkflow = romancy.DefineWorkflow("order_processing",
-	func(ctx *romancy.WorkflowContext, input OrderInput) (OrderResult, error) {
+var orderProcessingWorkflow = selvedge.DefineWorkflow("order_processing",
+	func(ctx *selvedge.WorkflowContext, input OrderInput) (OrderResult, error) {
 		// Step 1: Reserve inventory
 		reservation, err := reserveInventory.Execute(ctx, input.OrderID, input.Items)
 		if err != nil {
@@ -201,10 +201,10 @@ Add the main function:
 
 ```go
 func main() {
-	// Create Romancy app
-	app := romancy.NewApp(
-		romancy.WithDatabase("orders.db"),
-		romancy.WithWorkerID("worker-1"),
+	// Create Selvedge app
+	app := selvedge.NewApp(
+		selvedge.WithDatabase("orders.db"),
+		selvedge.WithWorkerID("worker-1"),
 	)
 
 	ctx := context.Background()
@@ -233,7 +233,7 @@ func main() {
 
 	// Start workflow
 	fmt.Println("Starting order processing workflow...")
-	instanceID, err := romancy.StartWorkflow(ctx, app, orderProcessingWorkflow, order)
+	instanceID, err := selvedge.StartWorkflow(ctx, app, orderProcessingWorkflow, order)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -287,7 +287,7 @@ Let's simulate a shipping failure to see compensation in action.
 Modify `shipOrder` to fail:
 
 ```go
-var shipOrder = romancy.DefineActivity("ship_order",
+var shipOrder = selvedge.DefineActivity("ship_order",
 	func(ctx context.Context, orderID string, address ShippingAddress) (ShipmentResult, error) {
 		fmt.Printf("🚚 Shipping %s to %s, %s\n", orderID, address.City, address.Country)
 
@@ -330,7 +330,7 @@ This is the **Saga pattern** - distributed rollback through compensation functio
 
 ## Step 7: Understanding Crash Recovery
 
-Romancy's durable execution ensures workflows survive crashes through **deterministic replay**. When a workflow crashes mid-execution:
+Selvedge's durable execution ensures workflows survive crashes through **deterministic replay**. When a workflow crashes mid-execution:
 
 1. ✅ **Activity results are saved** to the database before execution continues
 2. ✅ **Workflow state is preserved** (current step, history, locks)
@@ -338,9 +338,9 @@ Romancy's durable execution ensures workflows survive crashes through **determin
 
 ### How Automatic Recovery Works
 
-In production environments with long-running Romancy app instances:
+In production environments with long-running Selvedge app instances:
 
-- **Crash detection**: Romancy's background task checks for stale locks every 60 seconds
+- **Crash detection**: Selvedge's background task checks for stale locks every 60 seconds
 - **Auto-resume**: Crashed workflows are automatically resumed when their lock timeout expires
   - Both normal execution and rollback execution are automatically resumed
   - Default timeout: 5 minutes (300 seconds)
@@ -362,14 +362,14 @@ Workflows in special waiting states are handled differently:
 
 ```go
 // Server starts and runs continuously
-app := romancy.NewApp(
-	romancy.WithDatabase("postgres://user:password@localhost/orders"),
-	romancy.WithWorkerID("worker-1"),
+app := selvedge.NewApp(
+	selvedge.WithDatabase("postgres://user:password@localhost/orders"),
+	selvedge.WithWorkerID("worker-1"),
 )
 app.Start(ctx)
 
 // Workflow starts executing
-instanceID, _ := romancy.StartWorkflow(ctx, app, orderProcessingWorkflow, order)
+instanceID, _ := selvedge.StartWorkflow(ctx, app, orderProcessingWorkflow, order)
 
 // Server crashes after payment step
 // → inventory reservation: ✅ saved
@@ -377,7 +377,7 @@ instanceID, _ := romancy.StartWorkflow(ctx, app, orderProcessingWorkflow, order)
 // → shipping: ❌ not executed
 
 // Server restarts (automatic or manual)
-// → Romancy's background task detects stale workflow (lock > 5 minutes)
+// → Selvedge's background task detects stale workflow (lock > 5 minutes)
 // → Automatically resumes workflow from last checkpoint
 // → inventory reservation: ⚡ replayed from history (instant)
 // → payment: ⚡ replayed from history (instant)
@@ -386,7 +386,7 @@ instanceID, _ := romancy.StartWorkflow(ctx, app, orderProcessingWorkflow, order)
 
 ### Why Activities Execute Exactly Once
 
-Romancy's replay mechanism ensures idempotency:
+Selvedge's replay mechanism ensures idempotency:
 
 1. **Before execution**: Check if result exists in history for current step
 2. **If found**: Return cached result (replay)
@@ -402,7 +402,7 @@ type PaymentResult struct {
 	Status        string  `json:"status"`
 }
 
-var processPayment = romancy.DefineActivity("process_payment",
+var processPayment = selvedge.DefineActivity("process_payment",
 	func(ctx context.Context, orderID string, amount float64) (PaymentResult, error) {
 		// This code executes ONCE per workflow instance
 		// On crash recovery, cached result is returned
@@ -419,7 +419,7 @@ var processPayment = romancy.DefineActivity("process_payment",
 			Status:        "completed",
 		}, nil
 	},
-	romancy.WithCompensation(refundPayment),
+	selvedge.WithCompensation(refundPayment),
 )
 ```
 
@@ -441,7 +441,7 @@ var processPayment = romancy.DefineActivity("process_payment",
 
 For a full demonstration, you would need:
 
-1. Long-running Romancy app instance (e.g., HTTP server)
+1. Long-running Selvedge app instance (e.g., HTTP server)
 2. Workflow that crashes mid-execution
 3. Wait 5+ minutes for automatic recovery
 4. Observe workflow resume from last checkpoint

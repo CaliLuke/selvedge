@@ -6,7 +6,7 @@ description: Real-time notifications for workflow events using PostgreSQL LISTEN
 
 # PostgreSQL LISTEN/NOTIFY
 
-When using PostgreSQL as the storage backend, Romancy can leverage PostgreSQL's LISTEN/NOTIFY mechanism for real-time event notifications. This enables near-instant workflow resumption instead of relying solely on polling.
+When using PostgreSQL as the storage backend, Selvedge can leverage PostgreSQL's LISTEN/NOTIFY mechanism for real-time event notifications. This enables near-instant workflow resumption instead of relying solely on polling.
 
 ## Overview
 
@@ -22,14 +22,14 @@ PostgreSQL LISTEN/NOTIFY provides:
 LISTEN/NOTIFY is automatically enabled when using PostgreSQL. You can explicitly configure it:
 
 ```go
-app := romancy.NewApp(
-    romancy.WithDatabase("postgres://user:password@localhost:5432/dbname"),
+app := selvedge.NewApp(
+    selvedge.WithDatabase("postgres://user:password@localhost:5432/dbname"),
     // Explicitly enable/disable (nil = auto-detect, enabled for PostgreSQL)
-    romancy.WithListenNotify(romancy.BoolPtr(true)),
+    selvedge.WithListenNotify(selvedge.BoolPtr(true)),
     // Fallback polling interval when LISTEN/NOTIFY is unavailable
-    romancy.WithNotifyFallbackInterval(30 * time.Second),
+    selvedge.WithNotifyFallbackInterval(30 * time.Second),
     // Delay before reconnecting after connection failure
-    romancy.WithNotifyReconnectDelay(60 * time.Second),
+    selvedge.WithNotifyReconnectDelay(60 * time.Second),
 )
 ```
 
@@ -45,14 +45,14 @@ app := romancy.NewApp(
 
 ### Notification Channels
 
-Romancy uses four PostgreSQL notification channels:
+Selvedge uses four PostgreSQL notification channels:
 
 | Channel | Event | Purpose |
 |---------|-------|---------|
-| `romancy_workflow_resumable` | Workflow ready to resume | Message delivered, lock released |
-| `romancy_timer_expired` | Timer registered | New timer subscription created |
-| `romancy_channel_message` | Message published | New message on a channel |
-| `romancy_outbox_pending` | Outbox event added | Event ready to be relayed |
+| `selvedge_workflow_resumable` | Workflow ready to resume | Message delivered, lock released |
+| `selvedge_timer_expired` | Timer registered | New timer subscription created |
+| `selvedge_channel_message` | Message published | New message on a channel |
+| `selvedge_outbox_pending` | Outbox event added | Event ready to be relayed |
 
 ### Notification Flow
 
@@ -62,7 +62,7 @@ Romancy uses four PostgreSQL notification channels:
 4. **Immediate action** - Handler triggers workflow resumption or message delivery
 
 ```
-Storage Operation     PostgreSQL        Romancy Worker
+Storage Operation     PostgreSQL        Selvedge Worker
       │                   │                  │
       │ INSERT/UPDATE     │                  │
       ├──────────────────>│                  │
@@ -115,7 +115,7 @@ Storage Operation     PostgreSQL        Romancy Worker
 
 ## Fallback Behavior
 
-LISTEN/NOTIFY is an optimization, not a requirement. Romancy maintains polling-based background tasks that serve as fallbacks:
+LISTEN/NOTIFY is an optimization, not a requirement. Selvedge maintains polling-based background tasks that serve as fallbacks:
 
 | Task | Default Interval | Purpose |
 |------|------------------|---------|
@@ -133,11 +133,11 @@ When LISTEN/NOTIFY is active, these tasks primarily catch edge cases:
 Control how many items are processed per batch:
 
 ```go
-app := romancy.NewApp(
-    romancy.WithDatabase("postgres://..."),
-    romancy.WithMaxWorkflowsPerBatch(100),  // Workflow resumption batch
-    romancy.WithMaxTimersPerBatch(100),     // Timer processing batch
-    romancy.WithMaxMessagesPerBatch(100),   // Channel message batch
+app := selvedge.NewApp(
+    selvedge.WithDatabase("postgres://..."),
+    selvedge.WithMaxWorkflowsPerBatch(100),  // Workflow resumption batch
+    selvedge.WithMaxTimersPerBatch(100),     // Timer processing batch
+    selvedge.WithMaxMessagesPerBatch(100),   // Channel message batch
 )
 ```
 
@@ -168,9 +168,9 @@ In some environments, you may want to disable LISTEN/NOTIFY:
 
 ```go
 falseVal := false
-app := romancy.NewApp(
-    romancy.WithDatabase("postgres://..."),
-    romancy.WithListenNotify(&falseVal),  // Explicitly disable
+app := selvedge.NewApp(
+    selvedge.WithDatabase("postgres://..."),
+    selvedge.WithListenNotify(&falseVal),  // Explicitly disable
 )
 ```
 

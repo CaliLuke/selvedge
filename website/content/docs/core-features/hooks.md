@@ -3,7 +3,7 @@ title: "Lifecycle Hooks"
 weight: 5
 ---
 
-Romancy provides an interface-based hook system that allows you to integrate custom observability and monitoring tools without coupling the framework to specific vendors.
+Selvedge provides an interface-based hook system that allows you to integrate custom observability and monitoring tools without coupling the framework to specific vendors.
 
 ## Overview
 
@@ -15,7 +15,7 @@ The hook system enables you to:
 - ✅ Audit workflow execution
 - ✅ Combine multiple observability backends
 
-**Design Philosophy:** Romancy focuses on workflow orchestration, while observability is delegated to users through a flexible hook system.
+**Design Philosophy:** Selvedge focuses on workflow orchestration, while observability is delegated to users through a flexible hook system.
 
 ## Quick Start
 
@@ -28,7 +28,7 @@ import (
 	"context"
 	"log"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 type LoggingHooks struct{}
@@ -48,10 +48,10 @@ func (h *LoggingHooks) OnActivityComplete(ctx context.Context, instanceID, activ
 ### 2. Pass Hooks to App
 
 ```go
-app := romancy.NewApp(
-	romancy.WithDatabase("workflow.db"),
-	romancy.WithWorkerID("worker-1"),
-	romancy.WithHooks(&LoggingHooks{}), // Your hook implementation
+app := selvedge.NewApp(
+	selvedge.WithDatabase("workflow.db"),
+	selvedge.WithWorkerID("worker-1"),
+	selvedge.WithHooks(&LoggingHooks{}), // Your hook implementation
 )
 
 ctx := context.Background()
@@ -112,7 +112,7 @@ func scrubData(data map[string]any) map[string]any {
 }
 
 type SecureHooks struct {
-	romancy.HooksBase
+	selvedge.HooksBase
 }
 
 func (h *SecureHooks) OnWorkflowStart(ctx context.Context, instanceID, workflowName string, inputData any) {
@@ -129,7 +129,7 @@ Don't let hook failures break your workflows:
 
 ```go
 type RobustHooks struct {
-	romancy.HooksBase
+	selvedge.HooksBase
 }
 
 func (h *RobustHooks) OnWorkflowStart(ctx context.Context, instanceID, workflowName string, inputData any) {
@@ -153,7 +153,7 @@ For high-throughput systems, sample traces:
 import "math/rand"
 
 type SampledHooks struct {
-	romancy.HooksBase
+	selvedge.HooksBase
 	sampleRate float64
 }
 
@@ -183,20 +183,20 @@ package main
 import (
 	"context"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
 
 type OTelHooks struct {
-	romancy.HooksBase
+	selvedge.HooksBase
 	tracer trace.Tracer
 }
 
 func NewOTelHooks() *OTelHooks {
 	return &OTelHooks{
-		tracer: otel.Tracer("romancy"),
+		tracer: otel.Tracer("selvedge"),
 	}
 }
 
@@ -222,9 +222,9 @@ func (h *OTelHooks) OnActivityComplete(ctx context.Context, instanceID, activity
 }
 
 // Usage
-app := romancy.NewApp(
-	romancy.WithDatabase("workflow.db"),
-	romancy.WithHooks(NewOTelHooks()),
+app := selvedge.NewApp(
+	selvedge.WithDatabase("workflow.db"),
+	selvedge.WithHooks(NewOTelHooks()),
 )
 ```
 
@@ -242,7 +242,7 @@ package main
 import (
 	"context"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
@@ -250,14 +250,14 @@ import (
 var (
 	workflowStarted = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "romancy_workflow_started_total",
+			Name: "selvedge_workflow_started_total",
 			Help: "Total workflows started",
 		},
 		[]string{"workflow_name"},
 	)
 	activityExecuted = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "romancy_activity_executed_total",
+			Name: "selvedge_activity_executed_total",
 			Help: "Activities executed",
 		},
 		[]string{"activity_name", "cache_hit"},
@@ -265,7 +265,7 @@ var (
 )
 
 type PrometheusHooks struct {
-	romancy.HooksBase
+	selvedge.HooksBase
 }
 
 func (h *PrometheusHooks) OnWorkflowStart(ctx context.Context, instanceID, workflowName string, inputData any) {
@@ -291,12 +291,12 @@ import (
 	"fmt"
 
 	"github.com/DataDog/datadog-go/statsd"
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 	"gopkg.in/DataDog/dd-trace-go.v1/ddtrace/tracer"
 )
 
 type DatadogHooks struct {
-	romancy.HooksBase
+	selvedge.HooksBase
 	statsd *statsd.Client
 }
 
@@ -309,11 +309,11 @@ func NewDatadogHooks(statsdAddr string) (*DatadogHooks, error) {
 }
 
 func (h *DatadogHooks) OnWorkflowStart(ctx context.Context, instanceID, workflowName string, inputData any) {
-	h.statsd.Incr("romancy.workflow.started",
+	h.statsd.Incr("selvedge.workflow.started",
 		[]string{fmt.Sprintf("workflow:%s", workflowName)}, 1)
 
 	span := tracer.StartSpan("workflow.start",
-		tracer.ServiceName("romancy"),
+		tracer.ServiceName("selvedge"),
 		tracer.Tag("workflow.name", workflowName),
 		tracer.Tag("instance.id", instanceID),
 	)
@@ -321,7 +321,7 @@ func (h *DatadogHooks) OnWorkflowStart(ctx context.Context, instanceID, workflow
 }
 
 func (h *DatadogHooks) OnActivityComplete(ctx context.Context, instanceID, activityID, activityName string, result any, cacheHit bool) {
-	h.statsd.Incr("romancy.activity.completed",
+	h.statsd.Incr("selvedge.activity.completed",
 		[]string{
 			fmt.Sprintf("activity:%s", activityName),
 			fmt.Sprintf("cache_hit:%v", cacheHit),
@@ -338,11 +338,11 @@ import (
 	"context"
 
 	"github.com/getsentry/sentry-go"
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 type SentryHooks struct {
-	romancy.HooksBase
+	selvedge.HooksBase
 }
 
 func (h *SentryHooks) OnWorkflowFailed(ctx context.Context, instanceID, workflowName string, err error) {
@@ -376,12 +376,12 @@ import (
 	"context"
 	"log"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 // Custom hooks implementation
 type MyHooks struct {
-	romancy.HooksBase
+	selvedge.HooksBase
 }
 
 func (h *MyHooks) OnWorkflowStart(ctx context.Context, instanceID, workflowName string, inputData any) {
@@ -418,15 +418,15 @@ type GreetingResult struct {
 }
 
 // Activity
-var greetUser = romancy.DefineActivity("greet_user",
+var greetUser = selvedge.DefineActivity("greet_user",
 	func(ctx context.Context, name string) (GreetingResult, error) {
 		return GreetingResult{Message: "Hello, " + name}, nil
 	},
 )
 
 // Workflow
-var greetingWorkflow = romancy.DefineWorkflow("greeting_workflow",
-	func(ctx *romancy.WorkflowContext, name string) (GreetingResult, error) {
+var greetingWorkflow = selvedge.DefineWorkflow("greeting_workflow",
+	func(ctx *selvedge.WorkflowContext, name string) (GreetingResult, error) {
 		result, err := greetUser.Execute(ctx, name)
 		if err != nil {
 			return GreetingResult{}, err
@@ -436,10 +436,10 @@ var greetingWorkflow = romancy.DefineWorkflow("greeting_workflow",
 )
 
 func main() {
-	app := romancy.NewApp(
-		romancy.WithDatabase("workflow.db"),
-		romancy.WithWorkerID("worker-1"),
-		romancy.WithHooks(&MyHooks{}),
+	app := selvedge.NewApp(
+		selvedge.WithDatabase("workflow.db"),
+		selvedge.WithWorkerID("worker-1"),
+		selvedge.WithHooks(&MyHooks{}),
 	)
 
 	ctx := context.Background()
@@ -450,7 +450,7 @@ func main() {
 	defer app.Shutdown(ctx)
 
 	// Start workflow - hooks will log all events
-	instanceID, err := romancy.StartWorkflow(ctx, app, greetingWorkflow, "World")
+	instanceID, err := selvedge.StartWorkflow(ctx, app, greetingWorkflow, "World")
 	if err != nil {
 		log.Fatal(err)
 	}

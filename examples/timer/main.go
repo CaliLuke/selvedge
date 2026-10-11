@@ -24,8 +24,8 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 
-	"github.com/i2y/romancy"
-	"github.com/i2y/romancy/hooks/otel"
+	"github.com/CaliLuke/selvedge"
+	"github.com/CaliLuke/selvedge/hooks/otel"
 )
 
 // ----- Types -----
@@ -61,7 +61,7 @@ type ScheduledTaskResult struct {
 // ----- Activities -----
 
 // SendReminder simulates sending a reminder notification.
-var SendReminder = romancy.DefineActivity(
+var SendReminder = selvedge.DefineActivity(
 	"send_reminder",
 	func(ctx context.Context, input struct {
 		UserID  string
@@ -74,7 +74,7 @@ var SendReminder = romancy.DefineActivity(
 )
 
 // ExecuteScheduledTask simulates executing a scheduled task.
-var ExecuteScheduledTask = romancy.DefineActivity(
+var ExecuteScheduledTask = selvedge.DefineActivity(
 	"execute_scheduled_task",
 	func(ctx context.Context, taskID string) (string, error) {
 		log.Printf("[Activity] Executing scheduled task: %s", taskID)
@@ -86,8 +86,8 @@ var ExecuteScheduledTask = romancy.DefineActivity(
 // ----- Workflows -----
 
 // reminderWorkflow sends a reminder after a delay.
-var reminderWorkflow = romancy.DefineWorkflow("reminder_workflow",
-	func(ctx *romancy.WorkflowContext, input ReminderInput) (ReminderResult, error) {
+var reminderWorkflow = selvedge.DefineWorkflow("reminder_workflow",
+	func(ctx *selvedge.WorkflowContext, input ReminderInput) (ReminderResult, error) {
 		log.Printf("[Workflow] Starting reminder workflow for user %s", input.UserID)
 		log.Printf("[Workflow] Will wait %d seconds before sending reminder", input.DelaySeconds)
 
@@ -99,7 +99,7 @@ var reminderWorkflow = romancy.DefineWorkflow("reminder_workflow",
 
 		// Sleep for the specified duration
 		log.Printf("[Workflow] Sleeping for %d seconds...", input.DelaySeconds)
-		if err := romancy.Sleep(ctx, time.Duration(input.DelaySeconds)*time.Second); err != nil {
+		if err := selvedge.Sleep(ctx, time.Duration(input.DelaySeconds)*time.Second); err != nil {
 			return result, err // SuspendSignal is returned as normal workflow suspension
 		}
 
@@ -127,8 +127,8 @@ var reminderWorkflow = romancy.DefineWorkflow("reminder_workflow",
 )
 
 // scheduledTaskWorkflow executes a task at a specific time.
-var scheduledTaskWorkflow = romancy.DefineWorkflow("scheduled_task_workflow",
-	func(ctx *romancy.WorkflowContext, input ScheduledTaskInput) (ScheduledTaskResult, error) {
+var scheduledTaskWorkflow = selvedge.DefineWorkflow("scheduled_task_workflow",
+	func(ctx *selvedge.WorkflowContext, input ScheduledTaskInput) (ScheduledTaskResult, error) {
 		log.Printf("[Workflow] Scheduling task %s for %s", input.TaskID, input.ScheduledAt.Format(time.RFC3339))
 
 		result := ScheduledTaskResult{
@@ -138,7 +138,7 @@ var scheduledTaskWorkflow = romancy.DefineWorkflow("scheduled_task_workflow",
 
 		// Sleep until the specified time using SleepUntil
 		log.Printf("[Workflow] Sleeping until %s...", input.ScheduledAt.Format(time.RFC3339))
-		if err := romancy.SleepUntil(ctx, input.ScheduledAt); err != nil {
+		if err := selvedge.SleepUntil(ctx, input.ScheduledAt); err != nil {
 			return result, err // SuspendSignal is returned as normal workflow suspension
 		}
 
@@ -169,7 +169,7 @@ func setupTracing(ctx context.Context) (*sdktrace.TracerProvider, error) {
 
 	serviceName := os.Getenv("OTEL_SERVICE_NAME")
 	if serviceName == "" {
-		serviceName = "romancy-timer"
+		serviceName = "selvedge-timer"
 	}
 
 	exporter, err := otlptracegrpc.New(ctx,
@@ -215,18 +215,18 @@ func main() {
 	}
 
 	// Create the application with optional tracing
-	opts := []romancy.Option{
-		romancy.WithDatabase(dbPath),
-		romancy.WithWorkerID("timer-worker-1"),
+	opts := []selvedge.Option{
+		selvedge.WithDatabase(dbPath),
+		selvedge.WithWorkerID("timer-worker-1"),
 	}
 	if tp != nil {
-		opts = append(opts, romancy.WithHooks(otel.NewOTelHooks(tp)))
+		opts = append(opts, selvedge.WithHooks(otel.NewOTelHooks(tp)))
 	}
-	app := romancy.NewApp(opts...)
+	app := selvedge.NewApp(opts...)
 
 	// Register workflows
-	romancy.RegisterWorkflow[ReminderInput, ReminderResult](app, reminderWorkflow)
-	romancy.RegisterWorkflow[ScheduledTaskInput, ScheduledTaskResult](app, scheduledTaskWorkflow)
+	selvedge.RegisterWorkflow[ReminderInput, ReminderResult](app, reminderWorkflow)
+	selvedge.RegisterWorkflow[ScheduledTaskInput, ScheduledTaskResult](app, scheduledTaskWorkflow)
 
 	// Start the application
 	if err := app.Start(ctx); err != nil {
@@ -247,7 +247,7 @@ func main() {
 		DelaySeconds: 5, // 5 seconds delay
 	}
 
-	reminderInstanceID, err := romancy.StartWorkflow(ctx, app, reminderWorkflow, reminderInput)
+	reminderInstanceID, err := selvedge.StartWorkflow(ctx, app, reminderWorkflow, reminderInput)
 	if err != nil {
 		log.Printf("Failed to start reminder workflow: %v", err)
 		return
@@ -263,7 +263,7 @@ func main() {
 		ScheduledAt: scheduledTime,
 	}
 
-	taskInstanceID, err := romancy.StartWorkflow(ctx, app, scheduledTaskWorkflow, taskInput)
+	taskInstanceID, err := selvedge.StartWorkflow(ctx, app, scheduledTaskWorkflow, taskInput)
 	if err != nil {
 		log.Printf("Failed to start scheduled task workflow: %v", err)
 		return
@@ -276,7 +276,7 @@ func main() {
 	log.Println("The reminder will be sent after 5 seconds.")
 	log.Println("The scheduled task will execute after 8 seconds.")
 	log.Println("")
-	log.Printf("Check status: go run ./cmd/romancy/ get %s --db %s", reminderInstanceID, dbPath)
+	log.Printf("Check status: go run ./cmd/selvedge/ get %s --db %s", reminderInstanceID, dbPath)
 	log.Println("==============================================")
 
 	// Handle graceful shutdown

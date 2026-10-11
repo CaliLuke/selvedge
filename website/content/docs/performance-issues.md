@@ -4,11 +4,11 @@ weight: 101
 draft: true
 ---
 
-このドキュメントは、Edda (Python版) で発見されたパフォーマンス問題をRomancyでも調査した結果です。
+このドキュメントは、Edda (Python版) で発見されたパフォーマンス問題をSelvedgeでも調査した結果です。
 他のセッションへの引き継ぎ用に作成しました。
 
 **作成日**: 2025-12-07
-**調査対象**: Romancy (Go版 Edda)
+**調査対象**: Selvedge (Go版 Edda)
 
 ---
 
@@ -362,7 +362,7 @@ COMMIT;
 ## 関連ファイル一覧
 
 ```
-romancy/
+selvedge/
 ├── app.go                      # バックグラウンドタスク、ジッター追加対象
 ├── options.go                  # 間隔設定
 ├── activity.go                 # JSONシリアライズ1回目

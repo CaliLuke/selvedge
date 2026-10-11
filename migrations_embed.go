@@ -1,4 +1,4 @@
-package romancy
+package selvedge
 
 import (
 	"embed"
@@ -11,7 +11,7 @@ import (
 // internal/migrations/sql/ holds a release-time copy because Go's module
 // proxy strips submodule gitlinks from the published zip and //go:embed
 // would otherwise resolve to an empty fs.FS for downstream consumers
-// (`go install …/cmd/romancy@latest`, chinotto, …).
+// (`go install …/cmd/selvedge@latest`, chinotto, …).
 //
 // Refresh the copy with `make sync-schema`; CI runs `make
 // check-schema-sync` to fail builds where the two trees have drifted.

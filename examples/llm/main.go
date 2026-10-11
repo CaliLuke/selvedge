@@ -1,4 +1,4 @@
-// Package main demonstrates LLM integration with Romancy workflows.
+// Package main demonstrates LLM integration with Selvedge workflows.
 //
 // This example shows:
 //   - Ad-hoc LLM calls with llm.Call()
@@ -18,8 +18,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/i2y/romancy"
-	"github.com/i2y/romancy/llm"
+	"github.com/CaliLuke/selvedge"
+	"github.com/CaliLuke/selvedge/llm"
 
 	// Import the provider you want to use
 	_ "github.com/i2y/bucephalus/anthropic"
@@ -51,8 +51,8 @@ var summarizer = llm.DefineDurableCall("summarize",
 )
 
 // summarizeWorkflow demonstrates ad-hoc LLM calls.
-var summarizeWorkflow = romancy.DefineWorkflow("summarize",
-	func(ctx *romancy.WorkflowContext, input SummaryInput) (SummaryResult, error) {
+var summarizeWorkflow = selvedge.DefineWorkflow("summarize",
+	func(ctx *selvedge.WorkflowContext, input SummaryInput) (SummaryResult, error) {
 		// Option 1: Ad-hoc LLM call
 		response, err := llm.Call(ctx, input.Text,
 			llm.WithSystemMessage("Summarize the following text concisely in one paragraph."),
@@ -66,8 +66,8 @@ var summarizeWorkflow = romancy.DefineWorkflow("summarize",
 )
 
 // summarizeWithDurableCallWorkflow demonstrates reusable LLM definitions.
-var summarizeWithDurableCallWorkflow = romancy.DefineWorkflow("summarize_durable",
-	func(ctx *romancy.WorkflowContext, input SummaryInput) (SummaryResult, error) {
+var summarizeWithDurableCallWorkflow = selvedge.DefineWorkflow("summarize_durable",
+	func(ctx *selvedge.WorkflowContext, input SummaryInput) (SummaryResult, error) {
 		// Option 2: Using a pre-defined DurableCall
 		response, err := summarizer.Execute(ctx, input.Text)
 		if err != nil {
@@ -79,8 +79,8 @@ var summarizeWithDurableCallWorkflow = romancy.DefineWorkflow("summarize_durable
 )
 
 // recommendBookWorkflow demonstrates structured output.
-var recommendBookWorkflow = romancy.DefineWorkflow("recommend_book",
-	func(ctx *romancy.WorkflowContext, genre string) (*BookRecommendation, error) {
+var recommendBookWorkflow = selvedge.DefineWorkflow("recommend_book",
+	func(ctx *selvedge.WorkflowContext, genre string) (*BookRecommendation, error) {
 		// Use CallParse for structured output
 		book, err := llm.CallParse[BookRecommendation](ctx,
 			fmt.Sprintf("Recommend a %s book. Respond with JSON containing title, author, and reason fields.", genre),
@@ -94,8 +94,8 @@ var recommendBookWorkflow = romancy.DefineWorkflow("recommend_book",
 )
 
 // conversationWorkflow demonstrates multi-turn conversations.
-var conversationWorkflow = romancy.DefineWorkflow("conversation",
-	func(ctx *romancy.WorkflowContext, topic string) (string, error) {
+var conversationWorkflow = selvedge.DefineWorkflow("conversation",
+	func(ctx *selvedge.WorkflowContext, topic string) (string, error) {
 		// Build a multi-turn conversation
 		messages := []llm.Message{
 			llm.SystemMessage("You are a helpful assistant."),
@@ -137,8 +137,8 @@ func run() error {
 	ctx := context.Background()
 
 	// Create app
-	app := romancy.NewApp(
-		romancy.WithDatabase("file:llm_example.db"),
+	app := selvedge.NewApp(
+		selvedge.WithDatabase("file:llm_example.db"),
 	)
 
 	// Set LLM defaults for the app
@@ -150,10 +150,10 @@ func run() error {
 	)
 
 	// Register workflows
-	romancy.RegisterWorkflow(app, summarizeWorkflow)
-	romancy.RegisterWorkflow(app, summarizeWithDurableCallWorkflow)
-	romancy.RegisterWorkflow(app, recommendBookWorkflow)
-	romancy.RegisterWorkflow(app, conversationWorkflow)
+	selvedge.RegisterWorkflow(app, summarizeWorkflow)
+	selvedge.RegisterWorkflow(app, summarizeWithDurableCallWorkflow)
+	selvedge.RegisterWorkflow(app, recommendBookWorkflow)
+	selvedge.RegisterWorkflow(app, conversationWorkflow)
 
 	// Start the app
 	if err := app.Start(ctx); err != nil {
@@ -175,7 +175,7 @@ func run() error {
 	for cloud infrastructure, microservices, and command-line tools.
 	`
 
-	instanceID, err := romancy.StartWorkflow(ctx, app, summarizeWorkflow, SummaryInput{Text: sampleText})
+	instanceID, err := selvedge.StartWorkflow(ctx, app, summarizeWorkflow, SummaryInput{Text: sampleText})
 	if err != nil {
 		return fmt.Errorf("failed to start workflow: %w", err)
 	}
@@ -183,7 +183,7 @@ func run() error {
 
 	// Wait for result
 	for {
-		result, err := romancy.GetWorkflowResult[SummaryResult](ctx, app, instanceID)
+		result, err := selvedge.GetWorkflowResult[SummaryResult](ctx, app, instanceID)
 		if err != nil {
 			return fmt.Errorf("failed to get result: %w", err)
 		}
@@ -199,7 +199,7 @@ func run() error {
 
 	// Example 2: Book recommendation with structured output
 	fmt.Println("=== Example 2: Book Recommendation ===")
-	instanceID2, err := romancy.StartWorkflow(ctx, app, recommendBookWorkflow, "science fiction")
+	instanceID2, err := selvedge.StartWorkflow(ctx, app, recommendBookWorkflow, "science fiction")
 	if err != nil {
 		return fmt.Errorf("failed to start workflow: %w", err)
 	}
@@ -207,7 +207,7 @@ func run() error {
 
 	// Wait for result
 	for {
-		result, err := romancy.GetWorkflowResult[*BookRecommendation](ctx, app, instanceID2)
+		result, err := selvedge.GetWorkflowResult[*BookRecommendation](ctx, app, instanceID2)
 		if err != nil {
 			return fmt.Errorf("failed to get result: %w", err)
 		}
@@ -226,7 +226,7 @@ func run() error {
 
 	// Example 3: Multi-turn conversation
 	fmt.Println("=== Example 3: Multi-turn Conversation ===")
-	instanceID3, err := romancy.StartWorkflow(ctx, app, conversationWorkflow, "goroutines in Go")
+	instanceID3, err := selvedge.StartWorkflow(ctx, app, conversationWorkflow, "goroutines in Go")
 	if err != nil {
 		return fmt.Errorf("failed to start workflow: %w", err)
 	}
@@ -234,7 +234,7 @@ func run() error {
 
 	// Wait for result
 	for {
-		result, err := romancy.GetWorkflowResult[string](ctx, app, instanceID3)
+		result, err := selvedge.GetWorkflowResult[string](ctx, app, instanceID3)
 		if err != nil {
 			return fmt.Errorf("failed to get result: %w", err)
 		}

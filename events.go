@@ -1,13 +1,13 @@
-package romancy
+package selvedge
 
 import (
 	"encoding/json"
 	"fmt"
 	"time"
 
-	"github.com/i2y/romancy/hooks"
-	"github.com/i2y/romancy/internal/storage"
-	"github.com/i2y/romancy/outbox"
+	"github.com/CaliLuke/selvedge/hooks"
+	"github.com/CaliLuke/selvedge/internal/storage"
+	"github.com/CaliLuke/selvedge/outbox"
 )
 
 // ReceivedEvent represents an event received by a workflow.
@@ -236,12 +236,12 @@ func (a *workflowContextAdapter) Storage() storage.Storage {
 //
 // Example:
 //
-//	activity := romancy.DefineActivity("process_order", func(ctx context.Context, input OrderInput) (OrderResult, error) {
-//	    wfCtx := romancy.GetWorkflowContext(ctx)
+//	activity := selvedge.DefineActivity("process_order", func(ctx context.Context, input OrderInput) (OrderResult, error) {
+//	    wfCtx := selvedge.GetWorkflowContext(ctx)
 //	    if wfCtx == nil {
 //	        return OrderResult{}, fmt.Errorf("workflow context not available")
 //	    }
-//	    err := romancy.SendEvent(wfCtx, "order.created", "order-service", map[string]any{
+//	    err := selvedge.SendEvent(wfCtx, "order.created", "order-service", map[string]any{
 //	        "order_id": input.OrderID,
 //	        "amount":   input.Amount,
 //	    })
@@ -259,7 +259,7 @@ func SendEvent[T any](ctx *WorkflowContext, eventType, source string, data T) er
 //
 // Example:
 //
-//	err := romancy.SendEventTransactional(wfCtx, "order.created", "order-service", orderData,
+//	err := selvedge.SendEventTransactional(wfCtx, "order.created", "order-service", orderData,
 //	    outbox.WithEventID("custom-event-id"),
 //	    outbox.WithContentType("application/json"),
 //	)

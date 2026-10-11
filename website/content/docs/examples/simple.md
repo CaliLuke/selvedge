@@ -3,7 +3,7 @@ title: "Simple Workflow"
 weight: 1
 ---
 
-This example demonstrates the basics of creating a workflow with activities in Romancy.
+This example demonstrates the basics of creating a workflow with activities in Selvedge.
 
 ## What This Example Shows
 
@@ -24,7 +24,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 // Result types for activities
@@ -48,7 +48,7 @@ type FinalResult struct {
 }
 
 // greetUser activity that greets a user
-var greetUser = romancy.DefineActivity("greet_user",
+var greetUser = selvedge.DefineActivity("greet_user",
 	func(ctx context.Context, name string) (GreetResult, error) {
 		fmt.Printf("[Activity] Greeting user: %s\n", name)
 		return GreetResult{
@@ -58,7 +58,7 @@ var greetUser = romancy.DefineActivity("greet_user",
 )
 
 // processData activity that processes some data
-var processData = romancy.DefineActivity("process_data",
+var processData = selvedge.DefineActivity("process_data",
 	func(ctx context.Context, data string) (ProcessResult, error) {
 		fmt.Printf("[Activity] Processing data: %s\n", data)
 		processed := strings.ToUpper(data)
@@ -70,7 +70,7 @@ var processData = romancy.DefineActivity("process_data",
 )
 
 // finalize activity that finalizes the workflow
-var finalize = romancy.DefineActivity("finalize",
+var finalize = selvedge.DefineActivity("finalize",
 	func(ctx context.Context, input FinalizeInput) (FinalResult, error) {
 		fmt.Printf("[Activity] Finalizing with input: %v\n", input)
 		return FinalResult{
@@ -89,7 +89,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 // SimpleInput defines the workflow input
@@ -99,8 +99,8 @@ type SimpleInput struct {
 }
 
 // simpleWorkflow coordinates multiple activities
-var simpleWorkflow = romancy.DefineWorkflow("simple_workflow",
-	func(ctx *romancy.WorkflowContext, input SimpleInput) (FinalResult, error) {
+var simpleWorkflow = selvedge.DefineWorkflow("simple_workflow",
+	func(ctx *selvedge.WorkflowContext, input SimpleInput) (FinalResult, error) {
 		fmt.Printf("[Workflow] Starting simple_workflow for %s\n", input.Name)
 
 		// Step 1: Greet the user
@@ -143,14 +143,14 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 func main() {
-	// Create Romancy app
-	app := romancy.NewApp(
-		romancy.WithDatabase("demo.db"),
-		romancy.WithWorkerID("worker-1"),
+	// Create Selvedge app
+	app := selvedge.NewApp(
+		selvedge.WithDatabase("demo.db"),
+		selvedge.WithWorkerID("worker-1"),
 	)
 
 	ctx := context.Background()
@@ -162,9 +162,9 @@ func main() {
 	defer app.Shutdown(ctx)
 
 	// Start the workflow
-	instanceID, err := romancy.StartWorkflow(ctx, app, simpleWorkflow, SimpleInput{
+	instanceID, err := selvedge.StartWorkflow(ctx, app, simpleWorkflow, SimpleInput{
 		Name: "Alice",
-		Data: "hello world from romancy",
+		Data: "hello world from selvedge",
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -181,7 +181,7 @@ Create a file named `simple_workflow.go` with the complete code (see [Complete C
 ```bash
 # Initialize Go module
 go mod init simple-example
-go get github.com/i2y/romancy
+go get github.com/CaliLuke/selvedge
 
 # Run your workflow
 go run simple_workflow.go
@@ -191,7 +191,7 @@ go run simple_workflow.go
 
 ```
 ============================================================
-Romancy Framework - Simple Workflow Example
+Selvedge Framework - Simple Workflow Example
 ============================================================
 
 >>> Starting workflow...
@@ -199,8 +199,8 @@ Romancy Framework - Simple Workflow Example
 [Workflow] Starting simple_workflow for Alice
 [Activity] Greeting user: Alice
 [Workflow] Step 1 completed: map[message:Hello, Alice!]
-[Activity] Processing data: hello world from romancy
-[Workflow] Step 2 completed: map[processed:HELLO WORLD FROM ROMANCY length:24]
+[Activity] Processing data: hello world from selvedge
+[Workflow] Step 2 completed: map[processed:HELLO WORLD FROM SELVEDGE length:24]
 [Activity] Finalizing with result: {...}
 [Workflow] Step 3 completed: map[status:completed final_result:map[...]]
 [Workflow] Workflow completed successfully!
@@ -219,7 +219,7 @@ import (
 	"log"
 	"strings"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 // SimpleInput defines the workflow input
@@ -250,7 +250,7 @@ type FinalResult struct {
 
 // Activities
 
-var greetUser = romancy.DefineActivity("greet_user",
+var greetUser = selvedge.DefineActivity("greet_user",
 	func(ctx context.Context, name string) (GreetResult, error) {
 		fmt.Printf("[Activity] Greeting user: %s\n", name)
 		return GreetResult{
@@ -259,7 +259,7 @@ var greetUser = romancy.DefineActivity("greet_user",
 	},
 )
 
-var processData = romancy.DefineActivity("process_data",
+var processData = selvedge.DefineActivity("process_data",
 	func(ctx context.Context, data string) (ProcessResult, error) {
 		fmt.Printf("[Activity] Processing data: %s\n", data)
 		processed := strings.ToUpper(data)
@@ -270,7 +270,7 @@ var processData = romancy.DefineActivity("process_data",
 	},
 )
 
-var finalize = romancy.DefineActivity("finalize",
+var finalize = selvedge.DefineActivity("finalize",
 	func(ctx context.Context, input FinalizeInput) (FinalResult, error) {
 		fmt.Printf("[Activity] Finalizing with input: %v\n", input)
 		return FinalResult{
@@ -282,8 +282,8 @@ var finalize = romancy.DefineActivity("finalize",
 
 // Workflow
 
-var simpleWorkflow = romancy.DefineWorkflow("simple_workflow",
-	func(ctx *romancy.WorkflowContext, input SimpleInput) (FinalResult, error) {
+var simpleWorkflow = selvedge.DefineWorkflow("simple_workflow",
+	func(ctx *selvedge.WorkflowContext, input SimpleInput) (FinalResult, error) {
 		fmt.Printf("[Workflow] Starting simple_workflow for %s\n", input.Name)
 
 		// Step 1: Greet the user
@@ -317,14 +317,14 @@ var simpleWorkflow = romancy.DefineWorkflow("simple_workflow",
 
 func main() {
 	fmt.Println("============================================================")
-	fmt.Println("Romancy Framework - Simple Workflow Example")
+	fmt.Println("Selvedge Framework - Simple Workflow Example")
 	fmt.Println("============================================================")
 	fmt.Println()
 
-	// Create Romancy app
-	app := romancy.NewApp(
-		romancy.WithDatabase("demo.db"),
-		romancy.WithWorkerID("worker-1"),
+	// Create Selvedge app
+	app := selvedge.NewApp(
+		selvedge.WithDatabase("demo.db"),
+		selvedge.WithWorkerID("worker-1"),
 	)
 
 	ctx := context.Background()
@@ -341,7 +341,7 @@ func main() {
 	// Start the workflow
 	instanceID, err := simpleWorkflow.Start(ctx, app, SimpleInput{
 		Name: "Alice",
-		Data: "hello world from romancy",
+		Data: "hello world from selvedge",
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -370,8 +370,8 @@ type ConcurrentResult struct {
 	Results []ItemResult `json:"results"`
 }
 
-var concurrentWorkflow = romancy.DefineWorkflow("concurrent_workflow",
-	func(ctx *romancy.WorkflowContext, items []string) (ConcurrentResult, error) {
+var concurrentWorkflow = selvedge.DefineWorkflow("concurrent_workflow",
+	func(ctx *selvedge.WorkflowContext, items []string) (ConcurrentResult, error) {
 		// Concurrent execution with errgroup
 		g, _ := errgroup.WithContext(ctx.Context())
 		results := make([]ItemResult, len(items))
@@ -380,7 +380,7 @@ var concurrentWorkflow = romancy.DefineWorkflow("concurrent_workflow",
 			i, item := i, item // Capture loop variables
 			g.Go(func() error {
 				result, err := processItem.Execute(ctx, item,
-					romancy.WithActivityID(fmt.Sprintf("process_item:%d", i+1)))
+					selvedge.WithActivityID(fmt.Sprintf("process_item:%d", i+1)))
 				if err != nil {
 					return err
 				}
@@ -401,7 +401,7 @@ var concurrentWorkflow = romancy.DefineWorkflow("concurrent_workflow",
 **Why explicit Activity IDs for concurrent execution?**
 
 - Concurrent execution order is non-deterministic
-- Romancy needs explicit IDs to match activities during replay
+- Selvedge needs explicit IDs to match activities during replay
 - Explicit IDs ensure deterministic replay even with concurrent execution
 
 ## What You Learned
@@ -410,7 +410,7 @@ var concurrentWorkflow = romancy.DefineWorkflow("concurrent_workflow",
 - ✅ **Workflows** orchestrate activities
 - ✅ **WorkflowContext** (`ctx`) is automatically provided to workflows
 - ✅ **App** manages the workflow engine and database
-- ✅ **`romancy.StartWorkflow()`** begins workflow execution
+- ✅ **`selvedge.StartWorkflow()`** begins workflow execution
 
 ## Next Steps
 

@@ -3,7 +3,7 @@ title: "HTTP Integration"
 weight: 5
 ---
 
-This example demonstrates how to integrate Romancy with a Go HTTP server for building workflow-powered APIs.
+This example demonstrates how to integrate Selvedge with a Go HTTP server for building workflow-powered APIs.
 
 ## What This Example Shows
 
@@ -25,7 +25,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 // OrderInput represents the order request
@@ -64,7 +64,7 @@ type PaymentResult struct {
 
 // Activities
 
-var validateOrder = romancy.DefineActivity("validate_order",
+var validateOrder = selvedge.DefineActivity("validate_order",
 	func(ctx context.Context, order OrderInput) (ValidationResult, error) {
 		if err := order.Validate(); err != nil {
 			return ValidationResult{}, err
@@ -73,7 +73,7 @@ var validateOrder = romancy.DefineActivity("validate_order",
 	},
 )
 
-var processPayment = romancy.DefineActivity("process_payment",
+var processPayment = selvedge.DefineActivity("process_payment",
 	func(ctx context.Context, orderID string, amount float64) (PaymentResult, error) {
 		fmt.Printf("Processing payment of $%.2f for order %s\n", amount, orderID)
 		return PaymentResult{
@@ -85,8 +85,8 @@ var processPayment = romancy.DefineActivity("process_payment",
 
 // Workflow
 
-var processOrder = romancy.DefineWorkflow("process_order",
-	func(ctx *romancy.WorkflowContext, order OrderInput) (OrderResult, error) {
+var processOrder = selvedge.DefineWorkflow("process_order",
+	func(ctx *selvedge.WorkflowContext, order OrderInput) (OrderResult, error) {
 		// Validate order
 		_, err := validateOrder.Execute(ctx, order)
 		if err != nil {
@@ -124,14 +124,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 func main() {
-	// Create Romancy app
-	app := romancy.NewApp(
-		romancy.WithDatabase("orders.db"),
-		romancy.WithWorkerID("http-server"),
+	// Create Selvedge app
+	app := selvedge.NewApp(
+		selvedge.WithDatabase("orders.db"),
+		selvedge.WithWorkerID("http-server"),
 	)
 
 	ctx := context.Background()
@@ -212,7 +212,7 @@ func main() {
 
 ### Mount CloudEvents Handler
 
-Romancy provides a CloudEvents handler that can be mounted on your HTTP server:
+Selvedge provides a CloudEvents handler that can be mounted on your HTTP server:
 
 ```go
 package main
@@ -224,13 +224,13 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 func main() {
-	app := romancy.NewApp(
-		romancy.WithDatabase("events.db"),
-		romancy.WithWorkerID("cloudevents-server"),
+	app := selvedge.NewApp(
+		selvedge.WithDatabase("events.db"),
+		selvedge.WithWorkerID("cloudevents-server"),
 	)
 
 	ctx := context.Background()
@@ -252,7 +252,7 @@ func main() {
 	log.Fatal(http.ListenAndServe(":8001", mux))
 }
 
-func handleCreateOrder(app *romancy.App) http.HandlerFunc {
+func handleCreateOrder(app *selvedge.App) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var order OrderInput
 		if err := json.NewDecoder(r.Body).Decode(&order); err != nil {
@@ -274,7 +274,7 @@ func handleCreateOrder(app *romancy.App) http.HandlerFunc {
 	}
 }
 
-func handleGetOrder(app *romancy.App) http.HandlerFunc {
+func handleGetOrder(app *selvedge.App) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		instanceID := r.PathValue("id")
 		instance, err := app.GetInstance(r.Context(), instanceID)
@@ -300,7 +300,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 type PaymentStartResult struct {
@@ -319,7 +319,7 @@ type PaymentCompleted struct {
 	Amount        float64 `json:"amount"`
 }
 
-var startPayment = romancy.DefineActivity("start_payment",
+var startPayment = selvedge.DefineActivity("start_payment",
 	func(ctx context.Context, orderID string) (PaymentStartResult, error) {
 		fmt.Printf("Starting payment for order %s\n", orderID)
 		return PaymentStartResult{
@@ -329,8 +329,8 @@ var startPayment = romancy.DefineActivity("start_payment",
 	},
 )
 
-var paymentWorkflow = romancy.DefineWorkflow("payment_workflow",
-	func(ctx *romancy.WorkflowContext, orderID string) (PaymentWorkflowResult, error) {
+var paymentWorkflow = selvedge.DefineWorkflow("payment_workflow",
+	func(ctx *selvedge.WorkflowContext, orderID string) (PaymentWorkflowResult, error) {
 		// Start payment process
 		_, err := startPayment.Execute(ctx, orderID)
 		if err != nil {
@@ -338,8 +338,8 @@ var paymentWorkflow = romancy.DefineWorkflow("payment_workflow",
 		}
 
 		// Wait for payment confirmation event (with timeout)
-		event, err := romancy.WaitEvent(ctx, "payment.completed",
-			romancy.WithTimeout(5*time.Minute),
+		event, err := selvedge.WaitEvent(ctx, "payment.completed",
+			selvedge.WithTimeout(5*time.Minute),
 		)
 		if err != nil {
 			return PaymentWorkflowResult{}, fmt.Errorf("payment timeout: %w", err)
@@ -347,7 +347,7 @@ var paymentWorkflow = romancy.DefineWorkflow("payment_workflow",
 
 		// Parse event data
 		var payment PaymentCompleted
-		if err := romancy.DecodeEventData(event.Data, &payment); err != nil {
+		if err := selvedge.DecodeEventData(event.Data, &payment); err != nil {
 			return PaymentWorkflowResult{}, err
 		}
 
@@ -406,12 +406,12 @@ Best for event-driven and async patterns:
 // External service sends CloudEvent
 // POST / with CloudEvent payload
 
-// Romancy handles the event automatically:
+// Selvedge handles the event automatically:
 // 1. If event starts a new workflow → start workflow
 // 2. If event resumes a waiting workflow → resume it
 
 // Workflow waits for events
-event, err := romancy.WaitEvent(ctx, "payment.completed")
+event, err := selvedge.WaitEvent(ctx, "payment.completed")
 ```
 
 ## Database Configuration
@@ -419,27 +419,27 @@ event, err := romancy.WaitEvent(ctx, "payment.completed")
 ### SQLite (Development)
 
 ```go
-app := romancy.NewApp(
-	romancy.WithDatabase("workflow.db"),
-	romancy.WithWorkerID("worker-1"),
+app := selvedge.NewApp(
+	selvedge.WithDatabase("workflow.db"),
+	selvedge.WithWorkerID("worker-1"),
 )
 ```
 
 ### PostgreSQL (Production)
 
 ```go
-app := romancy.NewApp(
-	romancy.WithDatabase("postgres://user:pass@localhost:5432/workflows"),
-	romancy.WithWorkerID("worker-1"),
+app := selvedge.NewApp(
+	selvedge.WithDatabase("postgres://user:pass@localhost:5432/workflows"),
+	selvedge.WithWorkerID("worker-1"),
 )
 ```
 
 ### MySQL
 
 ```go
-app := romancy.NewApp(
-	romancy.WithDatabase("mysql://user:pass@localhost:3306/workflows"),
-	romancy.WithWorkerID("worker-1"),
+app := selvedge.NewApp(
+	selvedge.WithDatabase("mysql://user:pass@localhost:3306/workflows"),
+	selvedge.WithWorkerID("worker-1"),
 )
 ```
 
@@ -475,15 +475,15 @@ mux.HandleFunc("POST /orders", func(w http.ResponseWriter, r *http.Request) {
 
 ```go
 // ✅ Production: PostgreSQL with connection pool
-app := romancy.NewApp(
-	romancy.WithDatabase("postgres://user:pass@localhost:5432/workflows"),
-	romancy.WithWorkerID(hostname()),
+app := selvedge.NewApp(
+	selvedge.WithDatabase("postgres://user:pass@localhost:5432/workflows"),
+	selvedge.WithWorkerID(hostname()),
 )
 
 // ⚠️ Development only: SQLite
-app := romancy.NewApp(
-	romancy.WithDatabase("dev.db"),
-	romancy.WithWorkerID("dev-worker"),
+app := selvedge.NewApp(
+	selvedge.WithDatabase("dev.db"),
+	selvedge.WithWorkerID("dev-worker"),
 )
 ```
 
@@ -491,7 +491,7 @@ app := romancy.NewApp(
 
 ```go
 func main() {
-	app := romancy.NewApp(...)
+	app := selvedge.NewApp(...)
 	ctx := context.Background()
 
 	// Initialize before serving
@@ -525,16 +525,16 @@ type OrderInput struct {
 	Amount  float64 `json:"amount"`
 }
 
-var processOrder = romancy.DefineWorkflow("process_order",
-	func(ctx *romancy.WorkflowContext, order OrderInput) (OrderResult, error) {
+var processOrder = selvedge.DefineWorkflow("process_order",
+	func(ctx *selvedge.WorkflowContext, order OrderInput) (OrderResult, error) {
 		// Type-safe access
 		return OrderResult{...}, nil
 	},
 )
 
 // ❌ Avoid: map[string]any for complex data
-var processOrder = romancy.DefineWorkflow("process_order",
-	func(ctx *romancy.WorkflowContext, data map[string]any) (map[string]any, error) {
+var processOrder = selvedge.DefineWorkflow("process_order",
+	func(ctx *selvedge.WorkflowContext, data map[string]any) (map[string]any, error) {
 		// Type assertions required
 		return nil, nil
 	},
@@ -561,7 +561,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 // Input/Output types
@@ -589,7 +589,7 @@ type PaymentResult struct {
 
 // Activities
 
-var validateOrder = romancy.DefineActivity("validate_order",
+var validateOrder = selvedge.DefineActivity("validate_order",
 	func(ctx context.Context, order OrderInput) (ValidationResult, error) {
 		if order.OrderID == "" {
 			return ValidationResult{}, fmt.Errorf("order_id required")
@@ -598,7 +598,7 @@ var validateOrder = romancy.DefineActivity("validate_order",
 	},
 )
 
-var processPayment = romancy.DefineActivity("process_payment",
+var processPayment = selvedge.DefineActivity("process_payment",
 	func(ctx context.Context, orderID string, amount float64) (PaymentResult, error) {
 		fmt.Printf("Processing $%.2f for %s\n", amount, orderID)
 		return PaymentResult{TransactionID: fmt.Sprintf("TXN-%s", orderID)}, nil
@@ -607,8 +607,8 @@ var processPayment = romancy.DefineActivity("process_payment",
 
 // Workflow
 
-var processOrder = romancy.DefineWorkflow("process_order",
-	func(ctx *romancy.WorkflowContext, order OrderInput) (OrderResult, error) {
+var processOrder = selvedge.DefineWorkflow("process_order",
+	func(ctx *selvedge.WorkflowContext, order OrderInput) (OrderResult, error) {
 		_, err := validateOrder.Execute(ctx, order)
 		if err != nil {
 			return OrderResult{}, err
@@ -629,13 +629,13 @@ var processOrder = romancy.DefineWorkflow("process_order",
 
 func main() {
 	fmt.Println("============================================================")
-	fmt.Println("Romancy Framework - HTTP Server Integration Example")
+	fmt.Println("Selvedge Framework - HTTP Server Integration Example")
 	fmt.Println("============================================================")
 	fmt.Println()
 
-	app := romancy.NewApp(
-		romancy.WithDatabase("http_demo.db"),
-		romancy.WithWorkerID("http-server"),
+	app := selvedge.NewApp(
+		selvedge.WithDatabase("http_demo.db"),
+		selvedge.WithWorkerID("http-server"),
 	)
 
 	ctx := context.Background()
@@ -717,7 +717,7 @@ func main() {
 ```bash
 # Initialize Go module
 go mod init http-example
-go get github.com/i2y/romancy
+go get github.com/CaliLuke/selvedge
 
 # Run the server
 go run http_server.go

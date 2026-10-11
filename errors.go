@@ -1,11 +1,11 @@
-// Package romancy provides a durable execution framework for Go.
-package romancy
+// Package selvedge provides a durable execution framework for Go.
+package selvedge
 
 import (
 	"errors"
 	"fmt"
 
-	"github.com/i2y/romancy/internal/replay"
+	"github.com/CaliLuke/selvedge/internal/replay"
 )
 
 // TerminalError wraps an error to indicate it should not be retried.

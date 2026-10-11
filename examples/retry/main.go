@@ -28,9 +28,9 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 
-	"github.com/i2y/romancy"
-	"github.com/i2y/romancy/hooks/otel"
-	"github.com/i2y/romancy/retry"
+	"github.com/CaliLuke/selvedge"
+	"github.com/CaliLuke/selvedge/hooks/otel"
+	"github.com/CaliLuke/selvedge/retry"
 )
 
 // ----- Types -----
@@ -72,7 +72,7 @@ var (
 )
 
 // FlakyAPICall simulates an unreliable API that sometimes fails.
-var FlakyAPICall = romancy.DefineActivity(
+var FlakyAPICall = selvedge.DefineActivity(
 	"flaky_api_call",
 	func(ctx context.Context, endpoint string) (int, error) {
 		attempt := atomic.AddInt64(&flakyCallAttempts, 1)
@@ -89,17 +89,17 @@ var FlakyAPICall = romancy.DefineActivity(
 		return 200, nil
 	},
 	// Exponential backoff: 100ms, 200ms, 400ms, 800ms...
-	romancy.WithRetryPolicy[string, int](retry.Exponential(
+	selvedge.WithRetryPolicy[string, int](retry.Exponential(
 		5,                    // Max 5 attempts
 		100*time.Millisecond, // Initial delay
 		2*time.Second,        // Max delay
 		2.0,                  // Multiplier
 	)),
-	romancy.WithTimeout[string, int](10*time.Second),
+	selvedge.WithTimeout[string, int](10*time.Second),
 )
 
 // BadRequestAPICall simulates an API that returns non-retryable errors.
-var BadRequestAPICall = romancy.DefineActivity(
+var BadRequestAPICall = selvedge.DefineActivity(
 	"bad_request_api_call",
 	func(ctx context.Context, endpoint string) (int, error) {
 		attempt := atomic.AddInt64(&failingCallAttempts, 1)
@@ -109,7 +109,7 @@ var BadRequestAPICall = romancy.DefineActivity(
 		return 0, fmt.Errorf("invalid parameters: %w", ErrBadRequest)
 	},
 	// Policy with non-retryable errors
-	romancy.WithRetryPolicy[string, int](
+	selvedge.WithRetryPolicy[string, int](
 		retry.NewBuilder().
 			WithMaxAttempts(5).
 			WithInitialInterval(100*time.Millisecond).
@@ -119,7 +119,7 @@ var BadRequestAPICall = romancy.DefineActivity(
 )
 
 // RateLimitedAPICall simulates an API with rate limiting.
-var RateLimitedAPICall = romancy.DefineActivity(
+var RateLimitedAPICall = selvedge.DefineActivity(
 	"rate_limited_api_call",
 	func(ctx context.Context, endpoint string) (int, error) {
 		log.Printf("[Activity] Calling rate-limited API: %s", endpoint)
@@ -134,14 +134,14 @@ var RateLimitedAPICall = romancy.DefineActivity(
 		return 200, nil
 	},
 	// Fixed interval retry for rate limiting (1 second between retries)
-	romancy.WithRetryPolicy[string, int](retry.Fixed(5, 1*time.Second)),
+	selvedge.WithRetryPolicy[string, int](retry.Fixed(5, 1*time.Second)),
 )
 
 // ----- Workflows -----
 
 // flakyAPIWorkflow calls a flaky API with automatic retries.
-var flakyAPIWorkflow = romancy.DefineWorkflow("flaky_api_workflow",
-	func(ctx *romancy.WorkflowContext, input APICallInput) (APICallResult, error) {
+var flakyAPIWorkflow = selvedge.DefineWorkflow("flaky_api_workflow",
+	func(ctx *selvedge.WorkflowContext, input APICallInput) (APICallResult, error) {
 		log.Printf("[Workflow] Starting flaky API workflow for: %s", input.Endpoint)
 
 		result := APICallResult{
@@ -170,8 +170,8 @@ var flakyAPIWorkflow = romancy.DefineWorkflow("flaky_api_workflow",
 )
 
 // nonRetryableWorkflow demonstrates non-retryable errors.
-var nonRetryableWorkflow = romancy.DefineWorkflow("non_retryable_workflow",
-	func(ctx *romancy.WorkflowContext, input APICallInput) (APICallResult, error) {
+var nonRetryableWorkflow = selvedge.DefineWorkflow("non_retryable_workflow",
+	func(ctx *selvedge.WorkflowContext, input APICallInput) (APICallResult, error) {
 		log.Printf("[Workflow] Starting non-retryable workflow for: %s", input.Endpoint)
 
 		result := APICallResult{
@@ -199,8 +199,8 @@ var nonRetryableWorkflow = romancy.DefineWorkflow("non_retryable_workflow",
 )
 
 // rateLimitedWorkflow handles rate-limited APIs.
-var rateLimitedWorkflow = romancy.DefineWorkflow("rate_limited_workflow",
-	func(ctx *romancy.WorkflowContext, input APICallInput) (APICallResult, error) {
+var rateLimitedWorkflow = selvedge.DefineWorkflow("rate_limited_workflow",
+	func(ctx *selvedge.WorkflowContext, input APICallInput) (APICallResult, error) {
 		log.Printf("[Workflow] Starting rate-limited workflow for: %s", input.Endpoint)
 
 		result := APICallResult{
@@ -233,7 +233,7 @@ func setupTracing(ctx context.Context) (*sdktrace.TracerProvider, error) {
 
 	serviceName := os.Getenv("OTEL_SERVICE_NAME")
 	if serviceName == "" {
-		serviceName = "romancy-retry"
+		serviceName = "selvedge-retry"
 	}
 
 	exporter, err := otlptracegrpc.New(ctx,
@@ -286,19 +286,19 @@ func main() {
 	}
 
 	// Create the application with optional tracing
-	opts := []romancy.Option{
-		romancy.WithDatabase(dbURL),
-		romancy.WithWorkerID("retry-worker-1"),
+	opts := []selvedge.Option{
+		selvedge.WithDatabase(dbURL),
+		selvedge.WithWorkerID("retry-worker-1"),
 	}
 	if tp != nil {
-		opts = append(opts, romancy.WithHooks(otel.NewOTelHooks(tp)))
+		opts = append(opts, selvedge.WithHooks(otel.NewOTelHooks(tp)))
 	}
-	app := romancy.NewApp(opts...)
+	app := selvedge.NewApp(opts...)
 
 	// Register workflows
-	romancy.RegisterWorkflow[APICallInput, APICallResult](app, flakyAPIWorkflow)
-	romancy.RegisterWorkflow[APICallInput, APICallResult](app, nonRetryableWorkflow)
-	romancy.RegisterWorkflow[APICallInput, APICallResult](app, rateLimitedWorkflow)
+	selvedge.RegisterWorkflow[APICallInput, APICallResult](app, flakyAPIWorkflow)
+	selvedge.RegisterWorkflow[APICallInput, APICallResult](app, nonRetryableWorkflow)
+	selvedge.RegisterWorkflow[APICallInput, APICallResult](app, rateLimitedWorkflow)
 
 	// Start the application
 	if err := app.Start(ctx); err != nil {
@@ -321,13 +321,13 @@ func main() {
 		Endpoint:   "/api/v1/flaky",
 		MaxRetries: 5,
 	}
-	flakyID, _ := romancy.StartWorkflow(ctx, app, flakyAPIWorkflow, flakyInput)
+	flakyID, _ := selvedge.StartWorkflow(ctx, app, flakyAPIWorkflow, flakyInput)
 	log.Printf("Started flaky API workflow: %s", flakyID)
 
 	// Wait for completion
 	time.Sleep(2 * time.Second)
 
-	result1, err := romancy.GetWorkflowResult[APICallResult](ctx, app, flakyID)
+	result1, err := selvedge.GetWorkflowResult[APICallResult](ctx, app, flakyID)
 	if err != nil {
 		log.Printf("Workflow error: %v", err)
 	} else {
@@ -340,13 +340,13 @@ func main() {
 		Endpoint:   "/api/v1/bad-request",
 		MaxRetries: 5,
 	}
-	badRequestID, _ := romancy.StartWorkflow(ctx, app, nonRetryableWorkflow, badRequestInput)
+	badRequestID, _ := selvedge.StartWorkflow(ctx, app, nonRetryableWorkflow, badRequestInput)
 	log.Printf("Started non-retryable workflow: %s", badRequestID)
 
 	// Wait for completion
 	time.Sleep(500 * time.Millisecond)
 
-	result2, err := romancy.GetWorkflowResult[APICallResult](ctx, app, badRequestID)
+	result2, err := selvedge.GetWorkflowResult[APICallResult](ctx, app, badRequestID)
 	if err != nil {
 		log.Printf("Workflow error (expected): %v", err)
 	}
@@ -358,13 +358,13 @@ func main() {
 		Endpoint:   "/api/v1/rate-limited",
 		MaxRetries: 5,
 	}
-	rateLimitID, _ := romancy.StartWorkflow(ctx, app, rateLimitedWorkflow, rateLimitInput)
+	rateLimitID, _ := selvedge.StartWorkflow(ctx, app, rateLimitedWorkflow, rateLimitInput)
 	log.Printf("Started rate-limited workflow: %s", rateLimitID)
 
 	// Wait for completion
 	time.Sleep(5 * time.Second)
 
-	result3, err := romancy.GetWorkflowResult[APICallResult](ctx, app, rateLimitID)
+	result3, err := selvedge.GetWorkflowResult[APICallResult](ctx, app, rateLimitID)
 	if err != nil {
 		log.Printf("Workflow error: %v", err)
 	} else {
@@ -376,7 +376,7 @@ func main() {
 	log.Println("==============================================")
 
 	// In serve mode (for Tilt), wait for shutdown signal instead of exiting
-	if os.Getenv("ROMANCY_SERVE") == "true" {
+	if os.Getenv("SELVEDGE_SERVE") == "true" {
 		log.Println("\nRunning in serve mode. Press Ctrl+C to stop.")
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)

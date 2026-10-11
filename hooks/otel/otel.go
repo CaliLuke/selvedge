@@ -1,4 +1,4 @@
-// Package otel provides OpenTelemetry integration for Romancy workflow hooks.
+// Package otel provides OpenTelemetry integration for Selvedge workflow hooks.
 package otel
 
 import (
@@ -10,11 +10,11 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/i2y/romancy/hooks"
+	"github.com/CaliLuke/selvedge/hooks"
 )
 
 const (
-	tracerName = "romancy"
+	tracerName = "selvedge"
 )
 
 // OTelHooks implements WorkflowHooks with OpenTelemetry tracing.
@@ -70,9 +70,9 @@ func (h *OTelHooks) OnWorkflowStart(ctx context.Context, info hooks.WorkflowStar
 	spanCtx, span := h.tracer.Start(ctx, fmt.Sprintf("workflow/%s", info.WorkflowName),
 		trace.WithSpanKind(trace.SpanKindInternal),
 		trace.WithAttributes(
-			attribute.String("romancy.instance_id", info.InstanceID),
-			attribute.String("romancy.workflow_name", info.WorkflowName),
-			attribute.String("romancy.start_time", info.StartTime.String()),
+			attribute.String("selvedge.instance_id", info.InstanceID),
+			attribute.String("selvedge.workflow_name", info.WorkflowName),
+			attribute.String("selvedge.start_time", info.StartTime.String()),
 		),
 	)
 	h.workflowSpans[info.InstanceID] = span
@@ -83,7 +83,7 @@ func (h *OTelHooks) OnWorkflowStart(ctx context.Context, info hooks.WorkflowStar
 func (h *OTelHooks) OnWorkflowComplete(ctx context.Context, info hooks.WorkflowCompleteInfo) {
 	if span, ok := h.workflowSpans[info.InstanceID]; ok {
 		span.SetAttributes(
-			attribute.Int64("romancy.duration_ms", info.Duration.Milliseconds()),
+			attribute.Int64("selvedge.duration_ms", info.Duration.Milliseconds()),
 		)
 		span.SetStatus(codes.Ok, "workflow completed")
 		span.End()
@@ -96,7 +96,7 @@ func (h *OTelHooks) OnWorkflowComplete(ctx context.Context, info hooks.WorkflowC
 func (h *OTelHooks) OnWorkflowFailed(ctx context.Context, info hooks.WorkflowFailedInfo) {
 	if span, ok := h.workflowSpans[info.InstanceID]; ok {
 		span.SetAttributes(
-			attribute.Int64("romancy.duration_ms", info.Duration.Milliseconds()),
+			attribute.Int64("selvedge.duration_ms", info.Duration.Milliseconds()),
 		)
 		span.RecordError(info.Error)
 		span.SetStatus(codes.Error, info.Error.Error())
@@ -110,8 +110,8 @@ func (h *OTelHooks) OnWorkflowFailed(ctx context.Context, info hooks.WorkflowFai
 func (h *OTelHooks) OnWorkflowCancelled(ctx context.Context, info hooks.WorkflowCancelledInfo) {
 	if span, ok := h.workflowSpans[info.InstanceID]; ok {
 		span.SetAttributes(
-			attribute.Int64("romancy.duration_ms", info.Duration.Milliseconds()),
-			attribute.String("romancy.cancel_reason", info.Reason),
+			attribute.Int64("selvedge.duration_ms", info.Duration.Milliseconds()),
+			attribute.String("selvedge.cancel_reason", info.Reason),
 		)
 		span.SetStatus(codes.Error, "workflow canceled: "+info.Reason)
 		span.End()
@@ -138,11 +138,11 @@ func (h *OTelHooks) OnActivityStart(ctx context.Context, info hooks.ActivityStar
 	_, span := h.tracer.Start(parentCtx, fmt.Sprintf("activity/%s", info.ActivityName),
 		trace.WithSpanKind(trace.SpanKindInternal),
 		trace.WithAttributes(
-			attribute.String("romancy.instance_id", info.InstanceID),
-			attribute.String("romancy.workflow_name", info.WorkflowName),
-			attribute.String("romancy.activity_id", info.ActivityID),
-			attribute.String("romancy.activity_name", info.ActivityName),
-			attribute.Bool("romancy.is_replay", info.IsReplay),
+			attribute.String("selvedge.instance_id", info.InstanceID),
+			attribute.String("selvedge.workflow_name", info.WorkflowName),
+			attribute.String("selvedge.activity_id", info.ActivityID),
+			attribute.String("selvedge.activity_name", info.ActivityName),
+			attribute.Bool("selvedge.is_replay", info.IsReplay),
 		),
 	)
 	h.activitySpans[h.activityKey(info.InstanceID, info.ActivityID)] = span
@@ -153,8 +153,8 @@ func (h *OTelHooks) OnActivityComplete(ctx context.Context, info hooks.ActivityC
 	key := h.activityKey(info.InstanceID, info.ActivityID)
 	if span, ok := h.activitySpans[key]; ok {
 		span.SetAttributes(
-			attribute.Int64("romancy.duration_ms", info.Duration.Milliseconds()),
-			attribute.Bool("romancy.is_replay", info.IsReplay),
+			attribute.Int64("selvedge.duration_ms", info.Duration.Milliseconds()),
+			attribute.Bool("selvedge.is_replay", info.IsReplay),
 		)
 		span.SetStatus(codes.Ok, "activity completed")
 		span.End()
@@ -167,8 +167,8 @@ func (h *OTelHooks) OnActivityFailed(ctx context.Context, info hooks.ActivityFai
 	key := h.activityKey(info.InstanceID, info.ActivityID)
 	if span, ok := h.activitySpans[key]; ok {
 		span.SetAttributes(
-			attribute.Int64("romancy.duration_ms", info.Duration.Milliseconds()),
-			attribute.Int("romancy.attempt", info.Attempt),
+			attribute.Int64("selvedge.duration_ms", info.Duration.Milliseconds()),
+			attribute.Int("selvedge.attempt", info.Attempt),
 		)
 		span.RecordError(info.Error)
 		span.SetStatus(codes.Error, info.Error.Error())
@@ -183,10 +183,10 @@ func (h *OTelHooks) OnActivityRetry(ctx context.Context, info hooks.ActivityRetr
 	if span, ok := h.activitySpans[key]; ok {
 		span.AddEvent("activity_retry",
 			trace.WithAttributes(
-				attribute.Int("romancy.attempt", info.Attempt),
-				attribute.Int("romancy.max_attempts", info.MaxAttempts),
-				attribute.Int64("romancy.next_delay_ms", info.NextDelay.Milliseconds()),
-				attribute.String("romancy.error", info.Error.Error()),
+				attribute.Int("selvedge.attempt", info.Attempt),
+				attribute.Int("selvedge.max_attempts", info.MaxAttempts),
+				attribute.Int64("selvedge.next_delay_ms", info.NextDelay.Milliseconds()),
+				attribute.String("selvedge.error", info.Error.Error()),
 			),
 		)
 	}
@@ -197,10 +197,10 @@ func (h *OTelHooks) OnActivityCacheHit(ctx context.Context, info hooks.ActivityC
 	_, span := h.tracer.Start(ctx, fmt.Sprintf("activity_cache_hit/%s", info.ActivityName),
 		trace.WithSpanKind(trace.SpanKindInternal),
 		trace.WithAttributes(
-			attribute.String("romancy.instance_id", info.InstanceID),
-			attribute.String("romancy.workflow_name", info.WorkflowName),
-			attribute.String("romancy.activity_id", info.ActivityID),
-			attribute.String("romancy.activity_name", info.ActivityName),
+			attribute.String("selvedge.instance_id", info.InstanceID),
+			attribute.String("selvedge.workflow_name", info.WorkflowName),
+			attribute.String("selvedge.activity_id", info.ActivityID),
+			attribute.String("selvedge.activity_name", info.ActivityName),
 		),
 	)
 	span.SetStatus(codes.Ok, "cache hit")
@@ -218,10 +218,10 @@ func (h *OTelHooks) OnEventReceived(ctx context.Context, info hooks.EventReceive
 	_, span := h.tracer.Start(ctx, fmt.Sprintf("event_received/%s", info.EventType),
 		trace.WithSpanKind(trace.SpanKindConsumer),
 		trace.WithAttributes(
-			attribute.String("romancy.event_type", info.EventType),
-			attribute.String("romancy.event_id", info.EventID),
-			attribute.String("romancy.event_source", info.EventSource),
-			attribute.String("romancy.instance_id", info.InstanceID),
+			attribute.String("selvedge.event_type", info.EventType),
+			attribute.String("selvedge.event_id", info.EventID),
+			attribute.String("selvedge.event_source", info.EventSource),
+			attribute.String("selvedge.instance_id", info.InstanceID),
 		),
 	)
 	span.SetStatus(codes.Ok, "event received")
@@ -231,12 +231,12 @@ func (h *OTelHooks) OnEventReceived(ctx context.Context, info hooks.EventReceive
 // OnEventWaitStart creates a span when waiting for an event starts.
 func (h *OTelHooks) OnEventWaitStart(ctx context.Context, info hooks.EventWaitStartInfo) {
 	attrs := []attribute.KeyValue{
-		attribute.String("romancy.instance_id", info.InstanceID),
-		attribute.String("romancy.workflow_name", info.WorkflowName),
-		attribute.String("romancy.event_type", info.EventType),
+		attribute.String("selvedge.instance_id", info.InstanceID),
+		attribute.String("selvedge.workflow_name", info.WorkflowName),
+		attribute.String("selvedge.event_type", info.EventType),
 	}
 	if info.Timeout != nil {
-		attrs = append(attrs, attribute.Int64("romancy.timeout_ms", info.Timeout.Milliseconds()))
+		attrs = append(attrs, attribute.Int64("selvedge.timeout_ms", info.Timeout.Milliseconds()))
 	}
 
 	_, span := h.tracer.Start(ctx, fmt.Sprintf("event_wait/%s", info.EventType),
@@ -251,7 +251,7 @@ func (h *OTelHooks) OnEventWaitComplete(ctx context.Context, info hooks.EventWai
 	key := h.eventWaitKey(info.InstanceID, info.EventType)
 	if span, ok := h.eventWaitSpans[key]; ok {
 		span.SetAttributes(
-			attribute.Int64("romancy.duration_ms", info.Duration.Milliseconds()),
+			attribute.Int64("selvedge.duration_ms", info.Duration.Milliseconds()),
 		)
 		span.SetStatus(codes.Ok, "event received")
 		span.End()
@@ -280,10 +280,10 @@ func (h *OTelHooks) OnTimerStart(ctx context.Context, info hooks.TimerStartInfo)
 	_, span := h.tracer.Start(ctx, fmt.Sprintf("timer/%s", info.TimerID),
 		trace.WithSpanKind(trace.SpanKindInternal),
 		trace.WithAttributes(
-			attribute.String("romancy.instance_id", info.InstanceID),
-			attribute.String("romancy.workflow_name", info.WorkflowName),
-			attribute.String("romancy.timer_id", info.TimerID),
-			attribute.String("romancy.expires_at", info.ExpiresAt.String()),
+			attribute.String("selvedge.instance_id", info.InstanceID),
+			attribute.String("selvedge.workflow_name", info.WorkflowName),
+			attribute.String("selvedge.timer_id", info.TimerID),
+			attribute.String("selvedge.expires_at", info.ExpiresAt.String()),
 		),
 	)
 	h.timerSpans[h.timerKey(info.InstanceID, info.TimerID)] = span
@@ -294,7 +294,7 @@ func (h *OTelHooks) OnTimerFired(ctx context.Context, info hooks.TimerFiredInfo)
 	key := h.timerKey(info.InstanceID, info.TimerID)
 	if span, ok := h.timerSpans[key]; ok {
 		span.SetAttributes(
-			attribute.String("romancy.fired_at", info.FiredAt.String()),
+			attribute.String("selvedge.fired_at", info.FiredAt.String()),
 		)
 		span.SetStatus(codes.Ok, "timer fired")
 		span.End()
@@ -309,10 +309,10 @@ func (h *OTelHooks) OnReplayStart(ctx context.Context, info hooks.ReplayStartInf
 	_, span := h.tracer.Start(ctx, fmt.Sprintf("replay/%s", info.WorkflowName),
 		trace.WithSpanKind(trace.SpanKindInternal),
 		trace.WithAttributes(
-			attribute.String("romancy.instance_id", info.InstanceID),
-			attribute.String("romancy.workflow_name", info.WorkflowName),
-			attribute.Int("romancy.history_events", info.HistoryEvents),
-			attribute.String("romancy.resume_activity", info.ResumeActivity),
+			attribute.String("selvedge.instance_id", info.InstanceID),
+			attribute.String("selvedge.workflow_name", info.WorkflowName),
+			attribute.Int("selvedge.history_events", info.HistoryEvents),
+			attribute.String("selvedge.resume_activity", info.ResumeActivity),
 		),
 	)
 	h.replaySpans[info.InstanceID] = span
@@ -322,9 +322,9 @@ func (h *OTelHooks) OnReplayStart(ctx context.Context, info hooks.ReplayStartInf
 func (h *OTelHooks) OnReplayComplete(ctx context.Context, info hooks.ReplayCompleteInfo) {
 	if span, ok := h.replaySpans[info.InstanceID]; ok {
 		span.SetAttributes(
-			attribute.Int("romancy.cache_hits", info.CacheHits),
-			attribute.Int("romancy.new_activities", info.NewActivities),
-			attribute.Int64("romancy.duration_ms", info.Duration.Milliseconds()),
+			attribute.Int("selvedge.cache_hits", info.CacheHits),
+			attribute.Int("selvedge.new_activities", info.NewActivities),
+			attribute.Int64("selvedge.duration_ms", info.Duration.Milliseconds()),
 		)
 		span.SetStatus(codes.Ok, "replay completed")
 		span.End()

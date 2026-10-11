@@ -10,7 +10,7 @@ import (
 
 func TestSQLiteStorage(t *testing.T) {
 	// Create a temporary database
-	tmpFile, err := os.CreateTemp("", "romancy-test-*.db")
+	tmpFile, err := os.CreateTemp("", "selvedge-test-*.db")
 	if err != nil {
 		t.Fatalf("failed to create temp file: %v", err)
 	}
@@ -450,7 +450,7 @@ func TestSQLiteStorage(t *testing.T) {
 
 func TestSQLiteStorage_InputFilters(t *testing.T) {
 	// Create a temporary database
-	tmpFile, err := os.CreateTemp("", "romancy-input-filter-test-*.db")
+	tmpFile, err := os.CreateTemp("", "selvedge-input-filter-test-*.db")
 	if err != nil {
 		t.Fatalf("failed to create temp file: %v", err)
 	}

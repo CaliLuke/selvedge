@@ -1,4 +1,4 @@
-package romancy
+package selvedge
 
 import (
 	"context"
@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/i2y/romancy/internal/replay"
-	"github.com/i2y/romancy/internal/storage"
+	"github.com/CaliLuke/selvedge/internal/replay"
+	"github.com/CaliLuke/selvedge/internal/storage"
 )
 
 // Workflow defines the interface for a durable workflow.

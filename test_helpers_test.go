@@ -1,11 +1,11 @@
-package romancy
+package selvedge
 
 import (
 	"context"
 	"os"
 	"testing"
 
-	"github.com/i2y/romancy/internal/storage"
+	"github.com/CaliLuke/selvedge/internal/storage"
 )
 
 // createTestApp creates a new App with a pre-initialized test database.
@@ -16,7 +16,7 @@ func createTestApp(t *testing.T, opts ...Option) (*App, func()) {
 	t.Helper()
 
 	// Create a temporary database
-	tmpFile, err := os.CreateTemp("", "romancy-test-*.db")
+	tmpFile, err := os.CreateTemp("", "selvedge-test-*.db")
 	if err != nil {
 		t.Fatalf("failed to create temp file: %v", err)
 	}

@@ -3,7 +3,7 @@ title: "Integrations"
 weight: 4
 ---
 
-Integrate Romancy with other tools and services.
+Integrate Selvedge with other tools and services.
 
 ## Available Integrations
 

@@ -1,4 +1,4 @@
-module github.com/i2y/romancy/website
+module github.com/CaliLuke/selvedge/website
 
 go 1.24
 

@@ -41,7 +41,7 @@ func (t SuspendType) String() string {
 //
 // When a workflow function returns a SuspendSignal, callers should propagate it:
 //
-//	if err := romancy.Sleep(ctx, time.Hour); err != nil {
+//	if err := selvedge.Sleep(ctx, time.Hour); err != nil {
 //	    return result, err  // Propagate the suspend signal
 //	}
 //

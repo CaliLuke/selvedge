@@ -19,9 +19,9 @@ func setupPostgresContainer(t *testing.T) (*PostgresStorage, func()) {
 
 	container, err := postgres.Run(ctx,
 		"postgres:15-alpine",
-		postgres.WithDatabase("romancy_test"),
-		postgres.WithUsername("romancy"),
-		postgres.WithPassword("romancy"),
+		postgres.WithDatabase("selvedge_test"),
+		postgres.WithUsername("selvedge"),
+		postgres.WithPassword("selvedge"),
 		testcontainers.WithWaitStrategy(
 			wait.ForLog("database system is ready to accept connections").
 				WithOccurrence(2).

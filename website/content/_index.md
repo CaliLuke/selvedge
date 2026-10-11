@@ -1,5 +1,5 @@
 ---
-title: "Romancy"
+title: "Selvedge"
 layout: "hextra-home"
 ---
 
@@ -23,7 +23,7 @@ layout: "hextra-home"
 
 <div class="hx-mb-6">
 {{< hextra/hero-button text="Get Started" link="docs/getting-started/installation" >}}
-{{< hextra/hero-button text="GitHub" link="https://github.com/i2y/romancy" style="outline" >}}
+{{< hextra/hero-button text="GitHub" link="https://github.com/CaliLuke/selvedge" style="outline" >}}
 </div>
 
 <div class="hx-mt-6"></div>

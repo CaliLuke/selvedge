@@ -31,8 +31,8 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 
-	"github.com/i2y/romancy"
-	"github.com/i2y/romancy/hooks/otel"
+	"github.com/CaliLuke/selvedge"
+	"github.com/CaliLuke/selvedge/hooks/otel"
 )
 
 // ----- Types -----
@@ -75,7 +75,7 @@ var ErrPaymentFailed = errors.New("payment processing failed")
 // ----- Activities -----
 
 // BookFlight books a flight and provides compensation to cancel it.
-var BookFlight = romancy.DefineActivity(
+var BookFlight = selvedge.DefineActivity(
 	"book_flight",
 	func(ctx context.Context, details BookingDetails) (string, error) {
 		log.Printf("[Activity] Booking flight: %s -> %s", details.Origin, details.Destination)
@@ -85,7 +85,7 @@ var BookFlight = romancy.DefineActivity(
 		log.Printf("[Activity] Flight booked: %s", bookingID)
 		return bookingID, nil
 	},
-	romancy.WithCompensation[BookingDetails, string](func(ctx context.Context, details BookingDetails) error {
+	selvedge.WithCompensation[BookingDetails, string](func(ctx context.Context, details BookingDetails) error {
 		log.Printf("[Compensation] Canceling flight booking for user %s", details.UserID)
 		log.Printf("[Compensation] Refunding flight from %s to %s", details.Origin, details.Destination)
 		time.Sleep(50 * time.Millisecond) // Simulate cancellation
@@ -95,7 +95,7 @@ var BookFlight = romancy.DefineActivity(
 )
 
 // ReserveHotel reserves a hotel and provides compensation to cancel it.
-var ReserveHotel = romancy.DefineActivity(
+var ReserveHotel = selvedge.DefineActivity(
 	"reserve_hotel",
 	func(ctx context.Context, details BookingDetails) (string, error) {
 		log.Printf("[Activity] Reserving hotel in %s from %s to %s",
@@ -106,7 +106,7 @@ var ReserveHotel = romancy.DefineActivity(
 		log.Printf("[Activity] Hotel reserved: %s", reservationID)
 		return reservationID, nil
 	},
-	romancy.WithCompensation[BookingDetails, string](func(ctx context.Context, details BookingDetails) error {
+	selvedge.WithCompensation[BookingDetails, string](func(ctx context.Context, details BookingDetails) error {
 		log.Printf("[Compensation] Canceling hotel reservation for user %s", details.UserID)
 		log.Printf("[Compensation] Releasing room in %s", details.Destination)
 		time.Sleep(50 * time.Millisecond) // Simulate cancellation
@@ -116,7 +116,7 @@ var ReserveHotel = romancy.DefineActivity(
 )
 
 // RentCar rents a car and provides compensation to cancel it.
-var RentCar = romancy.DefineActivity(
+var RentCar = selvedge.DefineActivity(
 	"rent_car",
 	func(ctx context.Context, details BookingDetails) (string, error) {
 		log.Printf("[Activity] Renting car in %s from %s to %s",
@@ -127,7 +127,7 @@ var RentCar = romancy.DefineActivity(
 		log.Printf("[Activity] Car rented: %s", rentalID)
 		return rentalID, nil
 	},
-	romancy.WithCompensation[BookingDetails, string](func(ctx context.Context, details BookingDetails) error {
+	selvedge.WithCompensation[BookingDetails, string](func(ctx context.Context, details BookingDetails) error {
 		log.Printf("[Compensation] Canceling car rental for user %s", details.UserID)
 		log.Printf("[Compensation] Releasing car reservation in %s", details.Destination)
 		time.Sleep(50 * time.Millisecond) // Simulate cancellation
@@ -137,7 +137,7 @@ var RentCar = romancy.DefineActivity(
 )
 
 // ProcessPayment processes the payment (may fail to demonstrate compensation).
-var ProcessPayment = romancy.DefineActivity(
+var ProcessPayment = selvedge.DefineActivity(
 	"process_payment",
 	func(ctx context.Context, input struct {
 		UserID     string
@@ -160,8 +160,8 @@ var ProcessPayment = romancy.DefineActivity(
 // ----- Workflow -----
 
 // tripBookingWorkflow orchestrates the entire trip booking process.
-var tripBookingWorkflow = romancy.DefineWorkflow("trip_booking_workflow",
-	func(ctx *romancy.WorkflowContext, input TripBookingInput) (TripBookingResult, error) {
+var tripBookingWorkflow = selvedge.DefineWorkflow("trip_booking_workflow",
+	func(ctx *selvedge.WorkflowContext, input TripBookingInput) (TripBookingResult, error) {
 		log.Printf("[Workflow] Starting trip booking for user %s", input.UserID)
 		log.Printf("[Workflow] Trip: %s -> %s (%s to %s)",
 			input.Origin, input.Destination, input.StartDate, input.EndDate)
@@ -252,7 +252,7 @@ func setupTracing(ctx context.Context) (*sdktrace.TracerProvider, error) {
 
 	serviceName := os.Getenv("OTEL_SERVICE_NAME")
 	if serviceName == "" {
-		serviceName = "romancy-saga"
+		serviceName = "selvedge-saga"
 	}
 
 	exporter, err := otlptracegrpc.New(ctx,
@@ -305,17 +305,17 @@ func main() {
 	}
 
 	// Create the application with optional tracing
-	opts := []romancy.Option{
-		romancy.WithDatabase(dbURL),
-		romancy.WithWorkerID("saga-worker-1"),
+	opts := []selvedge.Option{
+		selvedge.WithDatabase(dbURL),
+		selvedge.WithWorkerID("saga-worker-1"),
 	}
 	if tp != nil {
-		opts = append(opts, romancy.WithHooks(otel.NewOTelHooks(tp)))
+		opts = append(opts, selvedge.WithHooks(otel.NewOTelHooks(tp)))
 	}
-	app := romancy.NewApp(opts...)
+	app := selvedge.NewApp(opts...)
 
 	// Register the workflow
-	romancy.RegisterWorkflow[TripBookingInput, TripBookingResult](app, tripBookingWorkflow)
+	selvedge.RegisterWorkflow[TripBookingInput, TripBookingResult](app, tripBookingWorkflow)
 
 	// Start the application
 	if err := app.Start(ctx); err != nil {
@@ -343,12 +343,12 @@ func main() {
 		ShouldFail:  false,
 	}
 
-	successID, _ := romancy.StartWorkflow(ctx, app, tripBookingWorkflow, successInput)
+	successID, _ := selvedge.StartWorkflow(ctx, app, tripBookingWorkflow, successInput)
 	log.Printf("Started successful booking workflow: %s", successID)
 
 	time.Sleep(1 * time.Second)
 
-	result1, err := romancy.GetWorkflowResult[TripBookingResult](ctx, app, successID)
+	result1, err := selvedge.GetWorkflowResult[TripBookingResult](ctx, app, successID)
 	if err != nil {
 		log.Printf("Workflow error: %v", err)
 	} else {
@@ -370,12 +370,12 @@ func main() {
 		ShouldFail:  true, // This will trigger compensation!
 	}
 
-	failID, _ := romancy.StartWorkflow(ctx, app, tripBookingWorkflow, failInput)
+	failID, _ := selvedge.StartWorkflow(ctx, app, tripBookingWorkflow, failInput)
 	log.Printf("Started failing booking workflow: %s", failID)
 
 	time.Sleep(2 * time.Second)
 
-	result2, err := romancy.GetWorkflowResult[TripBookingResult](ctx, app, failID)
+	result2, err := selvedge.GetWorkflowResult[TripBookingResult](ctx, app, failID)
 	if err != nil {
 		log.Printf("Workflow error (expected): %v", err)
 	}
@@ -394,7 +394,7 @@ func main() {
 	log.Println("==============================================")
 
 	// In serve mode (for Tilt), wait for shutdown signal instead of exiting
-	if os.Getenv("ROMANCY_SERVE") == "true" {
+	if os.Getenv("SELVEDGE_SERVE") == "true" {
 		log.Println("\nRunning in serve mode. Press Ctrl+C to stop.")
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)

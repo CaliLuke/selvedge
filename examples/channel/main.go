@@ -55,8 +55,8 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 
-	"github.com/i2y/romancy"
-	"github.com/i2y/romancy/hooks/otel"
+	"github.com/CaliLuke/selvedge"
+	"github.com/CaliLuke/selvedge/hooks/otel"
 )
 
 // ----- Types -----
@@ -115,8 +115,8 @@ type SendToResult struct {
 // - "broadcast": All consumers receive all messages (fan-out)
 // - "competing": Each message goes to exactly one consumer (load balancing)
 // - "direct": Receives SendTo messages sent to this specific instance
-var consumerWorkflow = romancy.DefineWorkflow("channel_consumer",
-	func(ctx *romancy.WorkflowContext, input ConsumerInput) (ConsumerResult, error) {
+var consumerWorkflow = selvedge.DefineWorkflow("channel_consumer",
+	func(ctx *selvedge.WorkflowContext, input ConsumerInput) (ConsumerResult, error) {
 		log.Printf("[Consumer %s] Starting consumer workflow (mode: %s)", input.ConsumerID, input.Mode)
 
 		result := ConsumerResult{
@@ -127,32 +127,32 @@ var consumerWorkflow = romancy.DefineWorkflow("channel_consumer",
 
 		// Determine channel name and subscription mode based on input.Mode
 		var channelName string
-		var subscriptionMode romancy.ChannelMode
+		var subscriptionMode selvedge.ChannelMode
 
 		switch input.Mode {
 		case "competing":
 			// Competing mode: subscribe to shared channel, each message goes to one consumer
 			channelName = "notifications"
-			subscriptionMode = romancy.ModeCompeting
+			subscriptionMode = selvedge.ModeCompeting
 			log.Printf("[Consumer %s] Subscribing to channel '%s' in COMPETING mode", input.ConsumerID, channelName)
 
 		case "direct":
 			// Direct mode: use ModeDirect to receive SendTo messages
 			// ModeDirect automatically subscribes to "notifications:instanceID"
 			channelName = "notifications"
-			subscriptionMode = romancy.ModeDirect
+			subscriptionMode = selvedge.ModeDirect
 			log.Printf("[Consumer %s] Subscribing to channel '%s' in DIRECT mode", input.ConsumerID, channelName)
 			log.Printf("[Consumer %s] Instance ID for SendTo: %s", input.ConsumerID, ctx.InstanceID())
 
 		default: // "broadcast" or empty
 			// Broadcast mode: all consumers receive all messages
 			channelName = "notifications"
-			subscriptionMode = romancy.ModeBroadcast
+			subscriptionMode = selvedge.ModeBroadcast
 			log.Printf("[Consumer %s] Subscribing to channel '%s' in BROADCAST mode", input.ConsumerID, channelName)
 		}
 
 		// Subscribe to the channel
-		if err := romancy.Subscribe(ctx, channelName, subscriptionMode); err != nil {
+		if err := selvedge.Subscribe(ctx, channelName, subscriptionMode); err != nil {
 			result.Status = "subscription_failed"
 			return result, fmt.Errorf("failed to subscribe: %w", err)
 		}
@@ -167,7 +167,7 @@ var consumerWorkflow = romancy.DefineWorkflow("channel_consumer",
 		for emptyCount < maxEmptyCount {
 			log.Printf("[Consumer %s] Waiting for message (received: %d)...", input.ConsumerID, len(result.MessagesReceived))
 
-			msg, err := romancy.Receive[ChatMessage](ctx, channelName, romancy.WithReceiveTimeout(2*time.Second))
+			msg, err := selvedge.Receive[ChatMessage](ctx, channelName, selvedge.WithReceiveTimeout(2*time.Second))
 			if err == nil {
 				prefix := ""
 				if input.Mode == "direct" {
@@ -180,12 +180,12 @@ var consumerWorkflow = romancy.DefineWorkflow("channel_consumer",
 			}
 
 			// Check for suspend signal (workflow needs to pause)
-			if romancy.IsSuspendSignal(err) {
+			if selvedge.IsSuspendSignal(err) {
 				return result, err
 			}
 
 			// Check for timeout
-			var timeoutErr *romancy.ChannelMessageTimeoutError
+			var timeoutErr *selvedge.ChannelMessageTimeoutError
 			if errors.As(err, &timeoutErr) {
 				emptyCount++
 				continue
@@ -203,8 +203,8 @@ var consumerWorkflow = romancy.DefineWorkflow("channel_consumer",
 )
 
 // producerWorkflow sends multiple messages to a channel.
-var producerWorkflow = romancy.DefineWorkflow("channel_producer",
-	func(ctx *romancy.WorkflowContext, input ProducerInput) (ProducerResult, error) {
+var producerWorkflow = selvedge.DefineWorkflow("channel_producer",
+	func(ctx *selvedge.WorkflowContext, input ProducerInput) (ProducerResult, error) {
 		log.Printf("[Producer %s] Starting producer workflow", input.ProducerID)
 
 		result := ProducerResult{
@@ -218,7 +218,7 @@ var producerWorkflow = romancy.DefineWorkflow("channel_producer",
 		}
 
 		// Subscribe to receive replies (optional, for bi-directional communication)
-		if err := romancy.Subscribe(ctx, "replies", romancy.ModeBroadcast); err != nil {
+		if err := selvedge.Subscribe(ctx, "replies", selvedge.ModeBroadcast); err != nil {
 			log.Printf("[Producer %s] Warning: failed to subscribe to replies: %v", input.ProducerID, err)
 		}
 
@@ -231,7 +231,7 @@ var producerWorkflow = romancy.DefineWorkflow("channel_producer",
 			}
 
 			log.Printf("[Producer %s] Publishing message %d/%d: %s", input.ProducerID, i+1, len(input.Messages), content)
-			if err := romancy.Publish(ctx, channelName, msg); err != nil {
+			if err := selvedge.Publish(ctx, channelName, msg); err != nil {
 				result.Status = "publish_failed"
 				return result, fmt.Errorf("failed to publish message: %w", err)
 			}
@@ -248,8 +248,8 @@ var producerWorkflow = romancy.DefineWorkflow("channel_producer",
 )
 
 // sendToWorkflow sends a direct message to a specific workflow instance.
-var sendToWorkflow = romancy.DefineWorkflow("channel_send_to",
-	func(ctx *romancy.WorkflowContext, input SendToInput) (SendToResult, error) {
+var sendToWorkflow = selvedge.DefineWorkflow("channel_send_to",
+	func(ctx *selvedge.WorkflowContext, input SendToInput) (SendToResult, error) {
 		log.Printf("[SendTo] Sending direct message to %s on channel '%s'", input.TargetInstanceID, input.Channel)
 
 		msg := ChatMessage{
@@ -258,7 +258,7 @@ var sendToWorkflow = romancy.DefineWorkflow("channel_send_to",
 			Timestamp: time.Now(),
 		}
 
-		if err := romancy.SendTo(ctx, input.TargetInstanceID, input.Channel, msg); err != nil {
+		if err := selvedge.SendTo(ctx, input.TargetInstanceID, input.Channel, msg); err != nil {
 			return SendToResult{Status: "failed"}, fmt.Errorf("failed to send: %w", err)
 		}
 
@@ -277,7 +277,7 @@ func setupTracing(ctx context.Context) (*sdktrace.TracerProvider, error) {
 
 	serviceName := os.Getenv("OTEL_SERVICE_NAME")
 	if serviceName == "" {
-		serviceName = "romancy-channel"
+		serviceName = "selvedge-channel"
 	}
 
 	exporter, err := otlptracegrpc.New(ctx,
@@ -300,7 +300,7 @@ func setupTracing(ctx context.Context) (*sdktrace.TracerProvider, error) {
 
 // ----- HTTP Handlers -----
 
-var app *romancy.App
+var app *selvedge.App
 
 // StartConsumerHandler starts a new consumer workflow.
 func StartConsumerHandler(w http.ResponseWriter, r *http.Request) {
@@ -322,7 +322,7 @@ func StartConsumerHandler(w http.ResponseWriter, r *http.Request) {
 		input.Mode = "broadcast"
 	}
 
-	instanceID, err := romancy.StartWorkflow(r.Context(), app, consumerWorkflow, input)
+	instanceID, err := selvedge.StartWorkflow(r.Context(), app, consumerWorkflow, input)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to start consumer: %v", err), http.StatusInternalServerError)
 		return
@@ -359,7 +359,7 @@ func StartProducerHandler(w http.ResponseWriter, r *http.Request) {
 		input.Channel = "notifications"
 	}
 
-	instanceID, err := romancy.StartWorkflow(r.Context(), app, producerWorkflow, input)
+	instanceID, err := selvedge.StartWorkflow(r.Context(), app, producerWorkflow, input)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to start producer: %v", err), http.StatusInternalServerError)
 		return
@@ -406,7 +406,7 @@ func PublishHandler(w http.ResponseWriter, r *http.Request) {
 		Channel:    req.Channel,
 	}
 
-	instanceID, err := romancy.StartWorkflow(r.Context(), app, producerWorkflow, input)
+	instanceID, err := selvedge.StartWorkflow(r.Context(), app, producerWorkflow, input)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to publish: %v", err), http.StatusInternalServerError)
 		return
@@ -459,7 +459,7 @@ func SendToHandler(w http.ResponseWriter, r *http.Request) {
 		From:             req.From,
 	}
 
-	_, err := romancy.StartWorkflow(r.Context(), app, sendToWorkflow, input)
+	_, err := selvedge.StartWorkflow(r.Context(), app, sendToWorkflow, input)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to send: %v", err), http.StatusInternalServerError)
 		return
@@ -501,19 +501,19 @@ func main() {
 	}
 
 	// Create the application with optional tracing
-	opts := []romancy.Option{
-		romancy.WithDatabase(dbURL),
-		romancy.WithWorkerID("channel-worker-1"),
+	opts := []selvedge.Option{
+		selvedge.WithDatabase(dbURL),
+		selvedge.WithWorkerID("channel-worker-1"),
 	}
 	if tp != nil {
-		opts = append(opts, romancy.WithHooks(otel.NewOTelHooks(tp)))
+		opts = append(opts, selvedge.WithHooks(otel.NewOTelHooks(tp)))
 	}
-	app = romancy.NewApp(opts...)
+	app = selvedge.NewApp(opts...)
 
 	// Register workflows
-	romancy.RegisterWorkflow[ConsumerInput, ConsumerResult](app, consumerWorkflow)
-	romancy.RegisterWorkflow[ProducerInput, ProducerResult](app, producerWorkflow)
-	romancy.RegisterWorkflow[SendToInput, SendToResult](app, sendToWorkflow)
+	selvedge.RegisterWorkflow[ConsumerInput, ConsumerResult](app, consumerWorkflow)
+	selvedge.RegisterWorkflow[ProducerInput, ProducerResult](app, producerWorkflow)
+	selvedge.RegisterWorkflow[SendToInput, SendToResult](app, sendToWorkflow)
 
 	// Start the application
 	if err := app.Start(ctx); err != nil {
@@ -560,7 +560,7 @@ func main() {
 	mux.HandleFunc("/start-producer", StartProducerHandler)
 	mux.HandleFunc("/publish", PublishHandler)
 	mux.HandleFunc("/send-to", SendToHandler)
-	// Also mount the romancy handler for CloudEvents
+	// Also mount the selvedge handler for CloudEvents
 	mux.Handle("/", app.Handler())
 
 	// Handle graceful shutdown

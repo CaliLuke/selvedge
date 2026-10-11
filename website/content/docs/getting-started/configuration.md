@@ -3,15 +3,15 @@ title: "Configuration Reference"
 weight: 5
 ---
 
-This page provides a comprehensive reference for all configuration options available when creating a Romancy `App`.
+This page provides a comprehensive reference for all configuration options available when creating a Selvedge `App`.
 
 ## Basic Configuration
 
 ```go
-app := romancy.NewApp(
-    romancy.WithDatabase("postgres://user:password@localhost/workflows"),
-    romancy.WithWorkerID("worker-1"),
-    romancy.WithServiceName("my-service"),
+app := selvedge.NewApp(
+    selvedge.WithDatabase("postgres://user:password@localhost/workflows"),
+    selvedge.WithWorkerID("worker-1"),
+    selvedge.WithServiceName("my-service"),
 )
 ```
 
@@ -23,17 +23,17 @@ Sets the database connection URL.
 
 ```go
 // SQLite (default)
-romancy.WithDatabase("file:romancy.db")
-romancy.WithDatabase(":memory:")  // in-memory for testing
+selvedge.WithDatabase("file:selvedge.db")
+selvedge.WithDatabase(":memory:")  // in-memory for testing
 
 // PostgreSQL
-romancy.WithDatabase("postgres://user:password@localhost:5432/dbname")
+selvedge.WithDatabase("postgres://user:password@localhost:5432/dbname")
 
 // MySQL 8.0+
-romancy.WithDatabase("mysql://user:password@localhost:3306/dbname")
+selvedge.WithDatabase("mysql://user:password@localhost:3306/dbname")
 ```
 
-**Default**: `"file:romancy.db"`
+**Default**: `"file:selvedge.db"`
 
 ### WithAutoMigrate(enabled)
 
@@ -41,20 +41,20 @@ Enables or disables automatic database migration on startup.
 
 ```go
 // Default: auto-migration enabled
-app := romancy.NewApp(
-    romancy.WithDatabase("postgres://user:password@localhost/db"),
+app := selvedge.NewApp(
+    selvedge.WithDatabase("postgres://user:password@localhost/db"),
 )
 
 // Disable auto-migration
-app := romancy.NewApp(
-    romancy.WithDatabase("postgres://user:password@localhost/db"),
-    romancy.WithAutoMigrate(false),
+app := selvedge.NewApp(
+    selvedge.WithDatabase("postgres://user:password@localhost/db"),
+    selvedge.WithAutoMigrate(false),
 )
 ```
 
 **Default**: `true` (enabled)
 
-When enabled, Romancy automatically applies pending [dbmate](https://github.com/amacneil/dbmate)-compatible migrations during `app.Start()`. Migration files are embedded in the binary, so no external files are needed at runtime.
+When enabled, Selvedge automatically applies pending [dbmate](https://github.com/amacneil/dbmate)-compatible migrations during `app.Start()`. Migration files are embedded in the binary, so no external files are needed at runtime.
 
 See [Database Migrations](#database-migrations) section below for details.
 
@@ -66,9 +66,9 @@ Sets a custom filesystem for database migrations.
 //go:embed custom_migrations
 var customMigrations embed.FS
 
-app := romancy.NewApp(
-    romancy.WithDatabase("postgres://..."),
-    romancy.WithMigrationsFS(customMigrations),
+app := selvedge.NewApp(
+    selvedge.WithDatabase("postgres://..."),
+    selvedge.WithMigrationsFS(customMigrations),
 )
 ```
 
@@ -81,8 +81,8 @@ app := romancy.NewApp(
 Sets a custom worker ID for identification.
 
 ```go
-romancy.WithWorkerID("worker-1")
-romancy.WithWorkerID(os.Getenv("HOSTNAME"))  // Use pod name in K8s
+selvedge.WithWorkerID("worker-1")
+selvedge.WithWorkerID(os.Getenv("HOSTNAME"))  // Use pod name in K8s
 ```
 
 **Default**: Auto-generated UUID
@@ -92,10 +92,10 @@ romancy.WithWorkerID(os.Getenv("HOSTNAME"))  // Use pod name in K8s
 Sets the service name for identification.
 
 ```go
-romancy.WithServiceName("order-service")
+selvedge.WithServiceName("order-service")
 ```
 
-**Default**: `"romancy-service"`
+**Default**: `"selvedge-service"`
 
 ## Outbox Configuration
 
@@ -106,7 +106,7 @@ For the transactional outbox pattern. See [Transactional Outbox](/docs/core-feat
 Enables the transactional outbox pattern.
 
 ```go
-romancy.WithOutbox(true)
+selvedge.WithOutbox(true)
 ```
 
 **Default**: `false`
@@ -116,7 +116,7 @@ romancy.WithOutbox(true)
 Sets the CloudEvents broker URL for event publishing.
 
 ```go
-romancy.WithBrokerURL("http://broker-ingress.knative-eventing.svc.cluster.local/default/default")
+selvedge.WithBrokerURL("http://broker-ingress.knative-eventing.svc.cluster.local/default/default")
 ```
 
 **Default**: `""` (empty)
@@ -126,7 +126,7 @@ romancy.WithBrokerURL("http://broker-ingress.knative-eventing.svc.cluster.local/
 Sets the polling interval for the outbox relayer.
 
 ```go
-romancy.WithOutboxInterval(500 * time.Millisecond)  // More frequent polling
+selvedge.WithOutboxInterval(500 * time.Millisecond)  // More frequent polling
 ```
 
 **Default**: `1 * time.Second`
@@ -136,7 +136,7 @@ romancy.WithOutboxInterval(500 * time.Millisecond)  // More frequent polling
 Sets the batch size for outbox processing.
 
 ```go
-romancy.WithOutboxBatchSize(50)
+selvedge.WithOutboxBatchSize(50)
 ```
 
 **Default**: `100`
@@ -151,15 +151,15 @@ Configures PostgreSQL LISTEN/NOTIFY usage.
 
 ```go
 // Auto-detect (default) - enabled for PostgreSQL, disabled for others
-romancy.WithListenNotify(nil)
+selvedge.WithListenNotify(nil)
 
 // Force enable
 enabled := true
-romancy.WithListenNotify(&enabled)
+selvedge.WithListenNotify(&enabled)
 
 // Force disable (polling only)
 disabled := false
-romancy.WithListenNotify(&disabled)
+selvedge.WithListenNotify(&disabled)
 ```
 
 **Default**: `nil` (auto-detect)
@@ -169,7 +169,7 @@ romancy.WithListenNotify(&disabled)
 Sets the delay before reconnecting after a LISTEN/NOTIFY connection failure.
 
 ```go
-romancy.WithNotifyReconnectDelay(30 * time.Second)
+selvedge.WithNotifyReconnectDelay(30 * time.Second)
 ```
 
 **Default**: `60 * time.Second`
@@ -181,9 +181,9 @@ romancy.WithNotifyReconnectDelay(30 * time.Second)
 Control the number of concurrent goroutines for background tasks.
 
 ```go
-romancy.WithMaxConcurrentResumptions(20)  // Max concurrent workflow resumptions
-romancy.WithMaxConcurrentTimers(20)       // Max concurrent timer handlers
-romancy.WithMaxConcurrentMessages(20)     // Max concurrent message handlers
+selvedge.WithMaxConcurrentResumptions(20)  // Max concurrent workflow resumptions
+selvedge.WithMaxConcurrentTimers(20)       // Max concurrent timer handlers
+selvedge.WithMaxConcurrentMessages(20)     // Max concurrent message handlers
 ```
 
 | Option | Description | Default |
@@ -197,9 +197,9 @@ romancy.WithMaxConcurrentMessages(20)     // Max concurrent message handlers
 Control how many items are processed per polling cycle.
 
 ```go
-romancy.WithMaxWorkflowsPerBatch(200)  // More workflows per cycle
-romancy.WithMaxTimersPerBatch(200)     // More timers per cycle
-romancy.WithMaxMessagesPerBatch(200)   // More messages per cycle
+selvedge.WithMaxWorkflowsPerBatch(200)  // More workflows per cycle
+selvedge.WithMaxTimersPerBatch(200)     // More timers per cycle
+selvedge.WithMaxMessagesPerBatch(200)   // More messages per cycle
 ```
 
 | Option | Description | Default |
@@ -213,10 +213,10 @@ romancy.WithMaxMessagesPerBatch(200)   // More messages per cycle
 Control how frequently background tasks run.
 
 ```go
-app := romancy.NewApp(
-    romancy.WithDatabase("postgres://..."),
-    romancy.WithStaleLockInterval(30 * time.Second),
-    romancy.WithTimerCheckInterval(5 * time.Second),
+app := selvedge.NewApp(
+    selvedge.WithDatabase("postgres://..."),
+    selvedge.WithStaleLockInterval(30 * time.Second),
+    selvedge.WithTimerCheckInterval(5 * time.Second),
 )
 ```
 
@@ -237,8 +237,8 @@ app := romancy.NewApp(
 Control which background tasks run as singletons (only one worker executes at a time).
 
 ```go
-romancy.WithSingletonStaleLockCleanup(true)   // Only one worker cleans locks
-romancy.WithSingletonChannelCleanup(true)     // Only one worker cleans channels
+selvedge.WithSingletonStaleLockCleanup(true)   // Only one worker cleans locks
+selvedge.WithSingletonChannelCleanup(true)     // Only one worker cleans channels
 ```
 
 | Option | Description | Default |
@@ -255,7 +255,7 @@ Configure leader election for coordinating singleton background tasks across mul
 Sets the interval at which the leader renews its lease.
 
 ```go
-romancy.WithLeaderHeartbeatInterval(10 * time.Second)
+selvedge.WithLeaderHeartbeatInterval(10 * time.Second)
 ```
 
 **Default**: `15 seconds`
@@ -265,7 +265,7 @@ romancy.WithLeaderHeartbeatInterval(10 * time.Second)
 Sets how long a leader holds its lease before it expires.
 
 ```go
-romancy.WithLeaderLeaseDuration(30 * time.Second)
+selvedge.WithLeaderLeaseDuration(30 * time.Second)
 ```
 
 **Default**: `45 seconds`
@@ -284,11 +284,11 @@ romancy.WithLeaderLeaseDuration(30 * time.Second)
 Sets workflow lifecycle hooks for observability. See [Lifecycle Hooks](/docs/core-features/hooks) for details.
 
 ```go
-import "github.com/i2y/romancy/hooks/otel"
+import "github.com/CaliLuke/selvedge/hooks/otel"
 
-app := romancy.NewApp(
-    romancy.WithDatabase("postgres://..."),
-    romancy.WithHooks(otel.NewOTelHooks(tracerProvider)),
+app := selvedge.NewApp(
+    selvedge.WithDatabase("postgres://..."),
+    selvedge.WithHooks(otel.NewOTelHooks(tracerProvider)),
 )
 ```
 
@@ -301,7 +301,7 @@ app := romancy.NewApp(
 Sets the timeout for graceful shutdown.
 
 ```go
-romancy.WithShutdownTimeout(60 * time.Second)
+selvedge.WithShutdownTimeout(60 * time.Second)
 ```
 
 **Default**: `30 * time.Second`
@@ -314,39 +314,39 @@ package main
 import (
     "time"
 
-    "github.com/i2y/romancy"
-    "github.com/i2y/romancy/hooks/otel"
+    "github.com/CaliLuke/selvedge"
+    "github.com/CaliLuke/selvedge/hooks/otel"
 )
 
 func main() {
     enabled := true
 
-    app := romancy.NewApp(
+    app := selvedge.NewApp(
         // Database
-        romancy.WithDatabase("postgres://user:password@localhost:5432/workflows"),
+        selvedge.WithDatabase("postgres://user:password@localhost:5432/workflows"),
 
         // Worker identity
-        romancy.WithWorkerID("worker-1"),
-        romancy.WithServiceName("order-service"),
+        selvedge.WithWorkerID("worker-1"),
+        selvedge.WithServiceName("order-service"),
 
         // PostgreSQL optimizations
-        romancy.WithListenNotify(&enabled),
-        romancy.WithNotifyReconnectDelay(30 * time.Second),
+        selvedge.WithListenNotify(&enabled),
+        selvedge.WithNotifyReconnectDelay(30 * time.Second),
 
         // Performance tuning
-        romancy.WithMaxConcurrentResumptions(20),
-        romancy.WithMaxWorkflowsPerBatch(200),
-        romancy.WithTimerCheckInterval(5 * time.Second),
+        selvedge.WithMaxConcurrentResumptions(20),
+        selvedge.WithMaxWorkflowsPerBatch(200),
+        selvedge.WithTimerCheckInterval(5 * time.Second),
 
         // Outbox (if needed)
-        romancy.WithOutbox(true),
-        romancy.WithBrokerURL("http://broker/events"),
+        selvedge.WithOutbox(true),
+        selvedge.WithBrokerURL("http://broker/events"),
 
         // Observability
-        romancy.WithHooks(otel.NewOTelHooks(tracerProvider)),
+        selvedge.WithHooks(otel.NewOTelHooks(tracerProvider)),
 
         // Lifecycle
-        romancy.WithShutdownTimeout(60 * time.Second),
+        selvedge.WithShutdownTimeout(60 * time.Second),
     )
 
     // ...
@@ -355,11 +355,11 @@ func main() {
 
 ## Database Migrations
 
-Romancy **automatically applies database migrations** on startup. Migration files are embedded in the binary using Go's `embed` package, so no external files are needed at runtime.
+Selvedge **automatically applies database migrations** on startup. Migration files are embedded in the binary using Go's `embed` package, so no external files are needed at runtime.
 
 ### How It Works
 
-1. **Automatic**: When `app.Start()` is called, Romancy checks for pending migrations
+1. **Automatic**: When `app.Start()` is called, Selvedge checks for pending migrations
 2. **dbmate-compatible**: Uses the same `schema_migrations` table and SQL format as [dbmate](https://github.com/amacneil/dbmate)
 3. **Multi-worker safe**: Multiple pods/processes can start simultaneously without conflicts (uses UNIQUE constraint handling)
 4. **Embedded**: Migration files are bundled into the binary
@@ -368,21 +368,21 @@ Romancy **automatically applies database migrations** on startup. Migration file
 
 ```go
 // Default: auto-migration enabled
-app := romancy.NewApp(
-    romancy.WithDatabase("postgres://user:password@localhost/db"),
+app := selvedge.NewApp(
+    selvedge.WithDatabase("postgres://user:password@localhost/db"),
 )
 
 // Disable auto-migration (manage manually with dbmate CLI)
-app := romancy.NewApp(
-    romancy.WithDatabase("postgres://user:password@localhost/db"),
-    romancy.WithAutoMigrate(false),
+app := selvedge.NewApp(
+    selvedge.WithDatabase("postgres://user:password@localhost/db"),
+    selvedge.WithAutoMigrate(false),
 )
 ```
 
 ### Cross-Framework Compatibility
 
 The database schema is managed in the [durax-io/schema](https://github.com/durax-io/schema) repository, which is shared between:
-- **Romancy** (Go)
+- **Selvedge** (Go)
 - **Edda** (Python)
 
 This ensures that both frameworks can work with the same database.
@@ -411,13 +411,13 @@ dbmate --url "mysql://user:password@localhost/db" --migrations-dir schema/db/mig
 | `dbmate status` | Show migration status |
 | `dbmate create NAME` | Create a new migration file |
 
-### Schema Submodule (For Romancy Contributors)
+### Schema Submodule (For Selvedge Contributors)
 
 {{< callout type="info" >}}
-**Regular users can skip this section.** Migration files are embedded in the romancy binary, so submodule setup is not required.
+**Regular users can skip this section.** Migration files are embedded in the selvedge binary, so submodule setup is not required.
 {{< /callout >}}
 
-Only needed if you are contributing to romancy itself and need to modify the database schema:
+Only needed if you are contributing to selvedge itself and need to modify the database schema:
 
 ```bash
 git submodule add https://github.com/durax-io/schema.git schema

@@ -1,4 +1,4 @@
-// Package storage provides the storage layer for Romancy.
+// Package storage provides the storage layer for Selvedge.
 package storage
 
 import (

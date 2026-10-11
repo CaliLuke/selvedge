@@ -1,10 +1,10 @@
-package romancy
+package selvedge
 
 import (
 	"io/fs"
 	"time"
 
-	"github.com/i2y/romancy/hooks"
+	"github.com/CaliLuke/selvedge/hooks"
 )
 
 // Option configures an App.
@@ -68,8 +68,8 @@ type appConfig struct {
 // defaultConfig returns the default configuration.
 func defaultConfig() *appConfig {
 	return &appConfig{
-		databaseURL:                "file:romancy.db",
-		serviceName:                "romancy-service",
+		databaseURL:                "file:selvedge.db",
+		serviceName:                "selvedge-service",
 		outboxEnabled:              false,
 		outboxInterval:             1 * time.Second,
 		outboxBatchSize:            100,
@@ -110,7 +110,7 @@ func WithDatabase(url string) Option {
 
 // WithAutoMigrate enables or disables automatic database migrations on startup.
 //
-// When enabled (default), romancy will automatically apply pending dbmate-compatible
+// When enabled (default), selvedge will automatically apply pending dbmate-compatible
 // migrations from the embedded schema/db/migrations/ directory during App.Start().
 //
 // This is compatible with the dbmate CLI tool and uses the same schema_migrations
@@ -127,7 +127,7 @@ func WithAutoMigrate(enabled bool) Option {
 
 // WithMigrationsFS sets a custom filesystem for database migrations.
 //
-// By default, romancy uses embedded migrations from schema/db/migrations/.
+// By default, selvedge uses embedded migrations from schema/db/migrations/.
 // Use this option to provide custom migrations from a different source.
 //
 // The filesystem should contain subdirectories for each database type:

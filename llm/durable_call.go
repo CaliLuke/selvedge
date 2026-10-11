@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 
 	bucephalus "github.com/i2y/bucephalus/llm"
 )
@@ -51,7 +51,7 @@ func (d *DurableCall) Name() string {
 //	response, err := summarizer.Execute(ctx, "Text to summarize",
 //	    llm.WithMaxTokens(200), // Override the default
 //	)
-func (d *DurableCall) Execute(ctx *romancy.WorkflowContext, prompt string, opts ...Option) (*DurableResponse, error) {
+func (d *DurableCall) Execute(ctx *selvedge.WorkflowContext, prompt string, opts ...Option) (*DurableResponse, error) {
 	cfg := d.buildConfig(ctx, opts...)
 
 	// Generate deterministic activity ID using the durable call name
@@ -91,7 +91,7 @@ func (d *DurableCall) Execute(ctx *romancy.WorkflowContext, prompt string, opts 
 //	}
 //
 //	summary, err := summarizer.ExecuteParse[Summary](ctx, "Long article text...")
-func (d *DurableCall) ExecuteParse(ctx *romancy.WorkflowContext, prompt string, target any, opts ...Option) error {
+func (d *DurableCall) ExecuteParse(ctx *selvedge.WorkflowContext, prompt string, target any, opts ...Option) error {
 	cfg := d.buildConfig(ctx, opts...)
 
 	// Generate deterministic activity ID
@@ -147,7 +147,7 @@ func (d *DurableCall) ExecuteParse(ctx *romancy.WorkflowContext, prompt string, 
 //	    llm.UserMessage("Can you help me?"),
 //	}
 //	response, err := chatbot.ExecuteMessages(ctx, messages)
-func (d *DurableCall) ExecuteMessages(ctx *romancy.WorkflowContext, messages []Message, opts ...Option) (*DurableResponse, error) {
+func (d *DurableCall) ExecuteMessages(ctx *selvedge.WorkflowContext, messages []Message, opts ...Option) (*DurableResponse, error) {
 	cfg := d.buildConfig(ctx, opts...)
 
 	// Generate deterministic activity ID
@@ -178,7 +178,7 @@ func (d *DurableCall) ExecuteMessages(ctx *romancy.WorkflowContext, messages []M
 }
 
 // ExecuteMessagesParse runs the LLM call with messages and parses the response.
-func (d *DurableCall) ExecuteMessagesParse(ctx *romancy.WorkflowContext, messages []Message, target any, opts ...Option) error {
+func (d *DurableCall) ExecuteMessagesParse(ctx *selvedge.WorkflowContext, messages []Message, target any, opts ...Option) error {
 	cfg := d.buildConfig(ctx, opts...)
 
 	// Generate deterministic activity ID
@@ -225,7 +225,7 @@ func (d *DurableCall) ExecuteMessagesParse(ctx *romancy.WorkflowContext, message
 }
 
 // buildConfig creates a config by merging app defaults, durable call options, and per-call options.
-func (d *DurableCall) buildConfig(ctx *romancy.WorkflowContext, opts ...Option) *config {
+func (d *DurableCall) buildConfig(ctx *selvedge.WorkflowContext, opts ...Option) *config {
 	cfg := newConfig()
 
 	// Apply app-level defaults first

@@ -24,8 +24,8 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 
-	"github.com/i2y/romancy"
-	"github.com/i2y/romancy/hooks/otel"
+	"github.com/CaliLuke/selvedge"
+	"github.com/CaliLuke/selvedge/hooks/otel"
 )
 
 // ----- Types -----
@@ -45,7 +45,7 @@ type GreetingResult struct {
 // ----- Activities -----
 
 // GetGreeting returns a greeting message based on the language.
-var GetGreeting = romancy.DefineActivity(
+var GetGreeting = selvedge.DefineActivity(
 	"get_greeting",
 	func(ctx context.Context, language string) (string, error) {
 		log.Printf("[Activity] Getting greeting for language: %s", language)
@@ -69,7 +69,7 @@ var GetGreeting = romancy.DefineActivity(
 )
 
 // FormatMessage formats the greeting with the name.
-var FormatMessage = romancy.DefineActivity(
+var FormatMessage = selvedge.DefineActivity(
 	"format_message",
 	func(ctx context.Context, input struct {
 		Greeting string
@@ -86,8 +86,8 @@ var FormatMessage = romancy.DefineActivity(
 // ----- Workflow -----
 
 // greetingWorkflow creates a personalized greeting.
-var greetingWorkflow = romancy.DefineWorkflow("greeting_workflow",
-	func(ctx *romancy.WorkflowContext, input GreetingInput) (GreetingResult, error) {
+var greetingWorkflow = selvedge.DefineWorkflow("greeting_workflow",
+	func(ctx *selvedge.WorkflowContext, input GreetingInput) (GreetingResult, error) {
 		log.Printf("[Workflow] Starting greeting workflow for: %s", input.Name)
 
 		// Step 1: Get the greeting based on language
@@ -128,7 +128,7 @@ func setupTracing(ctx context.Context) (*sdktrace.TracerProvider, error) {
 
 	serviceName := os.Getenv("OTEL_SERVICE_NAME")
 	if serviceName == "" {
-		serviceName = "romancy-simple"
+		serviceName = "selvedge-simple"
 	}
 
 	// Note: otlptracegrpc automatically reads OTEL_EXPORTER_OTLP_ENDPOINT env var
@@ -187,17 +187,17 @@ func main() {
 	log.Printf("Using DATABASE_URL: %s", dbURL)
 
 	// Create the application with optional tracing
-	opts := []romancy.Option{
-		romancy.WithDatabase(dbURL),
-		romancy.WithWorkerID("simple-worker-1"),
+	opts := []selvedge.Option{
+		selvedge.WithDatabase(dbURL),
+		selvedge.WithWorkerID("simple-worker-1"),
 	}
 	if tp != nil {
-		opts = append(opts, romancy.WithHooks(otel.NewOTelHooks(tp)))
+		opts = append(opts, selvedge.WithHooks(otel.NewOTelHooks(tp)))
 	}
-	app := romancy.NewApp(opts...)
+	app := selvedge.NewApp(opts...)
 
 	// Register the workflow
-	romancy.RegisterWorkflow[GreetingInput, GreetingResult](app, greetingWorkflow)
+	selvedge.RegisterWorkflow[GreetingInput, GreetingResult](app, greetingWorkflow)
 
 	// Start the application
 	if err := app.Start(ctx); err != nil {
@@ -232,7 +232,7 @@ func main() {
 
 		log.Printf("\n--- Starting workflow for %s (%s) ---", l.name, l.lang)
 
-		instanceID, err := romancy.StartWorkflow(ctx, app, greetingWorkflow, input)
+		instanceID, err := selvedge.StartWorkflow(ctx, app, greetingWorkflow, input)
 		if err != nil {
 			log.Printf("Failed to start workflow: %v", err)
 			continue
@@ -244,7 +244,7 @@ func main() {
 		time.Sleep(500 * time.Millisecond)
 
 		// Get the result
-		result, err := romancy.GetWorkflowResult[GreetingResult](ctx, app, instanceID)
+		result, err := selvedge.GetWorkflowResult[GreetingResult](ctx, app, instanceID)
 		if err != nil {
 			log.Printf("Failed to get result: %v", err)
 			continue
@@ -268,7 +268,7 @@ func main() {
 	}
 
 	// In serve mode (for Tilt), wait for shutdown signal instead of exiting
-	if os.Getenv("ROMANCY_SERVE") == "true" {
+	if os.Getenv("SELVEDGE_SERVE") == "true" {
 		log.Println("\nRunning in serve mode. Press Ctrl+C to stop.")
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)

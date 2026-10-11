@@ -3,7 +3,7 @@ title: "Automatic Retry"
 weight: 7
 ---
 
-Romancy provides comprehensive automatic retry functionality for activities with exponential backoff, ensuring resilience against transient failures.
+Selvedge provides comprehensive automatic retry functionality for activities with exponential backoff, ensuring resilience against transient failures.
 
 ## Overview
 
@@ -613,10 +613,10 @@ async def order_workflow(ctx: WorkflowContext, order_id: str):
 
 See the retry example in the examples directory on GitHub:
 
-- **[examples/retry](https://github.com/i2y/romancy/tree/main/examples/retry)**: Retry policy demonstrations
+- **[examples/retry](https://github.com/CaliLuke/selvedge/tree/main/examples/retry)**: Retry policy demonstrations
 
 ## Next Steps
 
 - **[Workflows and Activities](/docs/core-features/workflows-activities)**: Learn more about activity behavior
 - **[Saga Pattern](/docs/core-features/saga-compensation)**: Automatic compensation on failure
-- **[Durable Execution](/docs/core-features/durable-execution/replay)**: How Romancy ensures workflows never lose progress
+- **[Durable Execution](/docs/core-features/durable-execution/replay)**: How Selvedge ensures workflows never lose progress

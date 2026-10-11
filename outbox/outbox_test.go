@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/i2y/romancy/internal/storage"
+	"github.com/CaliLuke/selvedge/internal/storage"
 )
 
 // mockStorage implements storage.Storage interface for testing.

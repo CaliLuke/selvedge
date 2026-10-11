@@ -1,4 +1,4 @@
-package romancy
+package selvedge
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/i2y/romancy/retry"
+	"github.com/CaliLuke/selvedge/retry"
 )
 
 func TestDefineActivity(t *testing.T) {

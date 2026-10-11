@@ -3,11 +3,11 @@ title: "OpenTelemetry Integration"
 weight: 2
 ---
 
-Romancy provides official integration with [OpenTelemetry](https://opentelemetry.io/), enabling distributed tracing and optional metrics for your durable workflows.
+Selvedge provides official integration with [OpenTelemetry](https://opentelemetry.io/), enabling distributed tracing and optional metrics for your durable workflows.
 
 ## Overview
 
-OpenTelemetry is an industry-standard observability framework. Romancy's OpenTelemetry integration provides:
+OpenTelemetry is an industry-standard observability framework. Selvedge's OpenTelemetry integration provides:
 
 - **Distributed Tracing**: Workflow and activity spans with parent-child relationships
 - **Optional Metrics**: Counters for workflow/activity execution, histograms for duration
@@ -19,7 +19,7 @@ OpenTelemetry is an industry-standard observability framework. Romancy's OpenTel
 Install the OpenTelemetry integration package:
 
 ```bash
-go get github.com/i2y/romancy/integrations/opentelemetry
+go get github.com/CaliLuke/selvedge/integrations/opentelemetry
 go get go.opentelemetry.io/otel
 go get go.opentelemetry.io/otel/exporters/otlp/otlptrace
 ```
@@ -33,8 +33,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/i2y/romancy"
-	otelromancy "github.com/i2y/romancy/integrations/opentelemetry"
+	"github.com/CaliLuke/selvedge"
+	otelselvedge "github.com/CaliLuke/selvedge/integrations/opentelemetry"
 	"go.opentelemetry.io/otel"
 )
 
@@ -50,7 +50,7 @@ type OrderResult struct {
 
 // Activities
 
-var reserveInventory = romancy.DefineActivity("reserve_inventory",
+var reserveInventory = selvedge.DefineActivity("reserve_inventory",
 	func(ctx context.Context, orderID string) (ReservationResult, error) {
 		return ReservationResult{Reserved: true}, nil
 	},
@@ -58,8 +58,8 @@ var reserveInventory = romancy.DefineActivity("reserve_inventory",
 
 // Workflow
 
-var orderWorkflow = romancy.DefineWorkflow("order_workflow",
-	func(ctx *romancy.WorkflowContext, orderID string) (OrderResult, error) {
+var orderWorkflow = selvedge.DefineWorkflow("order_workflow",
+	func(ctx *selvedge.WorkflowContext, orderID string) (OrderResult, error) {
 		_, err := reserveInventory.Execute(ctx, orderID)
 		if err != nil {
 			return OrderResult{}, err
@@ -70,25 +70,25 @@ var orderWorkflow = romancy.DefineWorkflow("order_workflow",
 
 func main() {
 	// Create OpenTelemetry hooks (console exporter for development)
-	hooks := otelromancy.NewHooks(
-		otelromancy.WithServiceName("order-service"),
-		otelromancy.WithConsoleExporter(), // For development
-		otelromancy.WithMetrics(false),
+	hooks := otelselvedge.NewHooks(
+		otelselvedge.WithServiceName("order-service"),
+		otelselvedge.WithConsoleExporter(), // For development
+		otelselvedge.WithMetrics(false),
 	)
 	defer hooks.Shutdown(context.Background())
 
 	// Or with OTLP exporter for production (Jaeger, Tempo, etc.)
-	// hooks := otelromancy.NewHooks(
-	//     otelromancy.WithServiceName("order-service"),
-	//     otelromancy.WithOTLPEndpoint("http://localhost:4317"),
-	//     otelromancy.WithMetrics(true),
+	// hooks := otelselvedge.NewHooks(
+	//     otelselvedge.WithServiceName("order-service"),
+	//     otelselvedge.WithOTLPEndpoint("http://localhost:4317"),
+	//     otelselvedge.WithMetrics(true),
 	// )
 
-	// Create Romancy app with hooks
-	app := romancy.NewApp(
-		romancy.WithDatabase("workflow.db"),
-		romancy.WithWorkerID("worker-1"),
-		romancy.WithHooks(hooks),
+	// Create Selvedge app with hooks
+	app := selvedge.NewApp(
+		selvedge.WithDatabase("workflow.db"),
+		selvedge.WithWorkerID("worker-1"),
+		selvedge.WithHooks(hooks),
 	)
 
 	ctx := context.Background()
@@ -98,7 +98,7 @@ func main() {
 	defer app.Shutdown(ctx)
 
 	// Start workflow
-	instanceID, err := romancy.StartWorkflow(ctx, app, orderWorkflow, "ORD-123")
+	instanceID, err := selvedge.StartWorkflow(ctx, app, orderWorkflow, "ORD-123")
 	if err != nil {
 		panic(err)
 	}
@@ -109,7 +109,7 @@ func main() {
 
 ## Span Hierarchy
 
-Romancy creates a hierarchical span structure:
+Selvedge creates a hierarchical span structure:
 
 ```
 workflow:order_workflow (parent)
@@ -122,16 +122,16 @@ workflow:order_workflow (parent)
 
 **Workflow Spans**:
 
-- `romancy.workflow.instance_id`
-- `romancy.workflow.name`
-- `romancy.workflow.cancelled` (when cancelled)
+- `selvedge.workflow.instance_id`
+- `selvedge.workflow.name`
+- `selvedge.workflow.cancelled` (when cancelled)
 
 **Activity Spans**:
 
-- `romancy.activity.id` (e.g., "reserve_inventory:1")
-- `romancy.activity.name`
-- `romancy.activity.is_replaying`
-- `romancy.activity.cache_hit`
+- `selvedge.activity.id` (e.g., "reserve_inventory:1")
+- `selvedge.activity.name`
+- `selvedge.activity.is_replaying`
+- `selvedge.activity.cache_hit`
 
 ## Metrics (Optional)
 
@@ -139,13 +139,13 @@ When `WithMetrics(true)`:
 
 | Metric | Type | Description |
 |--------|------|-------------|
-| `romancy.workflow.started` | Counter | Workflows started |
-| `romancy.workflow.completed` | Counter | Workflows completed |
-| `romancy.workflow.failed` | Counter | Workflows failed |
-| `romancy.workflow.duration` | Histogram | Workflow execution time |
-| `romancy.activity.executed` | Counter | Activities executed |
-| `romancy.activity.cache_hit` | Counter | Activity cache hits |
-| `romancy.activity.duration` | Histogram | Activity execution time |
+| `selvedge.workflow.started` | Counter | Workflows started |
+| `selvedge.workflow.completed` | Counter | Workflows completed |
+| `selvedge.workflow.failed` | Counter | Workflows failed |
+| `selvedge.workflow.duration` | Histogram | Workflow execution time |
+| `selvedge.activity.executed` | Counter | Activities executed |
+| `selvedge.activity.cache_hit` | Counter | Activity cache hits |
+| `selvedge.activity.duration` | Histogram | Activity execution time |
 
 ## Trace Context Propagation
 
@@ -175,19 +175,19 @@ package main
 import (
 	"context"
 
-	"github.com/i2y/romancy"
-	otelromancy "github.com/i2y/romancy/integrations/opentelemetry"
+	"github.com/CaliLuke/selvedge"
+	otelselvedge "github.com/CaliLuke/selvedge/integrations/opentelemetry"
 )
 
-func sendEventWithTrace(ctx *romancy.WorkflowContext, hooks *otelromancy.Hooks) error {
+func sendEventWithTrace(ctx *selvedge.WorkflowContext, hooks *otelselvedge.Hooks) error {
 	eventData := map[string]any{
 		"order_id": "ORD-123",
 	}
 
 	// Inject trace context
-	eventData = otelromancy.InjectTraceContext(hooks, ctx.InstanceID(), eventData)
+	eventData = otelselvedge.InjectTraceContext(hooks, ctx.InstanceID(), eventData)
 
-	return romancy.SendEventTransactional(ctx,
+	return selvedge.SendEventTransactional(ctx,
 		"order.shipped",
 		"orders",
 		eventData,
@@ -242,7 +242,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/sdk/trace"
 
-	otelromancy "github.com/i2y/romancy/integrations/opentelemetry"
+	otelselvedge "github.com/CaliLuke/selvedge/integrations/opentelemetry"
 )
 
 func main() {
@@ -253,8 +253,8 @@ func main() {
 	otel.SetTracerProvider(provider)
 
 	// OpenTelemetry hooks will use the existing provider
-	hooks := otelromancy.NewHooks(
-		otelromancy.WithServiceName("my-service"),
+	hooks := otelselvedge.NewHooks(
+		otelselvedge.WithServiceName("my-service"),
 	)
 	// No new provider is created!
 }
@@ -272,8 +272,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/i2y/romancy"
-	otelromancy "github.com/i2y/romancy/integrations/opentelemetry"
+	"github.com/CaliLuke/selvedge"
+	otelselvedge "github.com/CaliLuke/selvedge/integrations/opentelemetry"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
@@ -299,14 +299,14 @@ type OrderWorkflowResult struct {
 
 // Activities
 
-var validateOrder = romancy.DefineActivity("validate_order",
+var validateOrder = selvedge.DefineActivity("validate_order",
 	func(ctx context.Context, orderID string) (ValidationResult, error) {
 		time.Sleep(100 * time.Millisecond)
 		return ValidationResult{Valid: true}, nil
 	},
 )
 
-var processPayment = romancy.DefineActivity("process_payment",
+var processPayment = selvedge.DefineActivity("process_payment",
 	func(ctx context.Context, amount float64) (PaymentResult, error) {
 		time.Sleep(500 * time.Millisecond)
 		return PaymentResult{TransactionID: "TXN-123"}, nil
@@ -315,8 +315,8 @@ var processPayment = romancy.DefineActivity("process_payment",
 
 // Workflow
 
-var orderWorkflow = romancy.DefineWorkflow("order_workflow",
-	func(ctx *romancy.WorkflowContext, orderID string, amount float64) (OrderWorkflowResult, error) {
+var orderWorkflow = selvedge.DefineWorkflow("order_workflow",
+	func(ctx *selvedge.WorkflowContext, orderID string, amount float64) (OrderWorkflowResult, error) {
 		_, err := validateOrder.Execute(ctx, orderID)
 		if err != nil {
 			return OrderWorkflowResult{}, err
@@ -336,18 +336,18 @@ var orderWorkflow = romancy.DefineWorkflow("order_workflow",
 
 func main() {
 	// Create OpenTelemetry hooks
-	hooks := otelromancy.NewHooks(
-		otelromancy.WithServiceName("order-service"),
-		otelromancy.WithOTLPEndpoint("http://localhost:4317"),
-		otelromancy.WithMetrics(true),
+	hooks := otelselvedge.NewHooks(
+		otelselvedge.WithServiceName("order-service"),
+		otelselvedge.WithOTLPEndpoint("http://localhost:4317"),
+		otelselvedge.WithMetrics(true),
 	)
 	defer hooks.Shutdown(context.Background())
 
-	// Create Romancy app
-	app := romancy.NewApp(
-		romancy.WithDatabase("orders.db"),
-		romancy.WithWorkerID("worker-1"),
-		romancy.WithHooks(hooks),
+	// Create Selvedge app
+	app := selvedge.NewApp(
+		selvedge.WithDatabase("orders.db"),
+		selvedge.WithWorkerID("worker-1"),
+		selvedge.WithHooks(hooks),
 	)
 
 	ctx := context.Background()
@@ -358,7 +358,7 @@ func main() {
 
 	// HTTP handler with OpenTelemetry middleware
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		instanceID, err := romancy.StartWorkflow(r.Context(), app, orderWorkflow, OrderInput{OrderID: "ORD-123", Amount: 99.99})
+		instanceID, err := selvedge.StartWorkflow(r.Context(), app, orderWorkflow, OrderInput{OrderID: "ORD-123", Amount: 99.99})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -378,21 +378,21 @@ func main() {
 ## Configuration Options
 
 ```go
-hooks := otelromancy.NewHooks(
+hooks := otelselvedge.NewHooks(
 	// Service name (required)
-	otelromancy.WithServiceName("my-service"),
+	otelselvedge.WithServiceName("my-service"),
 
 	// OTLP endpoint (production)
-	otelromancy.WithOTLPEndpoint("http://localhost:4317"),
+	otelselvedge.WithOTLPEndpoint("http://localhost:4317"),
 
 	// Console exporter (development)
-	otelromancy.WithConsoleExporter(),
+	otelselvedge.WithConsoleExporter(),
 
 	// Enable/disable metrics
-	otelromancy.WithMetrics(true),
+	otelselvedge.WithMetrics(true),
 
 	// Custom resource attributes
-	otelromancy.WithResourceAttributes(map[string]string{
+	otelselvedge.WithResourceAttributes(map[string]string{
 		"environment": "production",
 		"version":     "1.0.0",
 	}),

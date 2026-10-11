@@ -1,5 +1,5 @@
-// Package romancy provides a durable execution framework for Go.
-package romancy
+// Package selvedge provides a durable execution framework for Go.
+package selvedge
 
 import (
 	"context"
@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/i2y/romancy/hooks"
-	"github.com/i2y/romancy/internal/storage"
+	"github.com/CaliLuke/selvedge/hooks"
+	"github.com/CaliLuke/selvedge/internal/storage"
 )
 
 // ChannelMode defines the message delivery mode for a channel subscription.
@@ -31,11 +31,11 @@ const (
 	//
 	// Example:
 	//   // Receiver workflow
-	//   romancy.Subscribe(ctx, "requests", romancy.ModeDirect)
-	//   msg, err := romancy.Receive[Request](ctx, "requests")
+	//   selvedge.Subscribe(ctx, "requests", selvedge.ModeDirect)
+	//   msg, err := selvedge.Receive[Request](ctx, "requests")
 	//
 	//   // Sender workflow
-	//   romancy.SendTo(ctx, targetInstanceID, "requests", request)
+	//   selvedge.SendTo(ctx, targetInstanceID, "requests", request)
 	ModeDirect ChannelMode = storage.ChannelModeDirect
 )
 
@@ -684,12 +684,12 @@ func GetGroupMembers(ctx context.Context, s storage.Storage, groupName string) (
 //
 // Example:
 //
-//	workflow := romancy.DefineWorkflow("counter", func(ctx *romancy.WorkflowContext, input CounterInput) (CounterResult, error) {
+//	workflow := selvedge.DefineWorkflow("counter", func(ctx *selvedge.WorkflowContext, input CounterInput) (CounterResult, error) {
 //	    // Process batch
 //	    newCount := input.Count + 1
 //	    if newCount < 1000 {
 //	        // Continue with new input (tail recursion)
-//	        return romancy.Recur(ctx, CounterInput{Count: newCount})
+//	        return selvedge.Recur(ctx, CounterInput{Count: newCount})
 //	    }
 //	    return CounterResult{FinalCount: newCount}, nil
 //	})

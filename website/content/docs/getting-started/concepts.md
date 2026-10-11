@@ -3,11 +3,11 @@ title: "Core Concepts"
 weight: 3
 ---
 
-This guide introduces the fundamental concepts of Romancy: workflows, activities, durable execution, and the Saga pattern.
+This guide introduces the fundamental concepts of Selvedge: workflows, activities, durable execution, and the Saga pattern.
 
 ## Workflows vs. Activities
 
-Romancy separates orchestration logic (**workflows**) from business logic (**activities**).
+Selvedge separates orchestration logic (**workflows**) from business logic (**activities**).
 
 ### Activities
 
@@ -19,7 +19,7 @@ type EmailResult struct {
 	MessageID string `json:"message_id"`
 }
 
-var sendEmail = romancy.DefineActivity("send_email",
+var sendEmail = selvedge.DefineActivity("send_email",
 	func(ctx context.Context, email, message string) (EmailResult, error) {
 		// Business logic - sends an actual email
 		response, err := emailService.Send(email, message)
@@ -52,8 +52,8 @@ type SignupResult struct {
 	Status string `json:"status"`
 }
 
-var userSignup = romancy.DefineWorkflow("user_signup",
-	func(ctx *romancy.WorkflowContext, email, name string) (SignupResult, error) {
+var userSignup = selvedge.DefineWorkflow("user_signup",
+	func(ctx *selvedge.WorkflowContext, email, name string) (SignupResult, error) {
 		// Step 1: Create user account
 		user, err := createAccount.Execute(ctx, email, name)
 		if err != nil {
@@ -86,7 +86,7 @@ var userSignup = romancy.DefineWorkflow("user_signup",
 
 ## Durable Execution
 
-Romancy ensures workflow progress is never lost through **deterministic replay**.
+Selvedge ensures workflow progress is never lost through **deterministic replay**.
 
 ### How It Works
 
@@ -96,8 +96,8 @@ type ProcessOrderResult struct {
 	Status  string `json:"status"`
 }
 
-var processOrder = romancy.DefineWorkflow("process_order",
-	func(ctx *romancy.WorkflowContext, orderID string) (ProcessOrderResult, error) {
+var processOrder = selvedge.DefineWorkflow("process_order",
+	func(ctx *selvedge.WorkflowContext, orderID string) (ProcessOrderResult, error) {
 		// Step 1: Reserve inventory
 		reservation, err := reserveInventory.Execute(ctx, orderID) // Saved to history
 		if err != nil {
@@ -141,11 +141,11 @@ The `WorkflowContext` object provides access to workflow operations.
 | `ctx.InstanceID()` | Workflow instance ID |
 | `ctx.WorkflowName()` | Name of the workflow function |
 | `ctx.IsReplaying()` | `true` if replaying from history |
-| `ctx.Session()` | Access Romancy's managed database session |
+| `ctx.Session()` | Access Selvedge's managed database session |
 
 ## The Saga Pattern
 
-When a workflow fails, Romancy automatically executes **compensation functions** for already-executed activities in **reverse order**.
+When a workflow fails, Selvedge automatically executes **compensation functions** for already-executed activities in **reverse order**.
 
 This implements the [Saga pattern](https://microservices.io/patterns/data/saga.html) for distributed transaction rollback.
 
@@ -162,7 +162,7 @@ type OrderWorkflowResult struct {
 }
 
 // Compensation function
-var cancelReservation = romancy.DefineCompensation("cancel_reservation",
+var cancelReservation = selvedge.DefineCompensation("cancel_reservation",
 	func(ctx context.Context, itemID string) error {
 		log.Printf("Cancelled reservation for %s", itemID)
 		return nil
@@ -170,17 +170,17 @@ var cancelReservation = romancy.DefineCompensation("cancel_reservation",
 )
 
 // Activity with compensation
-var reserveInventory = romancy.DefineActivity("reserve_inventory",
+var reserveInventory = selvedge.DefineActivity("reserve_inventory",
 	func(ctx context.Context, itemID string) (ReservationResult, error) {
 		log.Printf("Reserved %s", itemID)
 		return ReservationResult{Reserved: true, ItemID: itemID}, nil
 	},
-	romancy.WithCompensation(cancelReservation),
+	selvedge.WithCompensation(cancelReservation),
 )
 
 // Workflow
-var orderWorkflow = romancy.DefineWorkflow("order_workflow",
-	func(ctx *romancy.WorkflowContext, item1, item2 string) (OrderWorkflowResult, error) {
+var orderWorkflow = selvedge.DefineWorkflow("order_workflow",
+	func(ctx *selvedge.WorkflowContext, item1, item2 string) (OrderWorkflowResult, error) {
 		_, err := reserveInventory.Execute(ctx, item1) // Step 1
 		if err != nil {
 			return OrderWorkflowResult{}, err
@@ -213,13 +213,13 @@ Cancelled reservation for item1
 
 1. **Reverse Order**: Compensations run in **reverse order** of activity execution
 2. **Already-Executed Only**: Only activities that **completed successfully** are compensated
-3. **Automatic**: No manual trigger required - Romancy handles it
+3. **Automatic**: No manual trigger required - Selvedge handles it
 
 ## AI Agent Workflows
 
-Romancy is well-suited for orchestrating AI agent workflows that involve long-running tasks:
+Selvedge is well-suited for orchestrating AI agent workflows that involve long-running tasks:
 
-### Why Romancy for AI Agents?
+### Why Selvedge for AI Agents?
 
 - **Durable LLM Calls**: Long-running LLM inference with automatic retry on failure
 - **Multi-Step Reasoning**: Coordinate multiple AI tasks (research -> analysis -> synthesis)
@@ -241,7 +241,7 @@ type ReportResult struct {
 	Report string `json:"report"`
 }
 
-var researchTopic = romancy.DefineActivity("research_topic",
+var researchTopic = selvedge.DefineActivity("research_topic",
 	func(ctx context.Context, topic string) (ResearchResult, error) {
 		// Call LLM to research a topic (may take minutes)
 		result, err := llmClient.Generate(fmt.Sprintf("Research: %s", topic))
@@ -252,7 +252,7 @@ var researchTopic = romancy.DefineActivity("research_topic",
 	},
 )
 
-var analyzeResearch = romancy.DefineActivity("analyze_research",
+var analyzeResearch = selvedge.DefineActivity("analyze_research",
 	func(ctx context.Context, research string) (AnalysisResult, error) {
 		// Analyze research results with another LLM call
 		analysis, err := llmClient.Generate(fmt.Sprintf("Analyze: %s", research))
@@ -263,7 +263,7 @@ var analyzeResearch = romancy.DefineActivity("analyze_research",
 	},
 )
 
-var synthesizeReport = romancy.DefineActivity("synthesize_report",
+var synthesizeReport = selvedge.DefineActivity("synthesize_report",
 	func(ctx context.Context, analysis string) (ReportResult, error) {
 		// Create final report
 		report, err := llmClient.Generate(fmt.Sprintf("Report: %s", analysis))
@@ -274,8 +274,8 @@ var synthesizeReport = romancy.DefineActivity("synthesize_report",
 	},
 )
 
-var aiResearchWorkflow = romancy.DefineWorkflow("ai_research_workflow",
-	func(ctx *romancy.WorkflowContext, topic string) (ReportResult, error) {
+var aiResearchWorkflow = selvedge.DefineWorkflow("ai_research_workflow",
+	func(ctx *selvedge.WorkflowContext, topic string) (ReportResult, error) {
 		// Step 1: Research (may take 2-3 minutes)
 		research, err := researchTopic.Execute(ctx, topic)
 		if err != nil {
@@ -314,9 +314,9 @@ Multiple workers can safely process workflows.
 
 ```go
 // Worker 1, Worker 2, Worker 3 (same code on different machines)
-app := romancy.NewApp(
-	romancy.WithDatabase("postgres://yourdbinstance/workflows"), // Shared database
-	romancy.WithWorkerID("worker-1"), // Unique per worker
+app := selvedge.NewApp(
+	selvedge.WithDatabase("postgres://yourdbinstance/workflows"), // Shared database
+	selvedge.WithWorkerID("worker-1"), // Unique per worker
 )
 ```
 
@@ -350,7 +350,7 @@ Worker 3: Acquires lock for instance A
 
 ## Type Safety with Go Generics
 
-Romancy uses Go generics for type-safe workflows:
+Selvedge uses Go generics for type-safe workflows:
 
 ```go
 // Type-safe input/output
@@ -367,7 +367,7 @@ type OrderResult struct {
 }
 
 // Type-safe activity
-var processPayment = romancy.DefineActivity("process_payment",
+var processPayment = selvedge.DefineActivity("process_payment",
 	func(ctx context.Context, input OrderInput) (OrderResult, error) {
 		// Input is typed
 		total := input.Amount * 1.1 // Add 10% tax

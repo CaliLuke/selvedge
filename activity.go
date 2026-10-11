@@ -1,4 +1,4 @@
-package romancy
+package selvedge
 
 import (
 	"context"
@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/i2y/romancy/hooks"
-	"github.com/i2y/romancy/internal/storage"
-	"github.com/i2y/romancy/retry"
+	"github.com/CaliLuke/selvedge/hooks"
+	"github.com/CaliLuke/selvedge/internal/storage"
+	"github.com/CaliLuke/selvedge/retry"
 )
 
 // Activity represents a single unit of work within a workflow.

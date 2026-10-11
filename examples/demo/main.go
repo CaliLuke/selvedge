@@ -1,4 +1,4 @@
-// Package main demonstrates a simple order processing workflow using Romancy.
+// Package main demonstrates a simple order processing workflow using Selvedge.
 //
 // This example shows:
 // - Workflow and Activity definitions
@@ -12,8 +12,8 @@
 //
 // Then use the CLI to interact:
 //
-//	go run ./cmd/romancy/ get <instance_id>
-//	go run ./cmd/romancy/ event <instance_id> payment.completed '{"transaction_id":"TX-123"}'
+//	go run ./cmd/selvedge/ get <instance_id>
+//	go run ./cmd/selvedge/ event <instance_id> payment.completed '{"transaction_id":"TX-123"}'
 package main
 
 import (
@@ -30,8 +30,8 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 
-	"github.com/i2y/romancy"
-	"github.com/i2y/romancy/hooks/otel"
+	"github.com/CaliLuke/selvedge"
+	"github.com/CaliLuke/selvedge/hooks/otel"
 )
 
 // ----- Types -----
@@ -61,7 +61,7 @@ type PaymentCompleted struct {
 // ----- Activities -----
 
 // ReserveInventory reserves inventory for an order.
-var ReserveInventory = romancy.DefineActivity(
+var ReserveInventory = selvedge.DefineActivity(
 	"reserve_inventory",
 	func(ctx context.Context, orderID string) (string, error) {
 		log.Printf("[Activity] Reserving inventory for order %s", orderID)
@@ -71,7 +71,7 @@ var ReserveInventory = romancy.DefineActivity(
 		log.Printf("[Activity] Inventory reserved: %s", reservationID)
 		return reservationID, nil
 	},
-	romancy.WithCompensation[string, string](func(ctx context.Context, orderID string) error {
+	selvedge.WithCompensation[string, string](func(ctx context.Context, orderID string) error {
 		log.Printf("[Compensation] Releasing inventory for order %s", orderID)
 		// In a real system, this would release the reserved inventory
 		return nil
@@ -79,7 +79,7 @@ var ReserveInventory = romancy.DefineActivity(
 )
 
 // ProcessShipment processes the shipment for an order.
-var ProcessShipment = romancy.DefineActivity(
+var ProcessShipment = selvedge.DefineActivity(
 	"process_shipment",
 	func(ctx context.Context, orderID string) (string, error) {
 		log.Printf("[Activity] Processing shipment for order %s", orderID)
@@ -93,8 +93,8 @@ var ProcessShipment = romancy.DefineActivity(
 // ----- Workflow -----
 
 // orderWorkflow processes an order through the complete lifecycle.
-var orderWorkflow = romancy.DefineWorkflow("order_workflow",
-	func(ctx *romancy.WorkflowContext, input OrderInput) (OrderResult, error) {
+var orderWorkflow = selvedge.DefineWorkflow("order_workflow",
+	func(ctx *selvedge.WorkflowContext, input OrderInput) (OrderResult, error) {
 		result := OrderResult{
 			OrderID: input.OrderID,
 			Status:  "processing",
@@ -111,9 +111,9 @@ var orderWorkflow = romancy.DefineWorkflow("order_workflow",
 
 		// Step 2: Wait for payment confirmation
 		log.Printf("[Workflow] Step 2: Waiting for payment confirmation...")
-		log.Printf("[Workflow] Send payment event with: romancy event %s payment.completed '{\"transaction_id\":\"TX-123\"}'", ctx.InstanceID())
+		log.Printf("[Workflow] Send payment event with: selvedge event %s payment.completed '{\"transaction_id\":\"TX-123\"}'", ctx.InstanceID())
 
-		event, err := romancy.WaitEvent[PaymentCompleted](ctx, "payment.completed", romancy.WithEventTimeout(5*time.Minute))
+		event, err := selvedge.WaitEvent[PaymentCompleted](ctx, "payment.completed", selvedge.WithEventTimeout(5*time.Minute))
 		if err != nil {
 			// If waiting for event, the engine will suspend the workflow
 			// and resume it when the event arrives
@@ -148,7 +148,7 @@ func setupTracing(ctx context.Context) (*sdktrace.TracerProvider, error) {
 
 	serviceName := os.Getenv("OTEL_SERVICE_NAME")
 	if serviceName == "" {
-		serviceName = "romancy-demo"
+		serviceName = "selvedge-demo"
 	}
 
 	exporter, err := otlptracegrpc.New(ctx,
@@ -197,21 +197,21 @@ func main() {
 	// Get database URL from environment or use default
 	dbPath := os.Getenv("DATABASE_URL")
 	if dbPath == "" {
-		dbPath = "romancy_demo.db"
+		dbPath = "selvedge_demo.db"
 	}
 
 	// Create the application with optional tracing
-	opts := []romancy.Option{
-		romancy.WithDatabase(dbPath),
-		romancy.WithWorkerID("demo-worker-1"),
+	opts := []selvedge.Option{
+		selvedge.WithDatabase(dbPath),
+		selvedge.WithWorkerID("demo-worker-1"),
 	}
 	if tp != nil {
-		opts = append(opts, romancy.WithHooks(otel.NewOTelHooks(tp)))
+		opts = append(opts, selvedge.WithHooks(otel.NewOTelHooks(tp)))
 	}
-	app := romancy.NewApp(opts...)
+	app := selvedge.NewApp(opts...)
 
 	// Register the workflow
-	romancy.RegisterWorkflow[OrderInput, OrderResult](app, orderWorkflow)
+	selvedge.RegisterWorkflow[OrderInput, OrderResult](app, orderWorkflow)
 
 	// Start the application
 	if err := app.Start(ctx); err != nil {
@@ -220,7 +220,7 @@ func main() {
 	}
 
 	log.Println("==============================================")
-	log.Println("Romancy Demo Application Started")
+	log.Println("Selvedge Demo Application Started")
 	log.Printf("Database: %s", dbPath)
 	log.Println("==============================================")
 
@@ -231,7 +231,7 @@ func main() {
 		Amount:     99.99,
 	}
 
-	instanceID, err := romancy.StartWorkflow(ctx, app, orderWorkflow, orderInput)
+	instanceID, err := selvedge.StartWorkflow(ctx, app, orderWorkflow, orderInput)
 	if err != nil {
 		log.Printf("Failed to start workflow: %v", err)
 		return
@@ -241,8 +241,8 @@ func main() {
 	log.Printf("✓ Workflow started with instance ID: %s", instanceID)
 	log.Println("")
 	log.Println("Commands to interact:")
-	log.Printf("  Get status:    go run ./cmd/romancy/ get %s --db %s", instanceID, dbPath)
-	log.Printf("  Send payment:  go run ./cmd/romancy/ event %s payment.completed '{\"transaction_id\":\"TX-123\"}' --db %s", instanceID, dbPath)
+	log.Printf("  Get status:    go run ./cmd/selvedge/ get %s --db %s", instanceID, dbPath)
+	log.Printf("  Send payment:  go run ./cmd/selvedge/ event %s payment.completed '{\"transaction_id\":\"TX-123\"}' --db %s", instanceID, dbPath)
 	log.Println("")
 	log.Println("HTTP endpoints:")
 	log.Println("  Health:  GET  http://localhost:8080/health/live")

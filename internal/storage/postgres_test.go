@@ -14,13 +14,13 @@ import (
 //   docker compose up -d
 //   go test -tags=postgres -v ./internal/storage/...
 //
-// Or set ROMANCY_TEST_POSTGRES_URL environment variable:
-//   export ROMANCY_TEST_POSTGRES_URL="postgres://romancy:romancy@localhost:5432/romancy_test?sslmode=disable"
+// Or set SELVEDGE_TEST_POSTGRES_URL environment variable:
+//   export SELVEDGE_TEST_POSTGRES_URL="postgres://selvedge:selvedge@localhost:5432/selvedge_test?sslmode=disable"
 
 func getTestPostgresURL() string {
-	url := os.Getenv("ROMANCY_TEST_POSTGRES_URL")
+	url := os.Getenv("SELVEDGE_TEST_POSTGRES_URL")
 	if url == "" {
-		url = "postgres://romancy:romancy@localhost:5432/romancy_test?sslmode=disable"
+		url = "postgres://selvedge:selvedge@localhost:5432/selvedge_test?sslmode=disable"
 	}
 	return url
 }

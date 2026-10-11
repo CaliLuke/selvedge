@@ -1,13 +1,13 @@
-package romancy
+package selvedge
 
 import (
 	"context"
 	"fmt"
 	"sync"
 
-	"github.com/i2y/romancy/hooks"
-	"github.com/i2y/romancy/internal/replay"
-	"github.com/i2y/romancy/internal/storage"
+	"github.com/CaliLuke/selvedge/hooks"
+	"github.com/CaliLuke/selvedge/internal/replay"
+	"github.com/CaliLuke/selvedge/internal/storage"
 )
 
 // workflowContextKey is the key used to store WorkflowContext in context.Context.
@@ -27,8 +27,8 @@ func ContextWithWorkflowContext(ctx context.Context, wfCtx *WorkflowContext) con
 //
 // Example:
 //
-//	activity := romancy.DefineActivity("process_order", func(ctx context.Context, input OrderInput) (OrderResult, error) {
-//	    wfCtx := romancy.GetWorkflowContext(ctx)
+//	activity := selvedge.DefineActivity("process_order", func(ctx context.Context, input OrderInput) (OrderResult, error) {
+//	    wfCtx := selvedge.GetWorkflowContext(ctx)
 //	    if wfCtx == nil {
 //	        return OrderResult{}, fmt.Errorf("workflow context not available")
 //	    }
@@ -269,9 +269,9 @@ func (c *WorkflowContext) Storage() storage.Storage {
 //
 // Example:
 //
-//	activity := romancy.DefineActivity("process_order", func(ctx context.Context, input OrderInput) (OrderResult, error) {
+//	activity := selvedge.DefineActivity("process_order", func(ctx context.Context, input OrderInput) (OrderResult, error) {
 //	    // Get the database session (transaction if in transactional activity)
-//	    wfCtx := romancy.GetWorkflowContext(ctx)
+//	    wfCtx := selvedge.GetWorkflowContext(ctx)
 //	    session := wfCtx.Session()
 //	    if session != nil {
 //	        // Execute custom SQL in the same transaction

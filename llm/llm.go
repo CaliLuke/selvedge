@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 
 	bucephalus "github.com/i2y/bucephalus/llm"
 )
@@ -52,7 +52,7 @@ const (
 //	    return err
 //	}
 //	fmt.Println(response.Text)
-func Call(ctx *romancy.WorkflowContext, prompt string, opts ...Option) (*DurableResponse, error) {
+func Call(ctx *selvedge.WorkflowContext, prompt string, opts ...Option) (*DurableResponse, error) {
 	cfg := buildConfig(ctx, opts...)
 
 	// Generate deterministic activity ID
@@ -99,7 +99,7 @@ func Call(ctx *romancy.WorkflowContext, prompt string, opts ...Option) (*Durable
 //	    llm.WithProvider("anthropic"),
 //	    llm.WithModel("claude-sonnet-4-5-20250929"),
 //	)
-func CallParse[T any](ctx *romancy.WorkflowContext, prompt string, opts ...Option) (*T, error) {
+func CallParse[T any](ctx *selvedge.WorkflowContext, prompt string, opts ...Option) (*T, error) {
 	cfg := buildConfig(ctx, opts...)
 
 	// Generate deterministic activity ID
@@ -153,7 +153,7 @@ func CallParse[T any](ctx *romancy.WorkflowContext, prompt string, opts ...Optio
 //	    llm.WithProvider("anthropic"),
 //	    llm.WithModel("claude-sonnet-4-5-20250929"),
 //	)
-func CallMessages(ctx *romancy.WorkflowContext, messages []Message, opts ...Option) (*DurableResponse, error) {
+func CallMessages(ctx *selvedge.WorkflowContext, messages []Message, opts ...Option) (*DurableResponse, error) {
 	cfg := buildConfig(ctx, opts...)
 
 	// Generate deterministic activity ID
@@ -186,7 +186,7 @@ func CallMessages(ctx *romancy.WorkflowContext, messages []Message, opts ...Opti
 
 // CallMessagesParse makes an LLM call with messages and parses the response.
 // The call is automatically wrapped as a durable activity.
-func CallMessagesParse[T any](ctx *romancy.WorkflowContext, messages []Message, opts ...Option) (*T, error) {
+func CallMessagesParse[T any](ctx *selvedge.WorkflowContext, messages []Message, opts ...Option) (*T, error) {
 	cfg := buildConfig(ctx, opts...)
 
 	// Generate deterministic activity ID
@@ -225,7 +225,7 @@ func CallMessagesParse[T any](ctx *romancy.WorkflowContext, messages []Message, 
 }
 
 // buildConfig creates a config by merging app defaults with call options.
-func buildConfig(ctx *romancy.WorkflowContext, opts ...Option) *config {
+func buildConfig(ctx *selvedge.WorkflowContext, opts ...Option) *config {
 	cfg := newConfig()
 
 	// Apply app-level defaults first (if available)
@@ -285,7 +285,7 @@ func cachedToParsedResult[T any](cached any) (*T, error) {
 
 // GetLLMDefaults retrieves LLM defaults from the workflow context.
 // Returns nil if no defaults are set.
-func GetLLMDefaults(ctx *romancy.WorkflowContext) []Option {
+func GetLLMDefaults(ctx *selvedge.WorkflowContext) []Option {
 	// Get defaults from the App via WorkflowContext
 	app := ctx.App()
 	return getAppDefaults(app)

@@ -1,12 +1,12 @@
-package romancy_test
+package selvedge_test
 
 import (
 	"context"
 	"testing"
 	"time"
 
-	"github.com/i2y/romancy"
-	"github.com/i2y/romancy/internal/storage"
+	"github.com/CaliLuke/selvedge"
+	"github.com/CaliLuke/selvedge/internal/storage"
 )
 
 // Test activity with compensation
@@ -20,12 +20,12 @@ func resetCompensationState() {
 	compensationInput = ""
 }
 
-var testActivityWithCompensation = romancy.DefineActivity(
+var testActivityWithCompensation = selvedge.DefineActivity(
 	"test_reserve_inventory",
 	func(ctx context.Context, itemID string) (map[string]any, error) {
 		return map[string]any{"reserved": true, "item_id": itemID}, nil
 	},
-	romancy.WithCompensation[string, map[string]any](func(ctx context.Context, itemID string) error {
+	selvedge.WithCompensation[string, map[string]any](func(ctx context.Context, itemID string) error {
 		compensationCalled = true
 		compensationInput = itemID
 		return nil
@@ -34,16 +34,16 @@ var testActivityWithCompensation = romancy.DefineActivity(
 
 func init() {
 	// Register the activity for compensation lookup
-	romancy.RegisterActivity(testActivityWithCompensation)
+	selvedge.RegisterActivity(testActivityWithCompensation)
 }
 
 func TestCancelWorkflowWithCompensation(t *testing.T) {
 	resetCompensationState()
 
 	// Create a temporary SQLite database
-	app := romancy.NewApp(
-		romancy.WithDatabase(":memory:"),
-		romancy.WithWorkerID("test-worker"),
+	app := selvedge.NewApp(
+		selvedge.WithDatabase(":memory:"),
+		selvedge.WithWorkerID("test-worker"),
 	)
 
 	ctx := context.Background()
@@ -84,7 +84,7 @@ func TestCancelWorkflowWithCompensation(t *testing.T) {
 	}
 
 	// Cancel the workflow
-	err := romancy.CancelWorkflow(ctx, app, "test-cancel-123", "user request")
+	err := selvedge.CancelWorkflow(ctx, app, "test-cancel-123", "user request")
 	if err != nil {
 		t.Fatalf("Failed to cancel workflow: %v", err)
 	}
@@ -126,9 +126,9 @@ func TestCancelWorkflowWithCompensation(t *testing.T) {
 }
 
 func TestCancelCompletedWorkflow(t *testing.T) {
-	app := romancy.NewApp(
-		romancy.WithDatabase(":memory:"),
-		romancy.WithWorkerID("test-worker"),
+	app := selvedge.NewApp(
+		selvedge.WithDatabase(":memory:"),
+		selvedge.WithWorkerID("test-worker"),
 	)
 
 	ctx := context.Background()
@@ -157,16 +157,16 @@ func TestCancelCompletedWorkflow(t *testing.T) {
 	}
 
 	// Try to cancel - should fail
-	err := romancy.CancelWorkflow(ctx, app, "completed-123", "user request")
+	err := selvedge.CancelWorkflow(ctx, app, "completed-123", "user request")
 	if err == nil {
 		t.Error("Expected error when canceling completed workflow")
 	}
 }
 
 func TestCancelIdempotent(t *testing.T) {
-	app := romancy.NewApp(
-		romancy.WithDatabase(":memory:"),
-		romancy.WithWorkerID("test-worker"),
+	app := selvedge.NewApp(
+		selvedge.WithDatabase(":memory:"),
+		selvedge.WithWorkerID("test-worker"),
 	)
 
 	ctx := context.Background()
@@ -195,7 +195,7 @@ func TestCancelIdempotent(t *testing.T) {
 	}
 
 	// Cancel again - should succeed (idempotent)
-	err := romancy.CancelWorkflow(ctx, app, "cancelled-123", "user request")
+	err := selvedge.CancelWorkflow(ctx, app, "cancelled-123", "user request")
 	if err != nil {
 		t.Errorf("Expected no error when canceling already canceled workflow, got: %v", err)
 	}
@@ -206,39 +206,39 @@ func TestCancelWithMultipleCompensations(t *testing.T) {
 	var compensationOrder []string
 
 	// Create activities with compensations
-	activity1 := romancy.DefineActivity(
+	activity1 := selvedge.DefineActivity(
 		"multi_activity_1",
 		func(ctx context.Context, input string) (string, error) { return input, nil },
-		romancy.WithCompensation[string, string](func(ctx context.Context, input string) error {
+		selvedge.WithCompensation[string, string](func(ctx context.Context, input string) error {
 			compensationOrder = append(compensationOrder, "activity1")
 			return nil
 		}),
 	)
-	romancy.RegisterActivity(activity1)
+	selvedge.RegisterActivity(activity1)
 
-	activity2 := romancy.DefineActivity(
+	activity2 := selvedge.DefineActivity(
 		"multi_activity_2",
 		func(ctx context.Context, input string) (string, error) { return input, nil },
-		romancy.WithCompensation[string, string](func(ctx context.Context, input string) error {
+		selvedge.WithCompensation[string, string](func(ctx context.Context, input string) error {
 			compensationOrder = append(compensationOrder, "activity2")
 			return nil
 		}),
 	)
-	romancy.RegisterActivity(activity2)
+	selvedge.RegisterActivity(activity2)
 
-	activity3 := romancy.DefineActivity(
+	activity3 := selvedge.DefineActivity(
 		"multi_activity_3",
 		func(ctx context.Context, input string) (string, error) { return input, nil },
-		romancy.WithCompensation[string, string](func(ctx context.Context, input string) error {
+		selvedge.WithCompensation[string, string](func(ctx context.Context, input string) error {
 			compensationOrder = append(compensationOrder, "activity3")
 			return nil
 		}),
 	)
-	romancy.RegisterActivity(activity3)
+	selvedge.RegisterActivity(activity3)
 
-	app := romancy.NewApp(
-		romancy.WithDatabase(":memory:"),
-		romancy.WithWorkerID("test-worker"),
+	app := selvedge.NewApp(
+		selvedge.WithDatabase(":memory:"),
+		selvedge.WithWorkerID("test-worker"),
 	)
 
 	ctx := context.Background()
@@ -286,7 +286,7 @@ func TestCancelWithMultipleCompensations(t *testing.T) {
 	compensationOrder = nil
 
 	// Cancel the workflow
-	err := romancy.CancelWorkflow(ctx, app, "multi-comp-123", "user request")
+	err := selvedge.CancelWorkflow(ctx, app, "multi-comp-123", "user request")
 	if err != nil {
 		t.Fatalf("Failed to cancel workflow: %v", err)
 	}

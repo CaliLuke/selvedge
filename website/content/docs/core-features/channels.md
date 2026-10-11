@@ -3,7 +3,7 @@ title: "Channels"
 weight: 3
 ---
 
-Romancy provides a powerful channel-based message passing system for communication between workflows. This enables patterns like pub/sub, work queues, and direct messaging between workflow instances.
+Selvedge provides a powerful channel-based message passing system for communication between workflows. This enables patterns like pub/sub, work queues, and direct messaging between workflow instances.
 
 ## Overview
 
@@ -16,7 +16,7 @@ Channels allow workflows to:
 
 ## Delivery Modes
 
-Romancy supports three delivery modes:
+Selvedge supports three delivery modes:
 
 | Mode | Description | Use Case |
 |------|-------------|----------|
@@ -29,17 +29,17 @@ Romancy supports three delivery modes:
 ### Subscribe to a Channel
 
 ```go
-import "github.com/i2y/romancy"
+import "github.com/CaliLuke/selvedge"
 
-var myWorkflow = romancy.DefineWorkflow("my_workflow",
-    func(ctx *romancy.WorkflowContext, input MyInput) (MyResult, error) {
+var myWorkflow = selvedge.DefineWorkflow("my_workflow",
+    func(ctx *selvedge.WorkflowContext, input MyInput) (MyResult, error) {
         // Subscribe to receive all messages (broadcast mode)
-        if err := romancy.Subscribe(ctx, "notifications", romancy.ModeBroadcast); err != nil {
+        if err := selvedge.Subscribe(ctx, "notifications", selvedge.ModeBroadcast); err != nil {
             return MyResult{}, err
         }
 
         // Or subscribe in competing mode (work queue)
-        if err := romancy.Subscribe(ctx, "tasks", romancy.ModeCompeting); err != nil {
+        if err := selvedge.Subscribe(ctx, "tasks", selvedge.ModeCompeting); err != nil {
             return MyResult{}, err
         }
 
@@ -58,15 +58,15 @@ type ChatMessage struct {
     Time    time.Time `json:"time"`
 }
 
-var chatWorkflow = romancy.DefineWorkflow("chat_workflow",
-    func(ctx *romancy.WorkflowContext, input ChatInput) (ChatResult, error) {
+var chatWorkflow = selvedge.DefineWorkflow("chat_workflow",
+    func(ctx *selvedge.WorkflowContext, input ChatInput) (ChatResult, error) {
         // Subscribe to channel
-        if err := romancy.Subscribe(ctx, "chat", romancy.ModeBroadcast); err != nil {
+        if err := selvedge.Subscribe(ctx, "chat", selvedge.ModeBroadcast); err != nil {
             return ChatResult{}, err
         }
 
         // Wait for a message (workflow suspends here)
-        msg, err := romancy.Receive[ChatMessage](ctx, "chat")
+        msg, err := selvedge.Receive[ChatMessage](ctx, "chat")
         if err != nil {
             return ChatResult{}, err
         }
@@ -81,12 +81,12 @@ var chatWorkflow = romancy.DefineWorkflow("chat_workflow",
 
 ```go
 // Wait for message with timeout
-msg, err := romancy.Receive[ChatMessage](ctx, "chat",
-    romancy.WithReceiveTimeout(30*time.Second),
+msg, err := selvedge.Receive[ChatMessage](ctx, "chat",
+    selvedge.WithReceiveTimeout(30*time.Second),
 )
 if err != nil {
     // Check for timeout
-    var timeoutErr *romancy.ChannelMessageTimeoutError
+    var timeoutErr *selvedge.ChannelMessageTimeoutError
     if errors.As(err, &timeoutErr) {
         fmt.Println("No message received within timeout")
         return ChatResult{Status: "timeout"}, nil
@@ -98,8 +98,8 @@ if err != nil {
 ### Publish Messages
 
 ```go
-var publisherWorkflow = romancy.DefineWorkflow("publisher",
-    func(ctx *romancy.WorkflowContext, input PublishInput) (PublishResult, error) {
+var publisherWorkflow = selvedge.DefineWorkflow("publisher",
+    func(ctx *selvedge.WorkflowContext, input PublishInput) (PublishResult, error) {
         message := ChatMessage{
             From:    "system",
             Content: input.Message,
@@ -107,7 +107,7 @@ var publisherWorkflow = romancy.DefineWorkflow("publisher",
         }
 
         // Publish to all subscribers
-        if err := romancy.Publish(ctx, "chat", message); err != nil {
+        if err := selvedge.Publish(ctx, "chat", message); err != nil {
             return PublishResult{}, err
         }
 
@@ -120,8 +120,8 @@ var publisherWorkflow = romancy.DefineWorkflow("publisher",
 
 ```go
 // Attach metadata to messages
-err := romancy.Publish(ctx, "events", eventData,
-    romancy.WithMetadata(map[string]any{
+err := selvedge.Publish(ctx, "events", eventData,
+    selvedge.WithMetadata(map[string]any{
         "priority": "high",
         "source":   "order-service",
     }),
@@ -136,17 +136,17 @@ err := romancy.Publish(ctx, "events", eventData,
 // === Receiver Workflow ===
 // Subscribe with ModeDirect to receive SendTo messages
 // This automatically subscribes to "notifications:instanceID"
-if err := romancy.Subscribe(ctx, "notifications", romancy.ModeDirect); err != nil {
+if err := selvedge.Subscribe(ctx, "notifications", selvedge.ModeDirect); err != nil {
     return MyResult{}, err
 }
 
 // Receive works normally - ModeDirect handles the channel name internally
-msg, err := romancy.Receive[MyMessage](ctx, "notifications")
+msg, err := selvedge.Receive[MyMessage](ctx, "notifications")
 
 // === Sender Workflow ===
 // Send directly to a specific workflow instance
 targetInstanceID := "wf-12345"
-err := romancy.SendTo(ctx, targetInstanceID, "notifications", message)
+err := selvedge.SendTo(ctx, targetInstanceID, "notifications", message)
 ```
 
 This design matches Erlang/Elixir's mailbox semantics where each process has its own mailbox identified by its PID.
@@ -155,14 +155,14 @@ This design matches Erlang/Elixir's mailbox semantics where each process has its
 
 ```go
 // Remove subscription when no longer needed
-if err := romancy.Unsubscribe(ctx, "notifications"); err != nil {
+if err := selvedge.Unsubscribe(ctx, "notifications"); err != nil {
     return MyResult{}, err
 }
 ```
 
 ## Transactional Message Passing
 
-When `Publish` or `SendTo` is called within an activity (inside a database transaction), Romancy ensures transactional consistency:
+When `Publish` or `SendTo` is called within an activity (inside a database transaction), Selvedge ensures transactional consistency:
 
 | Scenario | Behavior |
 |----------|----------|
@@ -178,10 +178,10 @@ This guarantees that:
 ### Example: Transactional Publish
 
 ```go
-var orderActivity = romancy.DefineActivity("process_order",
+var orderActivity = selvedge.DefineActivity("process_order",
     func(ctx context.Context, order Order) (OrderResult, error) {
         // This runs inside a transaction by default
-        wfCtx := romancy.GetWorkflowContext(ctx)
+        wfCtx := selvedge.GetWorkflowContext(ctx)
 
         // Database operations...
         session := wfCtx.Session()
@@ -194,7 +194,7 @@ var orderActivity = romancy.DefineActivity("process_order",
         }
 
         // Message is queued but NOT delivered yet
-        if err := romancy.Publish(wfCtx, "order-events", OrderEvent{
+        if err := selvedge.Publish(wfCtx, "order-events", OrderEvent{
             OrderID: order.ID,
             Status:  "processing",
         }); err != nil {
@@ -236,7 +236,7 @@ import (
     "log"
     "time"
 
-    "github.com/i2y/romancy"
+    "github.com/CaliLuke/selvedge"
 )
 
 // Message types
@@ -251,22 +251,22 @@ type TaskResult struct {
 }
 
 // Consumer workflow - processes tasks from queue
-var taskConsumer = romancy.DefineWorkflow("task_consumer",
-    func(ctx *romancy.WorkflowContext, input struct{}) ([]TaskResult, error) {
+var taskConsumer = selvedge.DefineWorkflow("task_consumer",
+    func(ctx *selvedge.WorkflowContext, input struct{}) ([]TaskResult, error) {
         var results []TaskResult
 
         // Subscribe in competing mode (work queue)
-        if err := romancy.Subscribe(ctx, "tasks", romancy.ModeCompeting); err != nil {
+        if err := selvedge.Subscribe(ctx, "tasks", selvedge.ModeCompeting); err != nil {
             return nil, err
         }
 
         // Process up to 10 tasks
         for i := 0; i < 10; i++ {
-            msg, err := romancy.Receive[TaskMessage](ctx, "tasks",
-                romancy.WithReceiveTimeout(5*time.Second),
+            msg, err := selvedge.Receive[TaskMessage](ctx, "tasks",
+                selvedge.WithReceiveTimeout(5*time.Second),
             )
             if err != nil {
-                var timeoutErr *romancy.ChannelMessageTimeoutError
+                var timeoutErr *selvedge.ChannelMessageTimeoutError
                 if errors.As(err, &timeoutErr) {
                     break // No more tasks
                 }
@@ -285,10 +285,10 @@ var taskConsumer = romancy.DefineWorkflow("task_consumer",
 )
 
 // Producer workflow - creates tasks
-var taskProducer = romancy.DefineWorkflow("task_producer",
-    func(ctx *romancy.WorkflowContext, tasks []TaskMessage) (int, error) {
+var taskProducer = selvedge.DefineWorkflow("task_producer",
+    func(ctx *selvedge.WorkflowContext, tasks []TaskMessage) (int, error) {
         for _, task := range tasks {
-            if err := romancy.Publish(ctx, "tasks", task); err != nil {
+            if err := selvedge.Publish(ctx, "tasks", task); err != nil {
                 return 0, err
             }
         }
@@ -297,9 +297,9 @@ var taskProducer = romancy.DefineWorkflow("task_producer",
 )
 
 func main() {
-    app := romancy.NewApp(
-        romancy.WithDatabase("channels.db"),
-        romancy.WithWorkerID("worker-1"),
+    app := selvedge.NewApp(
+        selvedge.WithDatabase("channels.db"),
+        selvedge.WithWorkerID("worker-1"),
     )
 
     ctx := context.Background()
@@ -309,7 +309,7 @@ func main() {
     defer app.Shutdown(ctx)
 
     // Start a consumer
-    consumerID, _ := romancy.StartWorkflow(ctx, app, taskConsumer, struct{}{})
+    consumerID, _ := selvedge.StartWorkflow(ctx, app, taskConsumer, struct{}{})
     fmt.Printf("Started consumer: %s\n", consumerID)
 
     // Start a producer with tasks
@@ -318,7 +318,7 @@ func main() {
         {TaskID: "task-2", Payload: "data2"},
         {TaskID: "task-3", Payload: "data3"},
     }
-    producerID, _ := romancy.StartWorkflow(ctx, app, taskProducer, tasks)
+    producerID, _ := selvedge.StartWorkflow(ctx, app, taskProducer, tasks)
     fmt.Printf("Started producer: %s\n", producerID)
 
     // Wait for processing...
@@ -334,8 +334,8 @@ Send notifications to all interested workflows:
 
 ```go
 // All subscribers receive the notification
-romancy.Subscribe(ctx, "system-alerts", romancy.ModeBroadcast)
-romancy.Publish(ctx, "system-alerts", AlertMessage{...})
+selvedge.Subscribe(ctx, "system-alerts", selvedge.ModeBroadcast)
+selvedge.Publish(ctx, "system-alerts", AlertMessage{...})
 ```
 
 ### Work Queue (Competing)
@@ -344,8 +344,8 @@ Distribute work across multiple workers:
 
 ```go
 // Only one subscriber receives each task
-romancy.Subscribe(ctx, "work-queue", romancy.ModeCompeting)
-msg, _ := romancy.Receive[WorkItem](ctx, "work-queue")
+selvedge.Subscribe(ctx, "work-queue", selvedge.ModeCompeting)
+msg, _ := selvedge.Receive[WorkItem](ctx, "work-queue")
 ```
 
 ### Direct Messaging (SendTo)
@@ -355,15 +355,15 @@ Point-to-point communication with specific workflow instances:
 ```go
 // === Receiver Workflow ===
 // Subscribe with ModeDirect to receive SendTo messages
-romancy.Subscribe(ctx, "messages", romancy.ModeDirect)
+selvedge.Subscribe(ctx, "messages", selvedge.ModeDirect)
 
 // Receive works with the original channel name
-msg, _ := romancy.Receive[Message](ctx, "messages")
+msg, _ := selvedge.Receive[Message](ctx, "messages")
 fmt.Printf("Received from %s: %s\n", msg.Data.From, msg.Data.Content)
 
 // === Sender Workflow ===
 // Send directly to a specific instance
-romancy.SendTo(ctx, targetInstanceID, "messages", Message{
+selvedge.SendTo(ctx, targetInstanceID, "messages", Message{
     From:    ctx.InstanceID(),
     Content: "Hello!",
 })

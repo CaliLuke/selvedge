@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/i2y/romancy/internal/storage"
+	"github.com/CaliLuke/selvedge/internal/storage"
 )
 
 // CompensationFunc is a function that can be executed as compensation.

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 // ----- Test Workflow -----
@@ -22,7 +22,7 @@ type TestWorkflow struct{}
 
 func (w *TestWorkflow) Name() string { return "test_workflow" }
 
-func (w *TestWorkflow) Execute(ctx *romancy.WorkflowContext, input TestInput) (TestOutput, error) {
+func (w *TestWorkflow) Execute(ctx *selvedge.WorkflowContext, input TestInput) (TestOutput, error) {
 	return TestOutput{
 		Result: "Hello, " + input.Name,
 	}, nil
@@ -31,8 +31,8 @@ func (w *TestWorkflow) Execute(ctx *romancy.WorkflowContext, input TestInput) (T
 // ----- Tests -----
 
 func TestNewServer(t *testing.T) {
-	app := romancy.NewApp(
-		romancy.WithDatabase(":memory:"),
+	app := selvedge.NewApp(
+		selvedge.WithDatabase(":memory:"),
 	)
 
 	server := NewServer(app)
@@ -45,8 +45,8 @@ func TestNewServer(t *testing.T) {
 		t.Error("Server should have an MCP server")
 	}
 
-	if server.config.name != "romancy-mcp-server" {
-		t.Errorf("Expected default name 'romancy-mcp-server', got %s", server.config.name)
+	if server.config.name != "selvedge-mcp-server" {
+		t.Errorf("Expected default name 'selvedge-mcp-server', got %s", server.config.name)
 	}
 
 	if server.config.version != "1.0.0" {
@@ -55,7 +55,7 @@ func TestNewServer(t *testing.T) {
 }
 
 func TestNewServerWithOptions(t *testing.T) {
-	app := romancy.NewApp()
+	app := selvedge.NewApp()
 
 	server := NewServer(app,
 		WithServerName("my-service"),
@@ -77,8 +77,8 @@ func TestNewServerWithOptions(t *testing.T) {
 }
 
 func TestServerInitializeAndShutdown(t *testing.T) {
-	app := romancy.NewApp(
-		romancy.WithDatabase(":memory:"),
+	app := selvedge.NewApp(
+		selvedge.WithDatabase(":memory:"),
 	)
 
 	server := NewServer(app)
@@ -110,7 +110,7 @@ func TestServerInitializeAndShutdown(t *testing.T) {
 }
 
 func TestServerApp(t *testing.T) {
-	app := romancy.NewApp()
+	app := selvedge.NewApp()
 	server := NewServer(app)
 
 	if server.App() != app {
@@ -119,7 +119,7 @@ func TestServerApp(t *testing.T) {
 }
 
 func TestServerMCPServer(t *testing.T) {
-	app := romancy.NewApp()
+	app := selvedge.NewApp()
 	server := NewServer(app)
 
 	if server.MCPServer() == nil {
@@ -128,8 +128,8 @@ func TestServerMCPServer(t *testing.T) {
 }
 
 func TestRegisterWorkflow(t *testing.T) {
-	app := romancy.NewApp(
-		romancy.WithDatabase(":memory:"),
+	app := selvedge.NewApp(
+		selvedge.WithDatabase(":memory:"),
 	)
 
 	server := NewServer(app)
@@ -152,8 +152,8 @@ func TestRegisterWorkflow(t *testing.T) {
 }
 
 func TestRegisterWorkflowWithOptions(t *testing.T) {
-	app := romancy.NewApp(
-		romancy.WithDatabase(":memory:"),
+	app := selvedge.NewApp(
+		selvedge.WithDatabase(":memory:"),
 	)
 
 	server := NewServer(app)
@@ -183,7 +183,7 @@ func TestRegisterWorkflowWithOptions(t *testing.T) {
 }
 
 func TestHTTPHandler(t *testing.T) {
-	app := romancy.NewApp()
+	app := selvedge.NewApp()
 	server := NewServer(app)
 
 	handler := server.Handler()

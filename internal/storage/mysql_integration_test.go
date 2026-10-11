@@ -19,9 +19,9 @@ func setupMySQLContainer(t *testing.T) (*MySQLStorage, func()) {
 
 	container, err := mysql.Run(ctx,
 		"mysql:8.0",
-		mysql.WithDatabase("romancy_test"),
-		mysql.WithUsername("romancy"),
-		mysql.WithPassword("romancy"),
+		mysql.WithDatabase("selvedge_test"),
+		mysql.WithUsername("selvedge"),
+		mysql.WithPassword("selvedge"),
 	)
 	if err != nil {
 		t.Fatalf("failed to start MySQL container: %v", err)

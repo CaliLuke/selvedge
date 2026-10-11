@@ -14,9 +14,9 @@ jobs:
       postgres:
         image: postgres:17
         env:
-          POSTGRES_USER: romancy
-          POSTGRES_PASSWORD: romancy_test_password
-          POSTGRES_DB: romancy_test
+          POSTGRES_USER: selvedge
+          POSTGRES_PASSWORD: selvedge_test_password
+          POSTGRES_DB: selvedge_test
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -29,9 +29,9 @@ jobs:
         image: mysql:9
         env:
           MYSQL_ROOT_PASSWORD: root_password
-          MYSQL_DATABASE: romancy_test
-          MYSQL_USER: romancy
-          MYSQL_PASSWORD: romancy_test_password
+          MYSQL_DATABASE: selvedge_test
+          MYSQL_USER: selvedge
+          MYSQL_PASSWORD: selvedge_test_password
         options: >-
           --health-cmd="mysqladmin ping"
           --health-interval=10s
@@ -59,8 +59,8 @@ jobs:
 
       - name: Run tests
         env:
-          ROMANCY_TEST_POSTGRES_URL: postgres://romancy:romancy_test_password@localhost:5432/romancy_test?sslmode=disable
-          ROMANCY_TEST_MYSQL_URL: romancy:romancy_test_password@tcp(localhost:3306)/romancy_test
+          SELVEDGE_TEST_POSTGRES_URL: postgres://selvedge:selvedge_test_password@localhost:5432/selvedge_test?sslmode=disable
+          SELVEDGE_TEST_MYSQL_URL: selvedge:selvedge_test_password@tcp(localhost:3306)/selvedge_test
         run: go test -v ./...
 
       - name: Build

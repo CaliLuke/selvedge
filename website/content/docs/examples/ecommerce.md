@@ -156,16 +156,16 @@ package main
 import (
 	"fmt"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 // processOrder is an e-commerce order processing workflow with type-safe structs.
-// Romancy automatically:
+// Selvedge automatically:
 // - Stores order as JSON in the database
 // - Restores OrderInput type on replay
 // - Returns OrderResult with proper typing
-var processOrder = romancy.DefineWorkflow("process_order",
-	func(ctx *romancy.WorkflowContext, order OrderInput) (OrderResult, error) {
+var processOrder = selvedge.DefineWorkflow("process_order",
+	func(ctx *selvedge.WorkflowContext, order OrderInput) (OrderResult, error) {
 		// Validate input
 		if err := order.Validate(); err != nil {
 			return OrderResult{}, fmt.Errorf("validation failed: %w", err)
@@ -201,13 +201,13 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 func main() {
-	app := romancy.NewApp(
-		romancy.WithDatabase("orders.db"),
-		romancy.WithWorkerID("order-worker"),
+	app := selvedge.NewApp(
+		selvedge.WithDatabase("orders.db"),
+		selvedge.WithWorkerID("order-worker"),
 	)
 
 	ctx := context.Background()
@@ -239,7 +239,7 @@ func main() {
 	}
 
 	// Start workflow - validation happens in workflow
-	instanceID, err := romancy.StartWorkflow(ctx, app, processOrder, order)
+	instanceID, err := selvedge.StartWorkflow(ctx, app, processOrder, order)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -253,8 +253,8 @@ func main() {
 
 ```go
 // This won't compile - type safety at build time
-var badWorkflow = romancy.DefineWorkflow("bad",
-	func(ctx *romancy.WorkflowContext, order OrderInput) (OrderResult, error) {
+var badWorkflow = selvedge.DefineWorkflow("bad",
+	func(ctx *selvedge.WorkflowContext, order OrderInput) (OrderResult, error) {
 		// order.Customer.Name is string ✅
 		// order.Items[0].Quantity is int ✅
 		return OrderResult{}, nil
@@ -278,8 +278,8 @@ func (o OrderInput) Validate() error {
 ### 3. IDE Support
 
 ```go
-var processOrder = romancy.DefineWorkflow("process_order",
-	func(ctx *romancy.WorkflowContext, order OrderInput) (OrderResult, error) {
+var processOrder = selvedge.DefineWorkflow("process_order",
+	func(ctx *selvedge.WorkflowContext, order OrderInput) (OrderResult, error) {
 		// IDE autocomplete works!
 		customerName := order.Customer.Name  // ✅ Type-safe
 		total := order.TotalAmount()         // ✅ Type-safe
@@ -290,7 +290,7 @@ var processOrder = romancy.DefineWorkflow("process_order",
 
 ### 4. JSON Storage with Type Restoration
 
-Romancy stores structs as JSON and automatically restores them:
+Selvedge stores structs as JSON and automatically restores them:
 
 ```go
 // First run: OrderInput → JSON → Database
@@ -331,7 +331,7 @@ Create a file named `ecommerce_workflow.go` with the structs and workflow shown 
 ```bash
 # Initialize Go module
 go mod init ecommerce-example
-go get github.com/i2y/romancy
+go get github.com/CaliLuke/selvedge
 
 # Run your workflow
 go run ecommerce_workflow.go
@@ -349,7 +349,7 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 // Address represents a customer's address
@@ -469,8 +469,8 @@ type OrderResult struct {
 
 // Workflow
 
-var processOrder = romancy.DefineWorkflow("process_order",
-	func(ctx *romancy.WorkflowContext, order OrderInput) (OrderResult, error) {
+var processOrder = selvedge.DefineWorkflow("process_order",
+	func(ctx *selvedge.WorkflowContext, order OrderInput) (OrderResult, error) {
 		if err := order.Validate(); err != nil {
 			return OrderResult{}, fmt.Errorf("validation failed: %w", err)
 		}
@@ -493,13 +493,13 @@ var processOrder = romancy.DefineWorkflow("process_order",
 
 func main() {
 	fmt.Println("============================================================")
-	fmt.Println("Romancy Framework - E-commerce Workflow Example")
+	fmt.Println("Selvedge Framework - E-commerce Workflow Example")
 	fmt.Println("============================================================")
 	fmt.Println()
 
-	app := romancy.NewApp(
-		romancy.WithDatabase("orders.db"),
-		romancy.WithWorkerID("order-worker"),
+	app := selvedge.NewApp(
+		selvedge.WithDatabase("orders.db"),
+		selvedge.WithWorkerID("order-worker"),
 	)
 
 	ctx := context.Background()
@@ -532,7 +532,7 @@ func main() {
 	fmt.Println(">>> Starting order workflow...")
 	fmt.Println()
 
-	instanceID, err := romancy.StartWorkflow(ctx, app, processOrder, order)
+	instanceID, err := selvedge.StartWorkflow(ctx, app, processOrder, order)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -543,7 +543,7 @@ func main() {
 ## What You Learned
 
 - ✅ **Go Structs** provide compile-time type safety
-- ✅ **Nested Structs** work seamlessly with Romancy
+- ✅ **Nested Structs** work seamlessly with Selvedge
 - ✅ **Explicit Validation** with Validate() methods
 - ✅ **Type Restoration** works during replay
 - ✅ **JSON Storage** handles complex struct hierarchies

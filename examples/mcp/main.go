@@ -1,4 +1,4 @@
-// Package main demonstrates MCP (Model Context Protocol) integration with Romancy.
+// Package main demonstrates MCP (Model Context Protocol) integration with Selvedge.
 //
 // This example shows how to expose workflows as MCP tools for AI assistants
 // like Claude Desktop.
@@ -38,9 +38,9 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 
-	"github.com/i2y/romancy"
-	"github.com/i2y/romancy/hooks/otel"
-	"github.com/i2y/romancy/mcp"
+	"github.com/CaliLuke/selvedge"
+	"github.com/CaliLuke/selvedge/hooks/otel"
+	"github.com/CaliLuke/selvedge/mcp"
 )
 
 // ----- Types -----
@@ -72,7 +72,7 @@ type OrderResult struct {
 // ----- Activities -----
 
 // ValidateOrder validates the order input.
-var ValidateOrder = romancy.DefineActivity(
+var ValidateOrder = selvedge.DefineActivity(
 	"validate_order",
 	func(ctx context.Context, input OrderInput) (bool, error) {
 		log.Printf("[Activity] Validating order %s", input.OrderID)
@@ -91,7 +91,7 @@ var ValidateOrder = romancy.DefineActivity(
 )
 
 // ProcessPayment processes the payment for an order.
-var ProcessPayment = romancy.DefineActivity(
+var ProcessPayment = selvedge.DefineActivity(
 	"process_payment",
 	func(ctx context.Context, input struct {
 		OrderID string
@@ -107,7 +107,7 @@ var ProcessPayment = romancy.DefineActivity(
 )
 
 // ScheduleShipping schedules the order for shipping.
-var ScheduleShipping = romancy.DefineActivity(
+var ScheduleShipping = selvedge.DefineActivity(
 	"schedule_shipping",
 	func(ctx context.Context, orderID string) (string, error) {
 		log.Printf("[Activity] Scheduling shipping for order %s", orderID)
@@ -122,8 +122,8 @@ var ScheduleShipping = romancy.DefineActivity(
 // ----- Workflow -----
 
 // orderWorkflow processes a customer order.
-var orderWorkflow = romancy.DefineWorkflow("order_workflow",
-	func(ctx *romancy.WorkflowContext, input OrderInput) (OrderResult, error) {
+var orderWorkflow = selvedge.DefineWorkflow("order_workflow",
+	func(ctx *selvedge.WorkflowContext, input OrderInput) (OrderResult, error) {
 		log.Printf("[Workflow] Processing order %s for customer %s", input.OrderID, input.CustomerID)
 
 		result := OrderResult{
@@ -182,7 +182,7 @@ func setupTracing(ctx context.Context) (*sdktrace.TracerProvider, error) {
 
 	serviceName := os.Getenv("OTEL_SERVICE_NAME")
 	if serviceName == "" {
-		serviceName = "romancy-mcp"
+		serviceName = "selvedge-mcp"
 	}
 
 	exporter, err := otlptracegrpc.New(ctx,
@@ -234,15 +234,15 @@ func main() {
 		dbURL = "mcp_demo.db"
 	}
 
-	// Create the Romancy application with optional tracing
-	opts := []romancy.Option{
-		romancy.WithDatabase(dbURL),
-		romancy.WithWorkerID("mcp-worker-1"),
+	// Create the Selvedge application with optional tracing
+	opts := []selvedge.Option{
+		selvedge.WithDatabase(dbURL),
+		selvedge.WithWorkerID("mcp-worker-1"),
 	}
 	if tp != nil {
-		opts = append(opts, romancy.WithHooks(otel.NewOTelHooks(tp)))
+		opts = append(opts, selvedge.WithHooks(otel.NewOTelHooks(tp)))
 	}
-	app := romancy.NewApp(opts...)
+	app := selvedge.NewApp(opts...)
 
 	// Create the MCP server
 	server := mcp.NewServer(app,
@@ -260,7 +260,7 @@ func main() {
 		mcp.WithDescription("Process customer orders with payment and shipping"),
 	)
 
-	// Initialize the server (starts the Romancy app)
+	// Initialize the server (starts the Selvedge app)
 	if err := server.Initialize(ctx); err != nil {
 		log.Printf("Failed to initialize server: %v", err)
 		return

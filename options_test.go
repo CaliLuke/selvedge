@@ -1,4 +1,4 @@
-package romancy
+package selvedge
 
 import (
 	"testing"
@@ -6,17 +6,17 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/i2y/romancy/hooks"
+	"github.com/CaliLuke/selvedge/hooks"
 )
 
 func TestDefaultConfig(t *testing.T) {
 	cfg := defaultConfig()
 
 	// Database defaults
-	assert.Equal(t, "file:romancy.db", cfg.databaseURL)
+	assert.Equal(t, "file:selvedge.db", cfg.databaseURL)
 
 	// Service identity defaults
-	assert.Equal(t, "romancy-service", cfg.serviceName)
+	assert.Equal(t, "selvedge-service", cfg.serviceName)
 	assert.Empty(t, cfg.workerID) // UUID generated at runtime
 
 	// Feature defaults

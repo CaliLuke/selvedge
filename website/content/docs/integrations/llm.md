@@ -3,7 +3,7 @@ title: "LLM Integration"
 weight: 3
 ---
 
-Romancy provides durable LLM calls via the [bucephalus](https://github.com/i2y/bucephalus) library. All LLM calls are automatically cached as activities, enabling deterministic replay without re-invoking the LLM API.
+Selvedge provides durable LLM calls via the [bucephalus](https://github.com/i2y/bucephalus) library. All LLM calls are automatically cached as activities, enabling deterministic replay without re-invoking the LLM API.
 
 ## Overview
 
@@ -21,8 +21,8 @@ The `llm` package provides:
 
 ```go
 import (
-	"github.com/i2y/romancy"
-	"github.com/i2y/romancy/llm"
+	"github.com/CaliLuke/selvedge"
+	"github.com/CaliLuke/selvedge/llm"
 
 	// Import the provider you want to use
 	_ "github.com/i2y/bucephalus/anthropic"
@@ -34,7 +34,7 @@ import (
 ### 2. Set App Defaults (Optional)
 
 ```go
-app := romancy.NewApp(romancy.WithDatabase("workflow.db"))
+app := selvedge.NewApp(selvedge.WithDatabase("workflow.db"))
 
 // Set LLM defaults for all workflows in this app
 llm.SetAppDefaults(app,
@@ -47,8 +47,8 @@ llm.SetAppDefaults(app,
 ### 3. Make LLM Calls in Workflows
 
 ```go
-var summarizeWorkflow = romancy.DefineWorkflow("summarize",
-	func(ctx *romancy.WorkflowContext, text string) (string, error) {
+var summarizeWorkflow = selvedge.DefineWorkflow("summarize",
+	func(ctx *selvedge.WorkflowContext, text string) (string, error) {
 		// LLM call is automatically cached for replay
 		response, err := llm.Call(ctx, text,
 			llm.WithSystemMessage("Summarize the following text concisely."),
@@ -129,8 +129,8 @@ var summarizer = llm.DefineDurableCall("summarize",
 )
 
 // Use in workflows
-var workflow = romancy.DefineWorkflow("my_workflow",
-	func(ctx *romancy.WorkflowContext, text string) (string, error) {
+var workflow = selvedge.DefineWorkflow("my_workflow",
+	func(ctx *selvedge.WorkflowContext, text string) (string, error) {
 		response, err := summarizer.Execute(ctx, text)
 		if err != nil {
 			return "", err
@@ -171,8 +171,8 @@ agent := llm.NewDurableAgent[ResearchDeps]("research_agent",
 })
 
 // Use in a workflow
-var researchWorkflow = romancy.DefineWorkflow("research",
-	func(ctx *romancy.WorkflowContext, query string) (string, error) {
+var researchWorkflow = selvedge.DefineWorkflow("research",
+	func(ctx *selvedge.WorkflowContext, query string) (string, error) {
 		agentCtx := llm.NewAgentContext(ResearchDeps{
 			APIClient: http.DefaultClient,
 			MaxResults: 10,
@@ -236,7 +236,7 @@ llm.WithTools(searchTool)
 Use `llm.SetAppDefaults` to configure defaults for all LLM calls in an app:
 
 ```go
-app := romancy.NewApp(romancy.WithDatabase("workflow.db"))
+app := selvedge.NewApp(selvedge.WithDatabase("workflow.db"))
 
 llm.SetAppDefaults(app,
 	llm.WithProvider("anthropic"),
@@ -281,7 +281,7 @@ type Usage struct {
 
 ## Supported Providers
 
-Via bucephalus, Romancy supports:
+Via bucephalus, Selvedge supports:
 
 | Provider | Import | Models |
 |----------|--------|--------|
@@ -309,8 +309,8 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/i2y/romancy"
-	"github.com/i2y/romancy/llm"
+	"github.com/CaliLuke/selvedge"
+	"github.com/CaliLuke/selvedge/llm"
 	_ "github.com/i2y/bucephalus/anthropic"
 )
 
@@ -327,8 +327,8 @@ type Keywords struct {
 	Keywords []string `json:"keywords"`
 }
 
-var analyzeWorkflow = romancy.DefineWorkflow("analyze",
-	func(ctx *romancy.WorkflowContext, input AnalysisInput) (AnalysisResult, error) {
+var analyzeWorkflow = selvedge.DefineWorkflow("analyze",
+	func(ctx *selvedge.WorkflowContext, input AnalysisInput) (AnalysisResult, error) {
 		// Step 1: Summarize
 		summary, err := llm.Call(ctx, input.Text,
 			llm.WithSystemMessage("Summarize in one sentence."),
@@ -355,21 +355,21 @@ var analyzeWorkflow = romancy.DefineWorkflow("analyze",
 func main() {
 	ctx := context.Background()
 
-	app := romancy.NewApp(romancy.WithDatabase("analysis.db"))
+	app := selvedge.NewApp(selvedge.WithDatabase("analysis.db"))
 
 	llm.SetAppDefaults(app,
 		llm.WithProvider("anthropic"),
 		llm.WithModel("claude-sonnet-4-5-20250929"),
 	)
 
-	romancy.RegisterWorkflow(app, analyzeWorkflow)
+	selvedge.RegisterWorkflow(app, analyzeWorkflow)
 
 	if err := app.Start(ctx); err != nil {
 		log.Fatal(err)
 	}
 	defer app.Shutdown(ctx)
 
-	instanceID, _ := romancy.StartWorkflow(ctx, app, analyzeWorkflow, AnalysisInput{
+	instanceID, _ := selvedge.StartWorkflow(ctx, app, analyzeWorkflow, AnalysisInput{
 		Text: "Go is a statically typed, compiled programming language...",
 	})
 	fmt.Println("Started:", instanceID)

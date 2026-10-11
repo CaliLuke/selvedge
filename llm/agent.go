@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 
 	bucephalus "github.com/i2y/bucephalus/llm"
 )
@@ -103,7 +103,7 @@ func (a *DurableAgent[T]) WithGetTools(fn func() []Tool) *DurableAgent[T] {
 //
 //	response, err := agent.Chat(wfCtx, agentCtx, "Hello!")
 //	// agentCtx.Messages now includes the user message and assistant response
-func (a *DurableAgent[T]) Chat(wfCtx *romancy.WorkflowContext, agentCtx *AgentContext[T], message string) (*DurableResponse, error) {
+func (a *DurableAgent[T]) Chat(wfCtx *selvedge.WorkflowContext, agentCtx *AgentContext[T], message string) (*DurableResponse, error) {
 	cfg := a.buildConfig(wfCtx)
 
 	// Generate deterministic activity ID
@@ -177,7 +177,7 @@ func (a *DurableAgent[T]) Chat(wfCtx *romancy.WorkflowContext, agentCtx *AgentCo
 //	    },
 //	)
 func (a *DurableAgent[T]) ChatWithToolLoop(
-	wfCtx *romancy.WorkflowContext,
+	wfCtx *selvedge.WorkflowContext,
 	agentCtx *AgentContext[T],
 	message string,
 	maxIterations int,
@@ -216,7 +216,7 @@ func (a *DurableAgent[T]) ChatWithToolLoop(
 
 // executeToolCall executes a single tool call as a durable activity.
 func (a *DurableAgent[T]) executeToolCall(
-	wfCtx *romancy.WorkflowContext,
+	wfCtx *selvedge.WorkflowContext,
 	index int,
 	call ToolCall,
 	executor func(ctx context.Context, call ToolCall) (string, error),
@@ -255,7 +255,7 @@ func (a *DurableAgent[T]) executeToolCall(
 
 // continueWithToolResults continues the conversation with tool results.
 func (a *DurableAgent[T]) continueWithToolResults(
-	wfCtx *romancy.WorkflowContext,
+	wfCtx *selvedge.WorkflowContext,
 	agentCtx *AgentContext[T],
 	lastResp *DurableResponse,
 	toolMessages []Message,
@@ -321,7 +321,7 @@ func (a *DurableAgent[T]) continueWithToolResults(
 }
 
 // buildConfig creates a config by merging app defaults and agent options.
-func (a *DurableAgent[T]) buildConfig(ctx *romancy.WorkflowContext) *config {
+func (a *DurableAgent[T]) buildConfig(ctx *selvedge.WorkflowContext) *config {
 	cfg := newConfig()
 
 	// Apply app-level defaults first

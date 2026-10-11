@@ -1,4 +1,4 @@
-# Romancy Development Environment
+# Selvedge Development Environment
 # ================================
 # Usage:
 #   tilt up                    # Start all examples
@@ -21,9 +21,9 @@ dc_resource("jaeger", labels=["tracing"], links=["http://localhost:16686"])
 
 # Common environment variables for all examples
 common_env = {
-    "DATABASE_URL": "postgres://romancy:romancy@127.0.0.1:5433/romancy_test?sslmode=disable",
+    "DATABASE_URL": "postgres://selvedge:selvedge@127.0.0.1:5433/selvedge_test?sslmode=disable",
     "OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4317",
-    "ROMANCY_SERVE": "true",  # Keep one-shot examples running for Tilt
+    "SELVEDGE_SERVE": "true",  # Keep one-shot examples running for Tilt
     # Suppress verbose gRPC logging (gRPC v1.74+ uses log/slog by default)
     "GRPC_GO_LOG_SEVERITY_LEVEL": "ERROR",
 }
@@ -95,7 +95,7 @@ common_deps = [
 for name, cfg in examples.items():
     # Build environment with service name
     env = dict(common_env)
-    env["OTEL_SERVICE_NAME"] = "romancy-" + name
+    env["OTEL_SERVICE_NAME"] = "selvedge-" + name
 
     # Dependencies: example directory + common source files
     deps = [cfg["dir"]] + common_deps
@@ -120,7 +120,7 @@ for name, cfg in examples.items():
 # Print helpful information on startup
 local_resource(
     "info",
-    cmd="echo '✓ Romancy development environment ready'",
+    cmd="echo '✓ Selvedge development environment ready'",
     labels=["infrastructure"],
     resource_deps=["postgres", "jaeger"],
     auto_init=True,

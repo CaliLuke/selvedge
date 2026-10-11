@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/i2y/romancy/hooks"
-	"github.com/i2y/romancy/internal/storage"
+	"github.com/CaliLuke/selvedge/hooks"
+	"github.com/CaliLuke/selvedge/internal/storage"
 )
 
 // CachedResult holds both raw JSON bytes and the unmarshaled value.

@@ -1,4 +1,4 @@
-package romancy
+package selvedge
 
 import (
 	"errors"

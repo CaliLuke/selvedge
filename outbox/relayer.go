@@ -12,7 +12,7 @@ import (
 
 	cloudevents "github.com/cloudevents/sdk-go/v2"
 
-	"github.com/i2y/romancy/internal/storage"
+	"github.com/CaliLuke/selvedge/internal/storage"
 )
 
 // EventSender is a function that sends an event to an external system.

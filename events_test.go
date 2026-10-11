@@ -1,4 +1,4 @@
-package romancy
+package selvedge
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/i2y/romancy/internal/storage"
+	"github.com/CaliLuke/selvedge/internal/storage"
 )
 
 // PaymentEvent represents payment confirmation data.

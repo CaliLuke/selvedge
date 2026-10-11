@@ -36,8 +36,8 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 
-	"github.com/i2y/romancy"
-	"github.com/i2y/romancy/hooks/otel"
+	"github.com/CaliLuke/selvedge"
+	"github.com/CaliLuke/selvedge/hooks/otel"
 )
 
 // ----- Types -----
@@ -81,7 +81,7 @@ type OrderProcessingResult struct {
 // ----- Activities -----
 
 // SendWelcomeEmail sends a welcome email to a new user.
-var SendWelcomeEmail = romancy.DefineActivity(
+var SendWelcomeEmail = selvedge.DefineActivity(
 	"send_welcome_email",
 	func(ctx context.Context, input struct {
 		Email string
@@ -95,7 +95,7 @@ var SendWelcomeEmail = romancy.DefineActivity(
 )
 
 // CreateUserProfile creates a user profile in the database.
-var CreateUserProfile = romancy.DefineActivity(
+var CreateUserProfile = selvedge.DefineActivity(
 	"create_user_profile",
 	func(ctx context.Context, input struct {
 		UserID string
@@ -110,7 +110,7 @@ var CreateUserProfile = romancy.DefineActivity(
 )
 
 // TrackUserSignup tracks the signup event for analytics.
-var TrackUserSignup = romancy.DefineActivity(
+var TrackUserSignup = selvedge.DefineActivity(
 	"track_user_signup",
 	func(ctx context.Context, userID string) (bool, error) {
 		log.Printf("[Activity] Tracking signup analytics for user %s", userID)
@@ -121,7 +121,7 @@ var TrackUserSignup = romancy.DefineActivity(
 )
 
 // CheckInventory checks inventory availability.
-var CheckInventory = romancy.DefineActivity(
+var CheckInventory = selvedge.DefineActivity(
 	"check_inventory",
 	func(ctx context.Context, orderID string) (bool, error) {
 		log.Printf("[Activity] Checking inventory for order %s", orderID)
@@ -132,7 +132,7 @@ var CheckInventory = romancy.DefineActivity(
 )
 
 // ProcessOrderPayment processes payment for an order.
-var ProcessOrderPayment = romancy.DefineActivity(
+var ProcessOrderPayment = selvedge.DefineActivity(
 	"process_order_payment",
 	func(ctx context.Context, input struct {
 		OrderID    string
@@ -147,7 +147,7 @@ var ProcessOrderPayment = romancy.DefineActivity(
 )
 
 // SendOrderNotification sends an order confirmation notification.
-var SendOrderNotification = romancy.DefineActivity(
+var SendOrderNotification = selvedge.DefineActivity(
 	"send_order_notification",
 	func(ctx context.Context, input struct {
 		OrderID    string
@@ -165,8 +165,8 @@ var SendOrderNotification = romancy.DefineActivity(
 
 // userSignupWorkflow handles new user signups.
 // It is triggered automatically when a "user.signup" CloudEvent is received.
-var userSignupWorkflow = romancy.DefineWorkflow("user.signup", // Matches CloudEvent type
-	func(ctx *romancy.WorkflowContext, input UserSignupEvent) (UserSignupResult, error) {
+var userSignupWorkflow = selvedge.DefineWorkflow("user.signup", // Matches CloudEvent type
+	func(ctx *selvedge.WorkflowContext, input UserSignupEvent) (UserSignupResult, error) {
 		log.Printf("[Workflow] Processing user signup: %s (%s)", input.Name, input.Email)
 
 		result := UserSignupResult{
@@ -223,8 +223,8 @@ var userSignupWorkflow = romancy.DefineWorkflow("user.signup", // Matches CloudE
 
 // orderCreatedWorkflow handles new order processing.
 // It is triggered automatically when an "order.created" CloudEvent is received.
-var orderCreatedWorkflow = romancy.DefineWorkflow("order.created", // Matches CloudEvent type
-	func(ctx *romancy.WorkflowContext, input OrderCreatedEvent) (OrderProcessingResult, error) {
+var orderCreatedWorkflow = selvedge.DefineWorkflow("order.created", // Matches CloudEvent type
+	func(ctx *selvedge.WorkflowContext, input OrderCreatedEvent) (OrderProcessingResult, error) {
 		log.Printf("[Workflow] Processing new order: %s (Customer: %s, Amount: $%.2f)",
 			input.OrderID, input.CustomerID, input.Amount)
 
@@ -290,7 +290,7 @@ func setupTracing(ctx context.Context) (*sdktrace.TracerProvider, error) {
 
 	serviceName := os.Getenv("OTEL_SERVICE_NAME")
 	if serviceName == "" {
-		serviceName = "romancy-event-handler"
+		serviceName = "selvedge-event-handler"
 	}
 
 	exporter, err := otlptracegrpc.New(ctx,
@@ -336,22 +336,22 @@ func main() {
 	}
 
 	// Create the application with optional tracing
-	opts := []romancy.Option{
-		romancy.WithDatabase(dbPath),
-		romancy.WithWorkerID("event-handler-worker-1"),
+	opts := []selvedge.Option{
+		selvedge.WithDatabase(dbPath),
+		selvedge.WithWorkerID("event-handler-worker-1"),
 	}
 	if tp != nil {
-		opts = append(opts, romancy.WithHooks(otel.NewOTelHooks(tp)))
+		opts = append(opts, selvedge.WithHooks(otel.NewOTelHooks(tp)))
 	}
-	app := romancy.NewApp(opts...)
+	app := selvedge.NewApp(opts...)
 
 	// Register workflows with event handler option
 	// These workflows will be automatically started when matching CloudEvents are received
-	romancy.RegisterWorkflow[UserSignupEvent, UserSignupResult](
-		app, userSignupWorkflow, romancy.WithEventHandler(true),
+	selvedge.RegisterWorkflow[UserSignupEvent, UserSignupResult](
+		app, userSignupWorkflow, selvedge.WithEventHandler(true),
 	)
-	romancy.RegisterWorkflow[OrderCreatedEvent, OrderProcessingResult](
-		app, orderCreatedWorkflow, romancy.WithEventHandler(true),
+	selvedge.RegisterWorkflow[OrderCreatedEvent, OrderProcessingResult](
+		app, orderCreatedWorkflow, selvedge.WithEventHandler(true),
 	)
 
 	// Start the application

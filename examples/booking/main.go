@@ -13,10 +13,10 @@
 // Then approve or reject:
 //
 //	# Approve
-//	go run ./cmd/romancy/ event <instance_id> approval.response '{"approved": true, "approver": "manager@example.com"}' --db booking_demo.db
+//	go run ./cmd/selvedge/ event <instance_id> approval.response '{"approved": true, "approver": "manager@example.com"}' --db booking_demo.db
 //
 //	# Reject
-//	go run ./cmd/romancy/ event <instance_id> approval.response '{"approved": false, "approver": "manager@example.com", "reason": "Over budget"}'  --db booking_demo.db
+//	go run ./cmd/selvedge/ event <instance_id> approval.response '{"approved": false, "approver": "manager@example.com", "reason": "Over budget"}'  --db booking_demo.db
 package main
 
 import (
@@ -33,8 +33,8 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 
-	"github.com/i2y/romancy"
-	"github.com/i2y/romancy/hooks/otel"
+	"github.com/CaliLuke/selvedge"
+	"github.com/CaliLuke/selvedge/hooks/otel"
 )
 
 // ----- Types -----
@@ -68,7 +68,7 @@ type ApprovalResponse struct {
 // ----- Activities -----
 
 // ValidateExpense validates the expense request.
-var ValidateExpense = romancy.DefineActivity(
+var ValidateExpense = selvedge.DefineActivity(
 	"validate_expense",
 	func(ctx context.Context, input ExpenseInput) (bool, error) {
 		log.Printf("[Activity] Validating expense: %s (Amount: $%.2f, Category: %s)",
@@ -89,7 +89,7 @@ var ValidateExpense = romancy.DefineActivity(
 )
 
 // NotifyApprover sends a notification to the approver.
-var NotifyApprover = romancy.DefineActivity(
+var NotifyApprover = selvedge.DefineActivity(
 	"notify_approver",
 	func(ctx context.Context, input struct {
 		ExpenseID   string
@@ -108,7 +108,7 @@ var NotifyApprover = romancy.DefineActivity(
 )
 
 // ProcessApprovedExpense processes an approved expense.
-var ProcessApprovedExpense = romancy.DefineActivity(
+var ProcessApprovedExpense = selvedge.DefineActivity(
 	"process_approved_expense",
 	func(ctx context.Context, input struct {
 		ExpenseID  string
@@ -124,7 +124,7 @@ var ProcessApprovedExpense = romancy.DefineActivity(
 )
 
 // NotifyEmployee sends a notification to the employee about the decision.
-var NotifyEmployee = romancy.DefineActivity(
+var NotifyEmployee = selvedge.DefineActivity(
 	"notify_employee",
 	func(ctx context.Context, input struct {
 		EmployeeID string
@@ -149,8 +149,8 @@ var NotifyEmployee = romancy.DefineActivity(
 // ----- Workflow -----
 
 // expenseApprovalWorkflow handles the expense approval process.
-var expenseApprovalWorkflow = romancy.DefineWorkflow("expense_approval_workflow",
-	func(ctx *romancy.WorkflowContext, input ExpenseInput) (ExpenseResult, error) {
+var expenseApprovalWorkflow = selvedge.DefineWorkflow("expense_approval_workflow",
+	func(ctx *selvedge.WorkflowContext, input ExpenseInput) (ExpenseResult, error) {
 		log.Printf("[Workflow] Starting expense approval for: %s", input.ExpenseID)
 		log.Printf("[Workflow] Employee: %s, Amount: $%.2f, Category: %s",
 			input.EmployeeID, input.Amount, input.Category)
@@ -190,15 +190,15 @@ var expenseApprovalWorkflow = romancy.DefineWorkflow("expense_approval_workflow"
 		log.Printf("\n[Workflow] Step 3: Waiting for approval response...")
 		log.Printf("[Workflow] Instance ID: %s", ctx.InstanceID())
 		log.Printf("[Workflow] To approve, run:")
-		log.Printf(`  go run ./cmd/romancy/ event %s approval.response '{"approved": true, "approver": "manager@example.com"}' --db booking_demo.db`, ctx.InstanceID())
+		log.Printf(`  go run ./cmd/selvedge/ event %s approval.response '{"approved": true, "approver": "manager@example.com"}' --db booking_demo.db`, ctx.InstanceID())
 		log.Printf("[Workflow] To reject, run:")
-		log.Printf(`  go run ./cmd/romancy/ event %s approval.response '{"approved": false, "approver": "manager@example.com", "reason": "Over budget"}' --db booking_demo.db`, ctx.InstanceID())
+		log.Printf(`  go run ./cmd/selvedge/ event %s approval.response '{"approved": false, "approver": "manager@example.com", "reason": "Over budget"}' --db booking_demo.db`, ctx.InstanceID())
 
 		result.Status = "waiting_for_approval"
 
 		// Wait for approval event with 24 hour timeout (for demo, we'll use shorter timeout)
-		event, err := romancy.WaitEvent[ApprovalResponse](ctx, "approval.response",
-			romancy.WithEventTimeout(24*time.Hour)) // In real scenario, this would be longer
+		event, err := selvedge.WaitEvent[ApprovalResponse](ctx, "approval.response",
+			selvedge.WithEventTimeout(24*time.Hour)) // In real scenario, this would be longer
 		if err != nil {
 			// SuspendSignal is returned as normal workflow suspension when waiting for event
 			result.Status = "waiting_for_approval"
@@ -268,7 +268,7 @@ func setupTracing(ctx context.Context) (*sdktrace.TracerProvider, error) {
 
 	serviceName := os.Getenv("OTEL_SERVICE_NAME")
 	if serviceName == "" {
-		serviceName = "romancy-booking"
+		serviceName = "selvedge-booking"
 	}
 
 	exporter, err := otlptracegrpc.New(ctx,
@@ -319,17 +319,17 @@ func main() {
 	}
 
 	// Create the application with optional tracing
-	opts := []romancy.Option{
-		romancy.WithDatabase(dbPath),
-		romancy.WithWorkerID("booking-worker-1"),
+	opts := []selvedge.Option{
+		selvedge.WithDatabase(dbPath),
+		selvedge.WithWorkerID("booking-worker-1"),
 	}
 	if tp != nil {
-		opts = append(opts, romancy.WithHooks(otel.NewOTelHooks(tp)))
+		opts = append(opts, selvedge.WithHooks(otel.NewOTelHooks(tp)))
 	}
-	app := romancy.NewApp(opts...)
+	app := selvedge.NewApp(opts...)
 
 	// Register the workflow
-	romancy.RegisterWorkflow[ExpenseInput, ExpenseResult](app, expenseApprovalWorkflow)
+	selvedge.RegisterWorkflow[ExpenseInput, ExpenseResult](app, expenseApprovalWorkflow)
 
 	// Start the application
 	if err := app.Start(ctx); err != nil {
@@ -351,7 +351,7 @@ func main() {
 		Category:    "travel",
 	}
 
-	instanceID, err := romancy.StartWorkflow(ctx, app, expenseApprovalWorkflow, expenseInput)
+	instanceID, err := selvedge.StartWorkflow(ctx, app, expenseApprovalWorkflow, expenseInput)
 	if err != nil {
 		log.Printf("Failed to start workflow: %v", err)
 		return
@@ -364,16 +364,16 @@ func main() {
 	log.Println("The workflow is now waiting for human approval.")
 	log.Println("")
 	log.Println("Commands:")
-	log.Printf("  Check status: go run ./cmd/romancy/ get %s --db %s", instanceID, dbPath)
+	log.Printf("  Check status: go run ./cmd/selvedge/ get %s --db %s", instanceID, dbPath)
 	log.Println("")
-	log.Printf("  Approve:      go run ./cmd/romancy/ event %s approval.response '{\"approved\": true, \"approver\": \"manager@example.com\"}' --db %s", instanceID, dbPath)
+	log.Printf("  Approve:      go run ./cmd/selvedge/ event %s approval.response '{\"approved\": true, \"approver\": \"manager@example.com\"}' --db %s", instanceID, dbPath)
 	log.Println("")
-	log.Printf("  Reject:       go run ./cmd/romancy/ event %s approval.response '{\"approved\": false, \"approver\": \"manager@example.com\", \"reason\": \"Over budget\"}' --db %s", instanceID, dbPath)
+	log.Printf("  Reject:       go run ./cmd/selvedge/ event %s approval.response '{\"approved\": false, \"approver\": \"manager@example.com\", \"reason\": \"Over budget\"}' --db %s", instanceID, dbPath)
 	log.Println("")
 	log.Println("Or via HTTP:")
 	fmt.Println(`curl -X POST http://localhost:8083/ \`)
 	fmt.Println(`    -H "Content-Type: application/json" \`)
-	fmt.Printf(`    -d '{"specversion": "1.0", "type": "approval.response", "source": "approval-ui", "id": "evt-123", "romancyinstanceid": "%s", "data": {"approved": true, "approver": "manager@example.com"}}'`+"\n", instanceID)
+	fmt.Printf(`    -d '{"specversion": "1.0", "type": "approval.response", "source": "approval-ui", "id": "evt-123", "selvedgeinstanceid": "%s", "data": {"approved": true, "approver": "manager@example.com"}}'`+"\n", instanceID)
 	log.Println("")
 	log.Println("==============================================")
 

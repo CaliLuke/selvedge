@@ -1,4 +1,4 @@
-// Package llm provides durable LLM integration for Romancy workflows.
+// Package llm provides durable LLM integration for Selvedge workflows.
 // LLM calls are automatically wrapped as activities, enabling deterministic
 // replay without re-invoking the LLM API.
 package llm

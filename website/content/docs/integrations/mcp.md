@@ -3,11 +3,11 @@ title: "MCP Integration"
 weight: 1
 ---
 
-Romancy provides seamless integration with the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/), allowing AI assistants like Claude to interact with your durable workflows as long-running tools.
+Selvedge provides seamless integration with the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/), allowing AI assistants like Claude to interact with your durable workflows as long-running tools.
 
 ## Overview
 
-MCP is a standardized protocol for AI tool integration. Romancy's MCP integration automatically converts your durable workflows into MCP-compliant tools that:
+MCP is a standardized protocol for AI tool integration. Selvedge's MCP integration automatically converts your durable workflows into MCP-compliant tools that:
 
 - **Start workflows** and return instance IDs immediately
 - **Check workflow status** to monitor progress with completed activity count and suggested poll interval
@@ -27,8 +27,8 @@ import (
 	"context"
 	"log"
 
-	"github.com/i2y/romancy"
-	"github.com/i2y/romancy/mcp"
+	"github.com/CaliLuke/selvedge"
+	"github.com/CaliLuke/selvedge/mcp"
 )
 
 // OrderInput is the input for the order workflow.
@@ -46,25 +46,25 @@ type OrderResult struct {
 
 // Activities
 
-var validateOrder = romancy.DefineActivity("validate_order",
+var validateOrder = selvedge.DefineActivity("validate_order",
 	func(ctx context.Context, input OrderInput) (bool, error) {
 		return input.Amount > 0, nil
 	},
 )
 
-var processPayment = romancy.DefineActivity("process_payment",
+var processPayment = selvedge.DefineActivity("process_payment",
 	func(ctx context.Context, orderID string) (string, error) {
 		return "CONF-" + orderID, nil
 	},
 )
 
-// Workflow - implements romancy.Workflow interface
+// Workflow - implements selvedge.Workflow interface
 
 type OrderWorkflow struct{}
 
 func (w *OrderWorkflow) Name() string { return "order_workflow" }
 
-func (w *OrderWorkflow) Execute(ctx *romancy.WorkflowContext, input OrderInput) (OrderResult, error) {
+func (w *OrderWorkflow) Execute(ctx *selvedge.WorkflowContext, input OrderInput) (OrderResult, error) {
 	// Step 1: Validate
 	valid, err := validateOrder.Execute(ctx, input)
 	if err != nil || !valid {
@@ -87,13 +87,13 @@ func (w *OrderWorkflow) Execute(ctx *romancy.WorkflowContext, input OrderInput) 
 func main() {
 	ctx := context.Background()
 
-	// Create Romancy app first
-	app := romancy.NewApp(
-		romancy.WithDatabase("orders.db"),
-		romancy.WithWorkerID("mcp-worker"),
+	// Create Selvedge app first
+	app := selvedge.NewApp(
+		selvedge.WithDatabase("orders.db"),
+		selvedge.WithWorkerID("mcp-worker"),
 	)
 
-	// Create MCP server wrapping the Romancy app
+	// Create MCP server wrapping the Selvedge app
 	server := mcp.NewServer(app,
 		mcp.WithServerName("order-service"),
 		mcp.WithServerVersion("1.0.0"),
@@ -104,7 +104,7 @@ func main() {
 		mcp.WithDescription("Process customer orders"),
 	)
 
-	// Initialize (starts the Romancy app)
+	// Initialize (starts the Selvedge app)
 	if err := server.Initialize(ctx); err != nil {
 		log.Fatal(err)
 	}
@@ -178,7 +178,7 @@ Output: "Workflow cancelled. Compensation executed."
 
 ## Workflow Interface
 
-Workflows registered with MCP must implement the `romancy.Workflow` interface:
+Workflows registered with MCP must implement the `selvedge.Workflow` interface:
 
 ```go
 type Workflow[I, O any] interface {
@@ -194,7 +194,7 @@ type MyWorkflow struct{}
 
 func (w *MyWorkflow) Name() string { return "my_workflow" }
 
-func (w *MyWorkflow) Execute(ctx *romancy.WorkflowContext, input MyInput) (MyOutput, error) {
+func (w *MyWorkflow) Execute(ctx *selvedge.WorkflowContext, input MyInput) (MyOutput, error) {
 	// Workflow logic here
 	return MyOutput{}, nil
 }
@@ -255,7 +255,7 @@ For REST API access, use the HTTP handler:
 
 ```go
 func main() {
-	app := romancy.NewApp(romancy.WithDatabase("orders.db"))
+	app := selvedge.NewApp(selvedge.WithDatabase("orders.db"))
 	server := mcp.NewServer(app,
 		mcp.WithServerName("order-service"),
 		mcp.WithTransportMode(mcp.TransportHTTP),
@@ -297,7 +297,7 @@ func main() {
 │   │ MCP SDK │   │  ← Protocol Handler
 │   └─────────┘   │
 │   ┌─────────┐   │
-│   │ Romancy │   │  ← Durable Execution
+│   │ Selvedge │   │  ← Durable Execution
 │   │   App   │   │
 │   └─────────┘   │
 └────────┬────────┘

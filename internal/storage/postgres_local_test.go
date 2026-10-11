@@ -12,14 +12,14 @@ import (
 )
 
 // Run with:
-//   ROMANCY_TEST_POSTGRES_URL="postgres://romancy:romancy@localhost:5432/romancy_test?sslmode=disable" \
+//   SELVEDGE_TEST_POSTGRES_URL="postgres://selvedge:selvedge@localhost:5432/selvedge_test?sslmode=disable" \
 //     go test -tags=pglocal -count=1 -v ./internal/storage/ -run TestPGLocal
 
 func pgLocalURL(t *testing.T) string {
 	t.Helper()
-	url := os.Getenv("ROMANCY_TEST_POSTGRES_URL")
+	url := os.Getenv("SELVEDGE_TEST_POSTGRES_URL")
 	if url == "" {
-		t.Fatal("ROMANCY_TEST_POSTGRES_URL must be set")
+		t.Fatal("SELVEDGE_TEST_POSTGRES_URL must be set")
 	}
 	return url
 }

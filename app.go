@@ -1,4 +1,4 @@
-package romancy
+package selvedge
 
 import (
 	"context"
@@ -16,15 +16,15 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/sync/semaphore"
 
-	"github.com/i2y/romancy/hooks"
-	"github.com/i2y/romancy/internal/migrations"
-	"github.com/i2y/romancy/internal/notify"
-	"github.com/i2y/romancy/internal/replay"
-	"github.com/i2y/romancy/internal/storage"
-	"github.com/i2y/romancy/outbox"
+	"github.com/CaliLuke/selvedge/hooks"
+	"github.com/CaliLuke/selvedge/internal/migrations"
+	"github.com/CaliLuke/selvedge/internal/notify"
+	"github.com/CaliLuke/selvedge/internal/replay"
+	"github.com/CaliLuke/selvedge/internal/storage"
+	"github.com/CaliLuke/selvedge/outbox"
 )
 
-// App is the main entry point for Romancy.
+// App is the main entry point for Selvedge.
 // It manages workflow execution, storage, and background tasks.
 type App struct {
 	config  *appConfig
@@ -77,7 +77,7 @@ type App struct {
 	mu          sync.Mutex
 }
 
-// NewApp creates a new Romancy application.
+// NewApp creates a new Selvedge application.
 func NewApp(opts ...Option) *App {
 	config := defaultConfig()
 	for _, opt := range opts {
@@ -182,7 +182,7 @@ func (a *App) Shutdown(ctx context.Context) error {
 	// a.isLeader is stable.
 	if a.isLeader.Load() && a.storage != nil {
 		releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		if err := a.storage.ReleaseSystemLock(releaseCtx, "romancy_leader", a.config.workerID); err != nil {
+		if err := a.storage.ReleaseSystemLock(releaseCtx, "selvedge_leader", a.config.workerID); err != nil {
 			slog.Debug("failed to release leader lock on shutdown", "error", err)
 		}
 		cancel()
@@ -202,7 +202,7 @@ func (a *App) Shutdown(ctx context.Context) error {
 // initStorage initializes the storage backend.
 func (a *App) initStorage() error {
 	if a.config.databaseURL == "" {
-		a.config.databaseURL = "romancy.db"
+		a.config.databaseURL = "selvedge.db"
 	}
 
 	// Determine storage type based on URL
@@ -519,7 +519,7 @@ func (a *App) tryAcquireLeadership() {
 
 	acquired, err := a.storage.TryAcquireSystemLock(
 		a.ctx,
-		"romancy_leader",
+		"selvedge_leader",
 		a.config.workerID,
 		int(a.config.leaderLeaseDuration.Seconds()),
 	)
@@ -1166,7 +1166,7 @@ func (a *App) recordCompensationResult(ctx context.Context, instanceID string, e
 // Example with chi:
 //
 //	r := chi.NewRouter()
-//	r.Mount("/romancy", app.Handler())
+//	r.Mount("/selvedge", app.Handler())
 //	http.ListenAndServe(":8080", r)
 //
 // Example with standard http.ServeMux:
@@ -1363,9 +1363,9 @@ func (a *App) deliverEventToWaitingWorkflows(ctx context.Context, event *CloudEv
 		return fmt.Errorf("failed to serialize event data: %w", err)
 	}
 
-	// Check if a specific instance is targeted via romancyinstanceid extension
+	// Check if a specific instance is targeted via selvedgeinstanceid extension
 	targetInstanceID := ""
-	if id, ok := event.Extensions["romancyinstanceid"].(string); ok && id != "" {
+	if id, ok := event.Extensions["selvedgeinstanceid"].(string); ok && id != "" {
 		targetInstanceID = id
 	}
 

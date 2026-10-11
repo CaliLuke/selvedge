@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/i2y/romancy/hooks"
-	"github.com/i2y/romancy/internal/storage"
+	"github.com/CaliLuke/selvedge/hooks"
+	"github.com/CaliLuke/selvedge/internal/storage"
 )
 
 func setupTestStorage(t *testing.T) storage.Storage {

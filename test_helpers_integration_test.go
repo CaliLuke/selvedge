@@ -1,6 +1,6 @@
 //go:build integration
 
-package romancy
+package selvedge
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/i2y/romancy/internal/storage"
+	"github.com/CaliLuke/selvedge/internal/storage"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/mysql"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -23,9 +23,9 @@ func createTestAppWithPostgres(t *testing.T, opts ...Option) (*App, func()) {
 
 	container, err := postgres.Run(ctx,
 		"postgres:15-alpine",
-		postgres.WithDatabase("romancy_test"),
-		postgres.WithUsername("romancy"),
-		postgres.WithPassword("romancy"),
+		postgres.WithDatabase("selvedge_test"),
+		postgres.WithUsername("selvedge"),
+		postgres.WithPassword("selvedge"),
 		testcontainers.WithWaitStrategy(
 			wait.ForLog("database system is ready to accept connections").
 				WithOccurrence(2).
@@ -76,9 +76,9 @@ func createTestAppWithMySQL(t *testing.T, opts ...Option) (*App, func()) {
 
 	container, err := mysql.Run(ctx,
 		"mysql:8.0",
-		mysql.WithDatabase("romancy_test"),
-		mysql.WithUsername("romancy"),
-		mysql.WithPassword("romancy"),
+		mysql.WithDatabase("selvedge_test"),
+		mysql.WithUsername("selvedge"),
+		mysql.WithPassword("selvedge"),
 	)
 	if err != nil {
 		t.Fatalf("failed to start MySQL container: %v", err)

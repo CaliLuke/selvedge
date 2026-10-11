@@ -28,11 +28,11 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 // Compensation: Release reserved inventory
-var cancelInventoryReservation = romancy.DefineCompensation("cancel_inventory_reservation",
+var cancelInventoryReservation = selvedge.DefineCompensation("cancel_inventory_reservation",
 	func(ctx context.Context, orderID, itemID string) error {
 		fmt.Printf("❌ Cancelled reservation for %s\n", itemID)
 		return nil
@@ -40,7 +40,7 @@ var cancelInventoryReservation = romancy.DefineCompensation("cancel_inventory_re
 )
 
 // Compensation: Refund payment
-var refundPayment = romancy.DefineCompensation("refund_payment",
+var refundPayment = selvedge.DefineCompensation("refund_payment",
 	func(ctx context.Context, orderID string, amount float64) error {
 		fmt.Printf("❌ Refunded $%.2f\n", amount)
 		return nil
@@ -58,7 +58,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 // Result types
@@ -77,7 +77,7 @@ type ShipmentResult struct {
 }
 
 // Reserve inventory (linked to cancelInventoryReservation)
-var reserveInventory = romancy.DefineActivity("reserve_inventory",
+var reserveInventory = selvedge.DefineActivity("reserve_inventory",
 	func(ctx context.Context, orderID, itemID string) (ReservationResult, error) {
 		fmt.Printf("✅ Reserved %s for order %s\n", itemID, orderID)
 		return ReservationResult{
@@ -85,11 +85,11 @@ var reserveInventory = romancy.DefineActivity("reserve_inventory",
 			ItemID:        itemID,
 		}, nil
 	},
-	romancy.WithCompensation(cancelInventoryReservation), // Link compensation
+	selvedge.WithCompensation(cancelInventoryReservation), // Link compensation
 )
 
 // Charge payment (linked to refundPayment)
-var chargePayment = romancy.DefineActivity("charge_payment",
+var chargePayment = selvedge.DefineActivity("charge_payment",
 	func(ctx context.Context, orderID string, amount float64) (PaymentResult, error) {
 		fmt.Printf("✅ Charged $%.2f for order %s\n", amount, orderID)
 		return PaymentResult{
@@ -97,11 +97,11 @@ var chargePayment = romancy.DefineActivity("charge_payment",
 			Amount:        amount,
 		}, nil
 	},
-	romancy.WithCompensation(refundPayment), // Link compensation
+	selvedge.WithCompensation(refundPayment), // Link compensation
 )
 
 // Ship order (no compensation - this will fail)
-var shipOrder = romancy.DefineActivity("ship_order",
+var shipOrder = selvedge.DefineActivity("ship_order",
 	func(ctx context.Context, orderID string) (ShipmentResult, error) {
 		fmt.Printf("🚚 Attempting to ship order %s\n", orderID)
 		return ShipmentResult{}, errors.New("shipping service unavailable")
@@ -115,7 +115,7 @@ var shipOrder = romancy.DefineActivity("ship_order",
 package main
 
 import (
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 // Result type for the saga workflow
@@ -124,10 +124,10 @@ type OrderSagaResult struct {
 }
 
 // orderSaga processes an order with automatic compensation on failure.
-// If any step fails, Romancy automatically calls compensation functions
+// If any step fails, Selvedge automatically calls compensation functions
 // for all completed steps in reverse order.
-var orderSaga = romancy.DefineWorkflow("order_saga",
-	func(ctx *romancy.WorkflowContext, orderID string) (OrderSagaResult, error) {
+var orderSaga = selvedge.DefineWorkflow("order_saga",
+	func(ctx *selvedge.WorkflowContext, orderID string) (OrderSagaResult, error) {
 		// Step 1: Reserve inventory
 		_, err := reserveInventory.Execute(ctx, orderID, "ITEM-123")
 		if err != nil {
@@ -198,7 +198,7 @@ shipOrder.Execute(ctx, ...)         // ❌ Failed → No compensation needed
 
 ### 3. Automatic Trigger
 
-No manual compensation trigger required - Romancy handles it automatically on workflow failure.
+No manual compensation trigger required - Selvedge handles it automatically on workflow failure.
 
 ## Real-World Use Cases
 
@@ -214,7 +214,7 @@ Create a file named `saga_example.go` with the complete code (see below), then r
 ```bash
 # Initialize Go module
 go mod init saga-example
-go get github.com/i2y/romancy
+go get github.com/CaliLuke/selvedge
 
 # Run your workflow
 go run saga_example.go
@@ -231,7 +231,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 // Result types
@@ -255,14 +255,14 @@ type OrderSagaResult struct {
 
 // Compensation functions
 
-var cancelInventoryReservation = romancy.DefineCompensation("cancel_inventory_reservation",
+var cancelInventoryReservation = selvedge.DefineCompensation("cancel_inventory_reservation",
 	func(ctx context.Context, orderID, itemID string) error {
 		fmt.Printf("❌ Cancelled reservation for %s\n", itemID)
 		return nil
 	},
 )
 
-var refundPayment = romancy.DefineCompensation("refund_payment",
+var refundPayment = selvedge.DefineCompensation("refund_payment",
 	func(ctx context.Context, orderID string, amount float64) error {
 		fmt.Printf("❌ Refunded $%.2f\n", amount)
 		return nil
@@ -271,7 +271,7 @@ var refundPayment = romancy.DefineCompensation("refund_payment",
 
 // Activities with compensation links
 
-var reserveInventory = romancy.DefineActivity("reserve_inventory",
+var reserveInventory = selvedge.DefineActivity("reserve_inventory",
 	func(ctx context.Context, orderID, itemID string) (ReservationResult, error) {
 		fmt.Printf("✅ Reserved %s for order %s\n", itemID, orderID)
 		return ReservationResult{
@@ -279,10 +279,10 @@ var reserveInventory = romancy.DefineActivity("reserve_inventory",
 			ItemID:        itemID,
 		}, nil
 	},
-	romancy.WithCompensation(cancelInventoryReservation),
+	selvedge.WithCompensation(cancelInventoryReservation),
 )
 
-var chargePayment = romancy.DefineActivity("charge_payment",
+var chargePayment = selvedge.DefineActivity("charge_payment",
 	func(ctx context.Context, orderID string, amount float64) (PaymentResult, error) {
 		fmt.Printf("✅ Charged $%.2f for order %s\n", amount, orderID)
 		return PaymentResult{
@@ -290,10 +290,10 @@ var chargePayment = romancy.DefineActivity("charge_payment",
 			Amount:        amount,
 		}, nil
 	},
-	romancy.WithCompensation(refundPayment),
+	selvedge.WithCompensation(refundPayment),
 )
 
-var shipOrder = romancy.DefineActivity("ship_order",
+var shipOrder = selvedge.DefineActivity("ship_order",
 	func(ctx context.Context, orderID string) (ShipmentResult, error) {
 		fmt.Printf("🚚 Attempting to ship order %s\n", orderID)
 		return ShipmentResult{}, errors.New("shipping service unavailable")
@@ -302,8 +302,8 @@ var shipOrder = romancy.DefineActivity("ship_order",
 
 // Saga workflow
 
-var orderSaga = romancy.DefineWorkflow("order_saga",
-	func(ctx *romancy.WorkflowContext, orderID string) (OrderSagaResult, error) {
+var orderSaga = selvedge.DefineWorkflow("order_saga",
+	func(ctx *selvedge.WorkflowContext, orderID string) (OrderSagaResult, error) {
 		// Step 1: Reserve inventory
 		_, err := reserveInventory.Execute(ctx, orderID, "ITEM-123")
 		if err != nil {
@@ -328,14 +328,14 @@ var orderSaga = romancy.DefineWorkflow("order_saga",
 
 func main() {
 	fmt.Println("============================================================")
-	fmt.Println("Romancy Framework - Saga Pattern Example")
+	fmt.Println("Selvedge Framework - Saga Pattern Example")
 	fmt.Println("============================================================")
 	fmt.Println()
 
-	// Create Romancy app
-	app := romancy.NewApp(
-		romancy.WithDatabase("saga_demo.db"),
-		romancy.WithWorkerID("worker-1"),
+	// Create Selvedge app
+	app := selvedge.NewApp(
+		selvedge.WithDatabase("saga_demo.db"),
+		selvedge.WithWorkerID("worker-1"),
 	)
 
 	ctx := context.Background()
@@ -350,7 +350,7 @@ func main() {
 	fmt.Println()
 
 	// Start the saga workflow
-	instanceID, err := romancy.StartWorkflow(ctx, app, orderSaga, "ORD-001")
+	instanceID, err := selvedge.StartWorkflow(ctx, app, orderSaga, "ORD-001")
 	if err != nil {
 		fmt.Printf("\n>>> Workflow failed (compensation was triggered): %v\n", err)
 	} else {
@@ -363,7 +363,7 @@ func main() {
 
 - ✅ **`DefineCompensation`**: Define compensation functions
 - ✅ **`WithCompensation`**: Link compensation to activities
-- ✅ **Automatic Execution**: Romancy handles compensation automatically
+- ✅ **Automatic Execution**: Selvedge handles compensation automatically
 - ✅ **Reverse Order**: Compensations run in reverse order
 - ✅ **Saga Pattern**: Distributed transaction management without 2PC
 

@@ -3,11 +3,11 @@ title: "Deterministic Replay"
 weight: 1
 ---
 
-Romancy uses a **deterministic replay mechanism** to ensure workflows never lose progress. This document explains how workflows are resumed after interruption and how state is restored.
+Selvedge uses a **deterministic replay mechanism** to ensure workflows never lose progress. This document explains how workflows are resumed after interruption and how state is restored.
 
 ## Overview
 
-Romancy's replay mechanism has three key characteristics:
+Selvedge's replay mechanism has three key characteristics:
 
 1. **Completed activities are skipped**: Already-executed activities return cached results from history
 2. **Workflow code runs fully**: Control flow and calculations between activities execute every time
@@ -83,19 +83,19 @@ var eg errgroup.Group
 var results [3]ProcessResult
 
 eg.Go(func() error {
-    r, err := processA.Execute(ctx, data, romancy.WithActivityID("process_a:1"))
+    r, err := processA.Execute(ctx, data, selvedge.WithActivityID("process_a:1"))
     results[0] = r
     return err
 })
 
 eg.Go(func() error {
-    r, err := processB.Execute(ctx, data, romancy.WithActivityID("process_b:1"))
+    r, err := processB.Execute(ctx, data, selvedge.WithActivityID("process_b:1"))
     results[1] = r
     return err
 })
 
 eg.Go(func() error {
-    r, err := processC.Execute(ctx, data, romancy.WithActivityID("process_c:1"))
+    r, err := processC.Execute(ctx, data, selvedge.WithActivityID("process_c:1"))
     results[2] = r
     return err
 })
@@ -122,7 +122,7 @@ package main
 
 import (
 	"context"
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 type ReservationResult struct {
@@ -143,29 +143,29 @@ type OrderWorkflowResult struct {
 	Status string `json:"status"`
 }
 
-var reserveInventory = romancy.DefineActivity("reserve_inventory",
+var reserveInventory = selvedge.DefineActivity("reserve_inventory",
 	func(ctx context.Context, orderID string) (ReservationResult, error) {
 		// Business logic here
 		return ReservationResult{ReservationID: "R123", Status: "reserved"}, nil
 	},
 )
 
-var processPayment = romancy.DefineActivity("process_payment",
+var processPayment = selvedge.DefineActivity("process_payment",
 	func(ctx context.Context, orderID string) (PaymentResult, error) {
 		// Business logic here
 		return PaymentResult{TransactionID: "T456", Status: "completed"}, nil
 	},
 )
 
-var arrangeShipping = romancy.DefineActivity("arrange_shipping",
+var arrangeShipping = selvedge.DefineActivity("arrange_shipping",
 	func(ctx context.Context, orderID string) (ShippingResult, error) {
 		// Business logic here
 		return ShippingResult{TrackingNumber: "TRACK789"}, nil
 	},
 )
 
-var orderWorkflow = romancy.DefineWorkflow("order_workflow",
-	func(ctx *romancy.WorkflowContext, orderID string) (OrderWorkflowResult, error) {
+var orderWorkflow = selvedge.DefineWorkflow("order_workflow",
+	func(ctx *selvedge.WorkflowContext, orderID string) (OrderWorkflowResult, error) {
 		// Activity IDs are auto-generated for sequential calls
 		_, err := reserveInventory.Execute(ctx, orderID)
 		if err != nil {
@@ -224,8 +224,8 @@ type ComplexWorkflowResult struct {
 	Status string `json:"status"`
 }
 
-var complexWorkflow = romancy.DefineWorkflow("complex_workflow",
-	func(ctx *romancy.WorkflowContext, amount float64) (ComplexWorkflowResult, error) {
+var complexWorkflow = selvedge.DefineWorkflow("complex_workflow",
+	func(ctx *selvedge.WorkflowContext, amount float64) (ComplexWorkflowResult, error) {
 		// This code executes every time (including replay)
 		tax := amount * 0.1
 		total := amount + tax
@@ -290,7 +290,7 @@ Replay:
 
 ### What Gets Stored
 
-Romancy persists all activity results to the `workflow_history` table:
+Selvedge persists all activity results to the `workflow_history` table:
 
 | instance_id | activity_id | event_type | event_data |
 |-------------|-------------|------------|------------|
@@ -307,7 +307,7 @@ Romancy persists all activity results to the `workflow_history` table:
 
 ### How Cache Works
 
-On replay, Romancy:
+On replay, Selvedge:
 
 1. **Loads all history** from the database for this workflow instance
 2. **Populates an in-memory cache** keyed by `activity_id`
@@ -335,7 +335,7 @@ Events received via `WaitEvent()` are automatically reconstructed from stored da
 **1. Hide non-deterministic operations in activities:**
 
 ```go
-var getCurrentTime = romancy.DefineActivity("get_current_time",
+var getCurrentTime = selvedge.DefineActivity("get_current_time",
 	func(ctx context.Context) (string, error) {
 		return time.Now().Format(time.RFC3339), nil
 	},
@@ -345,8 +345,8 @@ type TimestampResult struct {
 	Timestamp string `json:"timestamp"`
 }
 
-var myWorkflow = romancy.DefineWorkflow("my_workflow",
-	func(ctx *romancy.WorkflowContext) (TimestampResult, error) {
+var myWorkflow = selvedge.DefineWorkflow("my_workflow",
+	func(ctx *selvedge.WorkflowContext) (TimestampResult, error) {
 		// Replay will use the same timestamp
 		timestamp, err := getCurrentTime.Execute(ctx)
 		if err != nil {
@@ -360,7 +360,7 @@ var myWorkflow = romancy.DefineWorkflow("my_workflow",
 **2. Random values should be activities:**
 
 ```go
-var generateID = romancy.DefineActivity("generate_id",
+var generateID = selvedge.DefineActivity("generate_id",
 	func(ctx context.Context) (string, error) {
 		return uuid.New().String(), nil
 	},
@@ -376,7 +376,7 @@ type APIData struct {
 	Status string `json:"status"`
 }
 
-var callExternalAPI = romancy.DefineActivity("call_external_api",
+var callExternalAPI = selvedge.DefineActivity("call_external_api",
 	func(ctx context.Context) (APIData, error) {
 		resp, err := http.Get("https://api.example.com/data")
 		if err != nil {
@@ -390,8 +390,8 @@ var callExternalAPI = romancy.DefineActivity("call_external_api",
 	},
 )
 
-var myWorkflow = romancy.DefineWorkflow("my_workflow",
-	func(ctx *romancy.WorkflowContext) (APIData, error) {
+var myWorkflow = selvedge.DefineWorkflow("my_workflow",
+	func(ctx *selvedge.WorkflowContext) (APIData, error) {
 		// Benefits of making it an activity:
 		// - Not re-executed on replay (definitely from cache)
 		// - Easy to test (can be mocked)
@@ -413,8 +413,8 @@ type SomeActivityResult struct {
 	Status string `json:"status"`
 }
 
-var badWorkflow = romancy.DefineWorkflow("bad_workflow",
-	func(ctx *romancy.WorkflowContext) (SomeActivityResult, error) {
+var badWorkflow = selvedge.DefineWorkflow("bad_workflow",
+	func(ctx *selvedge.WorkflowContext) (SomeActivityResult, error) {
 		// ❌ Direct time access in workflow (different on replay)
 		timestamp := time.Now()
 		// First run: 2025-01-01 10:00:00
@@ -455,8 +455,8 @@ type CompleteOrderResult struct {
 	Status  string `json:"status"`
 }
 
-var paymentWorkflow = romancy.DefineWorkflow("payment_workflow",
-	func(ctx *romancy.WorkflowContext, orderID string) (CompleteOrderResult, error) {
+var paymentWorkflow = selvedge.DefineWorkflow("payment_workflow",
+	func(ctx *selvedge.WorkflowContext, orderID string) (CompleteOrderResult, error) {
 		// Step 1: Start payment
 		_, err := startPayment.Execute(ctx, orderID)
 		if err != nil {
@@ -465,9 +465,9 @@ var paymentWorkflow = romancy.DefineWorkflow("payment_workflow",
 
 		// Step 2: Wait for payment completion event
 		// Workflow pauses here (status="waiting_for_event")
-		event, err := romancy.WaitEvent(ctx,
-			romancy.WithEventType("payment.completed"),
-			romancy.WithTimeout(5*time.Minute),
+		event, err := selvedge.WaitEvent(ctx,
+			selvedge.WithEventType("payment.completed"),
+			selvedge.WithTimeout(5*time.Minute),
 		)
 		if err != nil {
 			return CompleteOrderResult{}, err
@@ -513,7 +513,7 @@ func ResumeWorkflowHandler(w http.ResponseWriter, r *http.Request) {
 	workflowName := instance["workflow_name"].(string)
 
 	// Get corresponding workflow
-	workflow := romancy.GetWorkflow(workflowName)
+	workflow := selvedge.GetWorkflow(workflowName)
 
 	// Start replay
 	if err := workflow.Resume(ctx, app, instanceID); err != nil {
@@ -530,11 +530,11 @@ func ResumeWorkflowHandler(w http.ResponseWriter, r *http.Request) {
 
 ### 3. Crash Recovery (Automatic)
 
-Romancy automatically recovers from crashes in two stages:
+Selvedge automatically recovers from crashes in two stages:
 
 #### 3-1. Stale Lock Cleanup (Implemented)
 
-When a worker process crashes, its locks become "stale." Romancy automatically cleans these up:
+When a worker process crashes, its locks become "stale." Selvedge automatically cleans these up:
 
 ```go
 func cleanupStaleLocksPeriodically(storage StorageProtocol, interval time.Duration) {
@@ -556,7 +556,7 @@ func cleanupStaleLocksPeriodically(storage StorageProtocol, interval time.Durati
 }
 ```
 
-This background task starts automatically when `romancy.App` launches.
+This background task starts automatically when `selvedge.App` launches.
 
 **How it works:**
 
@@ -583,7 +583,7 @@ The `status` field indicates whether the workflow was running normally (`"runnin
 
 #### 3-2. Automatic Workflow Resume (Implemented)
 
-After cleaning stale locks, Romancy automatically resumes workflows with `status="running"` or `status="compensating"`:
+After cleaning stale locks, Selvedge automatically resumes workflows with `status="running"` or `status="compensating"`:
 
 ```go
 func autoResumeStaleworkflowsPeriodically(storage StorageProtocol, interval time.Duration) {
@@ -608,7 +608,7 @@ func autoResumeStaleworkflowsPeriodically(storage StorageProtocol, interval time
 
 				log.Printf("Auto-resuming: %s (%s)", workflowName, instanceID)
 
-				workflow := romancy.GetWorkflow(workflowName)
+				workflow := selvedge.GetWorkflow(workflowName)
 				if err := workflow.Resume(ctx, app, instanceID); err != nil {
 					log.Printf("Failed to resume %s: %v", instanceID, err)
 				}
@@ -631,7 +631,7 @@ func autoResumeStaleworkflowsPeriodically(storage StorageProtocol, interval time
 
 **Source hash verification (Safety mechanism):**
 
-Before auto-resuming, Romancy verifies that the workflow definition hasn't changed:
+Before auto-resuming, Selvedge verifies that the workflow definition hasn't changed:
 
 ```go
 // Check if workflow definition matches current registry
@@ -665,7 +665,7 @@ Therefore, cleaning stale locks and resuming `status="running"` and `status="com
 
 ### 4. Deployment & Scale-Out
 
-Romancy supports distributed execution, so workflows continue during deployment:
+Selvedge supports distributed execution, so workflows continue during deployment:
 
 **Scenario:**
 
@@ -676,12 +676,12 @@ Romancy supports distributed execution, so workflows continue during deployment:
 
 **Database-based exclusive control guarantee:**
 
-Romancy's database-based exclusive control prevents multiple workers from executing the same workflow instance simultaneously:
+Selvedge's database-based exclusive control prevents multiple workers from executing the same workflow instance simultaneously:
 
 ```go
 err := app.WithWorkflowLock(ctx, instanceID, workerID, func() error {
     // Only execute while lock held
-    wfCtx := romancy.NewWorkflowContext(instanceID, true, ...)
+    wfCtx := selvedge.NewWorkflowContext(instanceID, true, ...)
     wfCtx.LoadHistory()
     return workflowFunc(wfCtx, inputData)
 })
@@ -692,8 +692,8 @@ err := app.WithWorkflowLock(ctx, instanceID, workerID, func() error {
 ### Initial Execution (Completed Steps 1-2, Crashed at Step 3)
 
 ```go
-var orderWorkflow = romancy.DefineWorkflow("order_workflow",
-	func(ctx *romancy.WorkflowContext, orderID string) (OrderWorkflowResult, error) {
+var orderWorkflow = selvedge.DefineWorkflow("order_workflow",
+	func(ctx *selvedge.WorkflowContext, orderID string) (OrderWorkflowResult, error) {
 		// Activity 1 (auto-generated ID: "reserve_inventory:1")
 		inventory, err := reserveInventory.Execute(ctx, orderID)
 		// → DB saved: activity_id="reserve_inventory:1", result={"reservation_id": "R123"}
@@ -733,7 +733,7 @@ var orderWorkflow = romancy.DefineWorkflow("order_workflow",
 err := orderWorkflow.Resume(ctx, app, instanceID)
 
 // 2. Create WorkflowContext (isReplaying=true)
-wfCtx := romancy.NewWorkflowContext(
+wfCtx := selvedge.NewWorkflowContext(
     instanceID,
     true,  // Replay mode
     ...
@@ -768,11 +768,11 @@ wfCtx.UpdateStatus("completed", result)
 
 ## Safety Mechanisms
 
-Romancy includes several safety mechanisms to ensure reliable execution:
+Selvedge includes several safety mechanisms to ensure reliable execution:
 
 ### Source Hash Verification
 
-Before auto-resuming crashed workflows, Romancy verifies workflow definition hasn't changed:
+Before auto-resuming crashed workflows, Selvedge verifies workflow definition hasn't changed:
 
 - Each workflow has a source code hash (`source_hash`)
 - Stored in database when workflow starts
@@ -787,11 +787,11 @@ This prevents:
 
 ### Exclusive Control Guarantees
 
-Romancy's database-based exclusive control prevents concurrent execution:
+Selvedge's database-based exclusive control prevents concurrent execution:
 
 ```go
 err := app.WithWorkflowLock(ctx, instanceID, workerID,
-    romancy.WithLockTimeout(5*time.Minute),
+    selvedge.WithLockTimeout(5*time.Minute),
     func() error {
         // Only one worker can hold this lock
         // Other workers wait or skip
@@ -825,7 +825,7 @@ Special handling for workflows that crash during compensation:
 
 ## Summary
 
-Romancy's replay mechanism characteristics:
+Selvedge's replay mechanism characteristics:
 
 | Item | Behavior |
 |------|----------|

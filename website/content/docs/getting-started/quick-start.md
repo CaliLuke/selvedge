@@ -3,14 +3,14 @@ title: "Quick Start"
 weight: 2
 ---
 
-Get started with Romancy in 5 minutes! This guide will walk you through creating your first durable workflow.
+Get started with Selvedge in 5 minutes! This guide will walk you through creating your first durable workflow.
 
 ## Prerequisites
 
-Before starting, make sure you have Romancy installed:
+Before starting, make sure you have Selvedge installed:
 
 ```bash
-go get github.com/i2y/romancy
+go get github.com/CaliLuke/selvedge
 ```
 
 If you haven't set up your Go environment, see the [Installation Guide](/docs/getting-started/installation).
@@ -27,7 +27,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 // Input type for the workflow
@@ -55,14 +55,14 @@ type OnboardingResult struct {
 }
 
 // Define activities
-var sendWelcomeEmail = romancy.DefineActivity("send_welcome_email",
+var sendWelcomeEmail = selvedge.DefineActivity("send_welcome_email",
 	func(ctx context.Context, email string) (EmailResult, error) {
 		fmt.Printf("Sending welcome email to %s\n", email)
 		return EmailResult{Sent: true, Email: email}, nil
 	},
 )
 
-var createUserProfile = romancy.DefineActivity("create_user_profile",
+var createUserProfile = selvedge.DefineActivity("create_user_profile",
 	func(ctx context.Context, input OnboardingInput) (ProfileResult, error) {
 		fmt.Printf("Creating profile for user %s\n", input.UserID)
 		return ProfileResult{UserID: input.UserID, Email: input.Email, Created: true}, nil
@@ -70,8 +70,8 @@ var createUserProfile = romancy.DefineActivity("create_user_profile",
 )
 
 // Define workflow
-var userOnboarding = romancy.DefineWorkflow("user_onboarding",
-	func(ctx *romancy.WorkflowContext, input OnboardingInput) (OnboardingResult, error) {
+var userOnboarding = selvedge.DefineWorkflow("user_onboarding",
+	func(ctx *selvedge.WorkflowContext, input OnboardingInput) (OnboardingResult, error) {
 		// Step 1: Create profile
 		profile, err := createUserProfile.Execute(ctx, input)
 		if err != nil {
@@ -93,10 +93,10 @@ var userOnboarding = romancy.DefineWorkflow("user_onboarding",
 )
 
 func main() {
-	// Create Romancy app with SQLite database
-	app := romancy.NewApp(
-		romancy.WithDatabase("onboarding.db"),
-		romancy.WithWorkerID("worker-1"),
+	// Create Selvedge app with SQLite database
+	app := selvedge.NewApp(
+		selvedge.WithDatabase("onboarding.db"),
+		selvedge.WithWorkerID("worker-1"),
 	)
 
 	ctx := context.Background()
@@ -106,7 +106,7 @@ func main() {
 	defer app.Shutdown(ctx)
 
 	// Start the workflow
-	instanceID, err := romancy.StartWorkflow(ctx, app, userOnboarding,
+	instanceID, err := selvedge.StartWorkflow(ctx, app, userOnboarding,
 		OnboardingInput{UserID: "user_123", Email: "newuser@example.com"})
 	if err != nil {
 		log.Fatal(err)
@@ -140,7 +140,7 @@ Result: {Status:completed UserID:user_123 EmailSent:true}
 
 ## Step 3: Understanding Crash Recovery
 
-Romancy's durable execution ensures workflows survive crashes through **deterministic replay**. When a workflow crashes:
+Selvedge's durable execution ensures workflows survive crashes through **deterministic replay**. When a workflow crashes:
 
 1. **Activity results are saved** to the database before execution continues
 2. **Workflow state is preserved** (current step, history, locks)
@@ -148,9 +148,9 @@ Romancy's durable execution ensures workflows survive crashes through **determin
 
 ### How Automatic Recovery Works
 
-In production environments with long-running Romancy app instances:
+In production environments with long-running Selvedge app instances:
 
-- **Crash detection**: Romancy's background task checks for stale locks every 60 seconds
+- **Crash detection**: Selvedge's background task checks for stale locks every 60 seconds
 - **Auto-resume**: Crashed workflows are automatically resumed when their lock timeout expires
   - Both normal execution and rollback execution are automatically resumed
   - Default timeout: 5 minutes (300 seconds)
@@ -181,10 +181,10 @@ In production (use PostgreSQL or MySQL 8.0+ for distributed systems):
 ```go
 // For distributed systems (K8s, Docker Compose with multiple replicas)
 // Use PostgreSQL or MySQL 8.0+ (NOT SQLite)
-app := romancy.NewApp(
-	romancy.WithDatabase("postgres://user:password@localhost/workflows"),
-	// or: romancy.WithDatabase("mysql://user:password@localhost:3306/workflows"),
-	romancy.WithWorkerID("worker-1"),
+app := selvedge.NewApp(
+	selvedge.WithDatabase("postgres://user:password@localhost/workflows"),
+	// or: selvedge.WithDatabase("mysql://user:password@localhost:3306/workflows"),
+	selvedge.WithWorkerID("worker-1"),
 )
 
 // Background tasks automatically handle:
@@ -204,11 +204,11 @@ app := romancy.NewApp(
 5. Previously executed activities skip (cached from history)
 6. Remaining activities execute fresh
 
-This is **deterministic replay** - Romancy's core feature for durable execution.
+This is **deterministic replay** - Selvedge's core feature for durable execution.
 
 ## Step 4: HTTP Server Integration (Optional)
 
-For event-driven workflows, Romancy can receive CloudEvents via HTTP. The `App` implements `http.Handler`, allowing integration with any HTTP server or router.
+For event-driven workflows, Selvedge can receive CloudEvents via HTTP. The `App` implements `http.Handler`, allowing integration with any HTTP server or router.
 
 ### Standalone Mode
 
@@ -237,7 +237,7 @@ type EmailResult struct {
 	Email string `json:"email"`
 }
 
-var sendWelcomeEmail = romancy.DefineActivity("send_welcome_email",
+var sendWelcomeEmail = selvedge.DefineActivity("send_welcome_email",
 	func(ctx context.Context, email string) (EmailResult, error) {
 		// Business logic here
 		return EmailResult{Sent: true, Email: email}, nil
@@ -259,8 +259,8 @@ type OnboardingResult struct {
 	EmailSent bool   `json:"email_sent"`
 }
 
-var userOnboarding = romancy.DefineWorkflow("user_onboarding",
-	func(ctx *romancy.WorkflowContext, input OnboardingInput) (OnboardingResult, error) {
+var userOnboarding = selvedge.DefineWorkflow("user_onboarding",
+	func(ctx *selvedge.WorkflowContext, input OnboardingInput) (OnboardingResult, error) {
 		// Orchestration logic here
 		result1, err := activity1.Execute(ctx, input)
 		result2, err := activity2.Execute(ctx, input.Email)
@@ -277,7 +277,7 @@ var userOnboarding = romancy.DefineWorkflow("user_onboarding",
 ### WorkflowContext
 
 ```go
-func(ctx *romancy.WorkflowContext, input MyInput) (MyResult, error) {
+func(ctx *selvedge.WorkflowContext, input MyInput) (MyResult, error) {
 	// ctx provides workflow operations
 	// Automatically manages history and replay
 }

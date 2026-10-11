@@ -3,7 +3,7 @@ title: "Development"
 weight: 100
 ---
 
-This guide explains how to set up and use the Tilt-based development environment for Romancy.
+This guide explains how to set up and use the Tilt-based development environment for Selvedge.
 
 ## Prerequisites
 
@@ -63,13 +63,13 @@ tilt up
 ### PostgreSQL
 - **Host**: localhost
 - **Port**: 5433
-- **Database**: romancy_test
-- **User**: romancy
-- **Password**: romancy
+- **Database**: selvedge_test
+- **User**: selvedge
+- **Password**: selvedge
 
 Connect via psql:
 ```bash
-docker exec -it romancy-postgres psql -U romancy -d romancy_test
+docker exec -it selvedge-postgres psql -U selvedge -d selvedge_test
 ```
 
 ### Jaeger (Tracing)
@@ -90,9 +90,9 @@ When running via Tilt, the following environment variables are set:
 
 | Variable | Value |
 |----------|-------|
-| `DATABASE_URL` | `postgres://romancy:romancy@localhost:5432/romancy_test?sslmode=disable` |
+| `DATABASE_URL` | `postgres://selvedge:selvedge@localhost:5432/selvedge_test?sslmode=disable` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4317` |
-| `OTEL_SERVICE_NAME` | `romancy-{example_name}` |
+| `OTEL_SERVICE_NAME` | `selvedge-{example_name}` |
 
 ## Stopping the Environment
 
@@ -114,7 +114,7 @@ Stop any existing processes using the ports (8080-8084, 5433, 16686).
 Ensure PostgreSQL is healthy:
 ```bash
 docker ps
-docker logs romancy-postgres
+docker logs selvedge-postgres
 ```
 
 ### Traces Not Appearing in Jaeger

@@ -8,17 +8,17 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/i2y/romancy"
-	"github.com/i2y/romancy/internal/storage"
+	"github.com/CaliLuke/selvedge"
+	"github.com/CaliLuke/selvedge/internal/storage"
 )
 
-// Server is an MCP server that exposes Romancy workflows as tools.
-// It wraps both a Romancy App and an MCP Server, providing a unified
+// Server is an MCP server that exposes Selvedge workflows as tools.
+// It wraps both a Selvedge App and an MCP Server, providing a unified
 // lifecycle management.
 //
 // Example usage with stdio transport:
 //
-//	app := romancy.NewApp(romancy.WithDatabase("workflow.db"))
+//	app := selvedge.NewApp(selvedge.WithDatabase("workflow.db"))
 //	server := mcp.NewServer(app,
 //	    mcp.WithServerName("order-service"),
 //	    mcp.WithServerVersion("1.0.0"),
@@ -43,7 +43,7 @@ import (
 //	http.Handle("/mcp", server.Handler())
 //	http.ListenAndServe(":8080", nil)
 type Server struct {
-	app       *romancy.App
+	app       *selvedge.App
 	mcpServer *mcp.Server
 	config    *serverConfig
 
@@ -63,8 +63,8 @@ type workflowInfo struct {
 	config   *workflowToolConfig
 }
 
-// NewServer creates a new MCP server that wraps a Romancy App.
-func NewServer(app *romancy.App, opts ...ServerOption) *Server {
+// NewServer creates a new MCP server that wraps a Selvedge App.
+func NewServer(app *selvedge.App, opts ...ServerOption) *Server {
 	config := defaultServerConfig()
 	for _, opt := range opts {
 		opt(config)
@@ -87,7 +87,7 @@ func NewServer(app *romancy.App, opts ...ServerOption) *Server {
 	}
 }
 
-// Initialize starts the underlying Romancy App.
+// Initialize starts the underlying Selvedge App.
 // This must be called before running the MCP server.
 func (s *Server) Initialize(ctx context.Context) error {
 	s.mu.Lock()
@@ -98,14 +98,14 @@ func (s *Server) Initialize(ctx context.Context) error {
 	}
 
 	if err := s.app.Start(ctx); err != nil {
-		return fmt.Errorf("failed to start romancy app: %w", err)
+		return fmt.Errorf("failed to start selvedge app: %w", err)
 	}
 
 	s.initialized = true
 	return nil
 }
 
-// Shutdown gracefully shuts down both the Romancy App and MCP server.
+// Shutdown gracefully shuts down both the Selvedge App and MCP server.
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -136,9 +136,9 @@ func (s *Server) Handler() http.Handler {
 	return &httpHandler{server: s}
 }
 
-// App returns the underlying Romancy App.
+// App returns the underlying Selvedge App.
 // This can be used for direct access to the workflow engine.
-func (s *Server) App() *romancy.App {
+func (s *Server) App() *selvedge.App {
 	return s.app
 }
 

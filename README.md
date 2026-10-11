@@ -1,20 +1,16 @@
-# Romancy
+# Selvedge
 
-**Romancy** (from "Romance" - medieval chivalric tales) - Durable execution framework for Go
-
-> Lightweight durable execution framework - no separate server required
-
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Go 1.24+](https://img.shields.io/badge/go-1.24+-00ADD8.svg)](https://go.dev/dl/)
-[![GitHub](https://img.shields.io/badge/github-romancy-blue.svg)](https://github.com/i2y/romancy)
+**Selvedge** is an embedded durable-execution engine for Go.
 
 ## Overview
 
-Romancy is a lightweight durable execution framework for Go that runs as a **library** in your application - no separate workflow server required. It provides automatic crash recovery through deterministic replay, allowing **long-running workflows** to survive process restarts and failures without losing progress.
+Selvedge is a lightweight durable execution framework for Go that runs as a **library** in your application - no separate workflow server required. It provides automatic crash recovery through deterministic replay, allowing **long-running workflows** to survive process restarts and failures without losing progress.
 
 **Perfect for**: Order processing, distributed transactions (Saga pattern), and any workflow that must survive crashes.
 
-Romancy is a Go port of [Edda](https://github.com/i2y/edda) (Python), providing the same core concepts and patterns in idiomatic Go.
+## Derived from Romancy
+
+Selvedge is derived from Yasushi Itoh's [Romancy](https://github.com/i2y/romancy) v0.6.2, licensed under the MIT License. Selvedge is a separate project that will diverge from Romancy.
 
 ## Key Features
 
@@ -36,11 +32,11 @@ Romancy is a Go port of [Edda](https://github.com/i2y/edda) (Python), providing 
 
 ## Documentation
 
-📚 **Full documentation**: https://i2y.github.io/romancy/
+Documentation is available in [website/content/docs](website/content/docs/_index.md).
 
 ## Architecture
 
-Romancy runs as a lightweight library in your applications, with all workflow state stored in a shared database:
+Selvedge runs as a lightweight library in your applications, with all workflow state stored in a shared database:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -48,7 +44,7 @@ Romancy runs as a lightweight library in your applications, with all workflow st
 ├──────────────────────┬──────────────────────┬──────────────────────┤
 │   order-service-1    │   order-service-2    │   order-service-3    │
 │   ┌──────────────┐   │   ┌──────────────┐   │   ┌──────────────┐   │
-│   │   Romancy    │   │   │   Romancy    │   │   │   Romancy    │   │
+│   │   Selvedge   │   │   │   Selvedge   │   │   │   Selvedge   │   │
 │   │   Workflow   │   │   │   Workflow   │   │   │   Workflow   │   │
 │   └──────────────┘   │   └──────────────┘   │   └──────────────┘   │
 └──────────┬───────────┴──────────┬───────────┴──────────┬───────────┘
@@ -78,7 +74,7 @@ import (
     "log"
     "net/http"
 
-    "github.com/i2y/romancy"
+    "github.com/CaliLuke/selvedge"
 )
 
 // Input/Output types
@@ -93,7 +89,7 @@ type OrderResult struct {
 }
 
 // Define an activity
-var processPayment = romancy.DefineActivity("process_payment",
+var processPayment = selvedge.DefineActivity("process_payment",
     func(ctx context.Context, amount float64) (map[string]any, error) {
         log.Printf("Processing payment: $%.2f", amount)
         return map[string]any{"status": "paid", "amount": amount}, nil
@@ -101,8 +97,8 @@ var processPayment = romancy.DefineActivity("process_payment",
 )
 
 // Define a workflow
-var orderWorkflow = romancy.DefineWorkflow("order_workflow",
-    func(ctx *romancy.WorkflowContext, input OrderInput) (OrderResult, error) {
+var orderWorkflow = selvedge.DefineWorkflow("order_workflow",
+    func(ctx *selvedge.WorkflowContext, input OrderInput) (OrderResult, error) {
         // Activity results are recorded in history
         result, err := processPayment.Execute(ctx, input.Amount)
         if err != nil {
@@ -116,9 +112,9 @@ func main() {
     ctx := context.Background()
 
     // Create app with SQLite storage
-    app := romancy.NewApp(
-        romancy.WithDatabase("workflow.db"),
-        romancy.WithWorkerID("order-service"),
+    app := selvedge.NewApp(
+        selvedge.WithDatabase("workflow.db"),
+        selvedge.WithWorkerID("order-service"),
     )
     defer app.Shutdown(ctx)
 
@@ -128,9 +124,9 @@ func main() {
     }
 
     // Register and start workflow
-    romancy.RegisterWorkflow[OrderInput, OrderResult](app, orderWorkflow)
+    selvedge.RegisterWorkflow[OrderInput, OrderResult](app, orderWorkflow)
 
-    instanceID, err := romancy.StartWorkflow(ctx, app, orderWorkflow, OrderInput{
+    instanceID, err := selvedge.StartWorkflow(ctx, app, orderWorkflow, OrderInput{
         OrderID: "ORD-123",
         Amount:  99.99,
     })
@@ -154,7 +150,7 @@ func main() {
 ## Installation
 
 ```bash
-go get github.com/i2y/romancy
+go get github.com/CaliLuke/selvedge
 ```
 
 ### Database Support
@@ -169,18 +165,18 @@ go get github.com/i2y/romancy
 
 ### Database Migrations
 
-Romancy **automatically applies database migrations** on startup. Migration files are embedded in the binary, so no external files are needed at runtime.
+Selvedge **automatically applies database migrations** on startup. Migration files are embedded in the binary, so no external files are needed at runtime.
 
 ```go
 // Default: auto-migration enabled
-app := romancy.NewApp(
-    romancy.WithDatabase("postgres://user:pass@localhost/db"),
+app := selvedge.NewApp(
+    selvedge.WithDatabase("postgres://user:pass@localhost/db"),
 )
 
 // Disable auto-migration (manage with dbmate CLI instead)
-app := romancy.NewApp(
-    romancy.WithDatabase("postgres://user:pass@localhost/db"),
-    romancy.WithAutoMigrate(false),
+app := selvedge.NewApp(
+    selvedge.WithDatabase("postgres://user:pass@localhost/db"),
+    selvedge.WithAutoMigrate(false),
 )
 ```
 
@@ -190,7 +186,7 @@ app := romancy.NewApp(
 - **Multi-worker safe**: Safe for concurrent startup across multiple pods/processes
 - **Embedded**: Migration files are bundled into the binary via Go embed
 
-The database schema is managed in the [durax-io/schema](https://github.com/durax-io/schema) repository, shared between Romancy (Go) and [Edda](https://github.com/i2y/edda) (Python) for cross-framework compatibility.
+The inherited database schema is embedded in `internal/migrations/sql/`. Selvedge does not preserve database compatibility with its upstream project or Edda.
 
 **Manual migration with dbmate** (optional):
 
@@ -231,7 +227,7 @@ type SignupResult struct {
 }
 
 // Define an activity with DefineActivity
-var sendEmail = romancy.DefineActivity("send_email",
+var sendEmail = selvedge.DefineActivity("send_email",
     func(ctx context.Context, input EmailInput) (bool, error) {
         // Business logic - this will be recorded
         log.Printf("Sending email to %s", input.Email)
@@ -240,8 +236,8 @@ var sendEmail = romancy.DefineActivity("send_email",
 )
 
 // Define a workflow with DefineWorkflow
-var userSignup = romancy.DefineWorkflow("user_signup",
-    func(ctx *romancy.WorkflowContext, email string) (SignupResult, error) {
+var userSignup = selvedge.DefineWorkflow("user_signup",
+    func(ctx *selvedge.WorkflowContext, email string) (SignupResult, error) {
         // Orchestration logic
         _, err := sendEmail.Execute(ctx, EmailInput{Email: email, Message: "Welcome!"})
         if err != nil {
@@ -254,7 +250,7 @@ var userSignup = romancy.DefineWorkflow("user_signup",
 
 ### Durable Execution
 
-Romancy ensures workflow progress is never lost through **deterministic replay**:
+Selvedge ensures workflow progress is never lost through **deterministic replay**:
 
 1. **Activity results are recorded** in a history table
 2. **On crash recovery**, workflows resume from the last checkpoint
@@ -268,16 +264,16 @@ Romancy ensures workflow progress is never lost through **deterministic replay**
 
 ### Compensation (Saga Pattern)
 
-When a workflow fails, Romancy can execute compensation functions for already-executed activities in reverse order:
+When a workflow fails, Selvedge can execute compensation functions for already-executed activities in reverse order:
 
 ```go
 // Define activity with inline compensation
-var reserveInventory = romancy.DefineActivity("reserve_inventory",
+var reserveInventory = selvedge.DefineActivity("reserve_inventory",
     func(ctx context.Context, itemID string) (string, error) {
         log.Printf("Reserved %s", itemID)
         return "reservation-123", nil
     },
-    romancy.WithCompensation[string, string](func(ctx context.Context, itemID string) error {
+    selvedge.WithCompensation[string, string](func(ctx context.Context, itemID string) error {
         log.Printf("Cancelled reservation for %s", itemID)
         return nil
     }),
@@ -289,9 +285,9 @@ var reserveInventory = romancy.DefineActivity("reserve_inventory",
 Multiple workers can safely process workflows using database-based exclusive control:
 
 ```go
-app := romancy.NewApp(
-    romancy.WithDatabase("postgres://localhost/workflows"),  // Shared database
-    romancy.WithWorkerID("order-service"),
+app := selvedge.NewApp(
+    selvedge.WithDatabase("postgres://localhost/workflows"),  // Shared database
+    selvedge.WithWorkerID("order-service"),
 )
 ```
 
@@ -309,7 +305,7 @@ Activities are automatically transactional by default, ensuring atomicity betwee
 
 ```go
 // Default: activity runs in a transaction
-var createOrder = romancy.DefineActivity("create_order",
+var createOrder = selvedge.DefineActivity("create_order",
     func(ctx context.Context, orderID string) (map[string]any, error) {
         // If this activity fails, both the history record and any
         // outbox events will be rolled back together
@@ -322,13 +318,13 @@ var createOrder = romancy.DefineActivity("create_order",
 **Opt-out of transactions** for external API calls:
 
 ```go
-var callExternalAPI = romancy.DefineActivity("call_api",
+var callExternalAPI = selvedge.DefineActivity("call_api",
     func(ctx context.Context, url string) (map[string]any, error) {
         // Not transactional - suitable for external calls
         resp, err := http.Get(url)
         // ...
     },
-    romancy.WithTransactional(false),
+    selvedge.WithTransactional(false),
 )
 ```
 
@@ -343,10 +339,10 @@ type PaymentData struct {
     Status  string `json:"status"`
 }
 
-var paymentWorkflow = romancy.DefineWorkflow("payment_workflow",
-    func(ctx *romancy.WorkflowContext, orderID string) (PaymentData, error) {
+var paymentWorkflow = selvedge.DefineWorkflow("payment_workflow",
+    func(ctx *selvedge.WorkflowContext, orderID string) (PaymentData, error) {
         // Wait for payment completion event (process-releasing)
-        event, err := romancy.WaitEvent[PaymentData](ctx, "payment.completed")
+        event, err := selvedge.WaitEvent[PaymentData](ctx, "payment.completed")
         if err != nil {
             return PaymentData{}, err
         }
@@ -355,10 +351,10 @@ var paymentWorkflow = romancy.DefineWorkflow("payment_workflow",
 )
 
 // With timeout
-var paymentWithTimeout = romancy.DefineWorkflow("payment_with_timeout",
-    func(ctx *romancy.WorkflowContext, orderID string) (PaymentData, error) {
-        event, err := romancy.WaitEvent[PaymentData](ctx, "payment.completed",
-            romancy.WithEventTimeout(5*time.Minute))
+var paymentWithTimeout = selvedge.DefineWorkflow("payment_with_timeout",
+    func(ctx *selvedge.WorkflowContext, orderID string) (PaymentData, error) {
+        event, err := selvedge.WaitEvent[PaymentData](ctx, "payment.completed",
+            selvedge.WithEventTimeout(5*time.Minute))
         if err != nil {
             return PaymentData{}, err
         }
@@ -370,10 +366,10 @@ var paymentWithTimeout = romancy.DefineWorkflow("payment_with_timeout",
 **Sleep() for time-based waiting**:
 
 ```go
-var orderWithTimeout = romancy.DefineWorkflow("order_with_timeout",
-    func(ctx *romancy.WorkflowContext, orderID string) (map[string]any, error) {
+var orderWithTimeout = selvedge.DefineWorkflow("order_with_timeout",
+    func(ctx *selvedge.WorkflowContext, orderID string) (map[string]any, error) {
         // Sleep for 60 seconds
-        if err := romancy.Sleep(ctx, 60*time.Second); err != nil {
+        if err := selvedge.Sleep(ctx, 60*time.Second); err != nil {
             return nil, err
         }
         // Continue after sleep completes
@@ -390,16 +386,16 @@ Workflows can communicate with each other using durable channels with two delive
 - **Competing**: Each message goes to exactly one subscriber (work queue pattern)
 
 ```go
-var workerWorkflow = romancy.DefineWorkflow("worker",
-    func(ctx *romancy.WorkflowContext, workerID string) (map[string]any, error) {
+var workerWorkflow = selvedge.DefineWorkflow("worker",
+    func(ctx *selvedge.WorkflowContext, workerID string) (map[string]any, error) {
         // Subscribe to a channel in competing mode (work queue)
-        if err := romancy.Subscribe(ctx, "tasks", romancy.ModeCompeting); err != nil {
+        if err := selvedge.Subscribe(ctx, "tasks", selvedge.ModeCompeting); err != nil {
             return nil, err
         }
 
         // Wait for and receive a message
-        msg, err := romancy.Receive[TaskData](ctx, "tasks",
-            romancy.WithReceiveTimeout(60*time.Second))
+        msg, err := selvedge.Receive[TaskData](ctx, "tasks",
+            selvedge.WithReceiveTimeout(60*time.Second))
         if err != nil {
             return nil, err
         }
@@ -409,10 +405,10 @@ var workerWorkflow = romancy.DefineWorkflow("worker",
     },
 )
 
-var dispatcherWorkflow = romancy.DefineWorkflow("dispatcher",
-    func(ctx *romancy.WorkflowContext, _ struct{}) (map[string]any, error) {
+var dispatcherWorkflow = selvedge.DefineWorkflow("dispatcher",
+    func(ctx *selvedge.WorkflowContext, _ struct{}) (map[string]any, error) {
         // Publish a task to the channel
-        if err := romancy.Publish(ctx, "tasks", TaskData{ID: "task-1"}); err != nil {
+        if err := selvedge.Publish(ctx, "tasks", TaskData{ID: "task-1"}); err != nil {
             return nil, err
         }
         return map[string]any{"dispatched": true}, nil
@@ -422,13 +418,13 @@ var dispatcherWorkflow = romancy.DefineWorkflow("dispatcher",
 
 ```go
 // Send a direct message to a specific workflow instance
-romancy.SendTo(ctx, targetInstanceID, "channel", data)
+selvedge.SendTo(ctx, targetInstanceID, "channel", data)
 
 // Unsubscribe from a channel
-romancy.Unsubscribe(ctx, "channel")
+selvedge.Unsubscribe(ctx, "channel")
 
 // Publish with metadata
-romancy.Publish(ctx, "channel", data, romancy.WithMetadata(map[string]any{
+selvedge.Publish(ctx, "channel", data, selvedge.WithMetadata(map[string]any{
     "priority": "high",
 }))
 ```
@@ -445,13 +441,13 @@ type CounterState struct {
     FinalCount int  `json:"final_count,omitempty"`
 }
 
-var counterWorkflow = romancy.DefineWorkflow("counter",
-    func(ctx *romancy.WorkflowContext, input CounterState) (CounterState, error) {
+var counterWorkflow = selvedge.DefineWorkflow("counter",
+    func(ctx *selvedge.WorkflowContext, input CounterState) (CounterState, error) {
         newCount := input.Count + 1
 
         if newCount < 1000 {
             // Continue with new input (archives history, restarts workflow)
-            return romancy.Recur(ctx, CounterState{Count: newCount})
+            return selvedge.Recur(ctx, CounterState{Count: newCount})
         }
 
         // Complete when done
@@ -469,7 +465,7 @@ var counterWorkflow = romancy.DefineWorkflow("counter",
 
 ### Using with net/http
 
-Romancy provides a `Handler()` method for integration with any Go HTTP router:
+Selvedge provides a `Handler()` method for integration with any Go HTTP router:
 
 ```go
 // Standard library
@@ -486,7 +482,7 @@ r.PathPrefix("/workflows").Handler(app.Handler())
 
 ### CloudEvents Support
 
-Romancy accepts CloudEvents at the HTTP endpoint:
+Selvedge accepts CloudEvents at the HTTP endpoint:
 
 ```bash
 curl -X POST http://localhost:8001/ \
@@ -507,7 +503,7 @@ curl -X POST http://localhost:8001/ \
 
 ## MCP Integration
 
-Romancy provides [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) integration, allowing you to expose workflows as MCP tools for AI assistants.
+Selvedge provides [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) integration, allowing you to expose workflows as MCP tools for AI assistants.
 
 ### Quick Start
 
@@ -518,8 +514,8 @@ import (
 	"context"
 	"log"
 
-	"github.com/i2y/romancy"
-	"github.com/i2y/romancy/mcp"
+	"github.com/CaliLuke/selvedge"
+	"github.com/CaliLuke/selvedge/mcp"
 )
 
 // Define workflow input/output types with jsonschema tags
@@ -536,8 +532,8 @@ type OrderResult struct {
 }
 
 // Define workflow
-var orderWorkflow = romancy.DefineWorkflow("order_workflow",
-	func(ctx *romancy.WorkflowContext, input OrderInput) (OrderResult, error) {
+var orderWorkflow = selvedge.DefineWorkflow("order_workflow",
+	func(ctx *selvedge.WorkflowContext, input OrderInput) (OrderResult, error) {
 		// Workflow logic here
 		return OrderResult{
 			OrderID:      input.OrderID,
@@ -548,8 +544,8 @@ var orderWorkflow = romancy.DefineWorkflow("order_workflow",
 )
 
 func main() {
-	// Create Romancy app
-	app := romancy.NewApp(romancy.WithDatabase("workflow.db"))
+	// Create Selvedge app
+	app := selvedge.NewApp(selvedge.WithDatabase("workflow.db"))
 
 	// Create MCP server
 	server := mcp.NewServer(app,
@@ -582,7 +578,7 @@ func main() {
 
 ### Auto-Generated Tools
 
-When you register a workflow, Romancy automatically generates four MCP tools:
+When you register a workflow, Selvedge automatically generates four MCP tools:
 
 | Tool | Description |
 |------|-------------|
@@ -593,7 +589,7 @@ When you register a workflow, Romancy automatically generates four MCP tools:
 
 ## LLM Integration
 
-Romancy provides durable LLM calls via the [bucephalus](https://github.com/i2y/bucephalus) library. All LLM calls are automatically cached as activities, so workflow replay returns cached results without re-invoking the LLM API.
+Selvedge provides durable LLM calls via the [bucephalus](https://github.com/i2y/bucephalus) library. All LLM calls are automatically cached as activities, so workflow replay returns cached results without re-invoking the LLM API.
 
 ### Quick Start
 
@@ -605,8 +601,8 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/i2y/romancy"
-	"github.com/i2y/romancy/llm"
+	"github.com/CaliLuke/selvedge"
+	"github.com/CaliLuke/selvedge/llm"
 
 	// Import the provider you want to use
 	_ "github.com/i2y/bucephalus/anthropic"
@@ -620,8 +616,8 @@ type SummaryResult struct {
 	Summary string `json:"summary"`
 }
 
-var summarizeWorkflow = romancy.DefineWorkflow("summarize",
-	func(ctx *romancy.WorkflowContext, input SummaryInput) (SummaryResult, error) {
+var summarizeWorkflow = selvedge.DefineWorkflow("summarize",
+	func(ctx *selvedge.WorkflowContext, input SummaryInput) (SummaryResult, error) {
 		// LLM call is cached for replay
 		response, err := llm.Call(ctx, input.Text,
 			llm.WithSystemMessage("Summarize the following text concisely."),
@@ -637,7 +633,7 @@ func main() {
 	ctx := context.Background()
 
 	// Create app
-	app := romancy.NewApp(romancy.WithDatabase("workflow.db"))
+	app := selvedge.NewApp(selvedge.WithDatabase("workflow.db"))
 
 	// Set LLM defaults for the app
 	llm.SetAppDefaults(app,
@@ -646,14 +642,14 @@ func main() {
 		llm.WithMaxTokens(1024),
 	)
 
-	romancy.RegisterWorkflow(app, summarizeWorkflow)
+	selvedge.RegisterWorkflow(app, summarizeWorkflow)
 
 	if err := app.Start(ctx); err != nil {
 		log.Fatal(err)
 	}
 	defer app.Shutdown(ctx)
 
-	instanceID, _ := romancy.StartWorkflow(ctx, app, summarizeWorkflow, SummaryInput{
+	instanceID, _ := selvedge.StartWorkflow(ctx, app, summarizeWorkflow, SummaryInput{
 		Text: "Long article text here...",
 	})
 	fmt.Println("Started:", instanceID)
@@ -673,7 +669,7 @@ func main() {
 
 ### Supported Providers
 
-Via bucephalus, Romancy supports:
+Via bucephalus, Selvedge supports:
 - **Anthropic** (Claude models)
 - **OpenAI** (GPT models)
 - **Google Gemini**
@@ -689,7 +685,7 @@ go test ./...
 ### Project Structure
 
 ```
-romancy/
+selvedge/
 ├── app.go           # Main App struct and HTTP handling
 ├── workflow.go      # Workflow definition and execution
 ├── activity.go      # Activity definition with transactions

@@ -1,8 +1,8 @@
 ---
-title: "Romancy"
+title: "Selvedge"
 ---
 
-**Romancy** (from "Romance" - medieval chivalric tales) - Durable execution framework for Go
+**Selvedge** is an embedded durable-execution engine for Go.
 
 > Lightweight durable execution framework - no separate server required
 
@@ -13,7 +13,7 @@ title: "Romancy"
 
 ## Overview
 
-Romancy is a lightweight durable execution framework for Go that runs as a **library** in your application - no separate workflow server required. It provides automatic crash recovery through deterministic replay, allowing **long-running workflows** to survive process restarts and failures without losing progress.
+Selvedge is a lightweight durable execution framework for Go that runs as a **library** in your application - no separate workflow server required. It provides automatic crash recovery through deterministic replay, allowing **long-running workflows** to survive process restarts and failures without losing progress.
 
 **Perfect for**: Order processing, distributed transactions (Saga pattern), AI agent orchestration, and any workflow that must survive crashes.
 
@@ -35,7 +35,7 @@ Romancy is a lightweight durable execution framework for Go that runs as a **lib
 
 ## Use Cases
 
-Romancy excels at orchestrating **long-running workflows** that must survive failures:
+Selvedge excels at orchestrating **long-running workflows** that must survive failures:
 
 - **🏢 Long-Running Jobs**: Order processing, data pipelines, batch jobs - from minutes to days, weeks, or even months
 - **🔄 Distributed Transactions**: Coordinate microservices with automatic compensation (Saga pattern)
@@ -44,7 +44,7 @@ Romancy excels at orchestrating **long-running workflows** that must survive fai
 
 ### Business Process Automation
 
-Romancy's waiting functions make it ideal for time-based and event-driven business processes:
+Selvedge's waiting functions make it ideal for time-based and event-driven business processes:
 
 - **📧 User Onboarding**: Send reminders if users haven't completed setup after N days
 - **🎁 Campaign Processing**: Evaluate conditions and notify winners after campaign ends
@@ -62,10 +62,10 @@ type ReminderResult struct {
     Status string `json:"status"`
 }
 
-var onboardingReminder = romancy.DefineWorkflow("onboarding_reminder",
-    func(ctx *romancy.WorkflowContext, userID string) (ReminderResult, error) {
+var onboardingReminder = selvedge.DefineWorkflow("onboarding_reminder",
+    func(ctx *selvedge.WorkflowContext, userID string) (ReminderResult, error) {
         // Sleep for 3 days
-        if err := romancy.Sleep(ctx, 3*24*time.Hour); err != nil {
+        if err := selvedge.Sleep(ctx, 3*24*time.Hour); err != nil {
             return ReminderResult{}, err
         }
         completed, err := checkCompleted.Execute(ctx, userID)
@@ -84,7 +84,7 @@ var onboardingReminder = romancy.DefineWorkflow("onboarding_reminder",
 
 ## Architecture
 
-Romancy runs as a lightweight library in your applications, with all workflow state stored in a shared database:
+Selvedge runs as a lightweight library in your applications, with all workflow state stored in a shared database:
 
 ```mermaid
 %%{init: {'theme':'base', 'themeVariables': {'primaryTextColor':'#1a1a1a', 'secondaryTextColor':'#1a1a1a', 'tertiaryTextColor':'#1a1a1a', 'textColor':'#1a1a1a', 'nodeTextColor':'#1a1a1a'}}}%%
@@ -96,13 +96,13 @@ graph TB
 
     subgraph cluster["Your Multiple Instances"]
         subgraph pod1["order-service Pod 1"]
-            W1[Romancy Workflow]
+            W1[Selvedge Workflow]
         end
         subgraph pod2["order-service Pod 2"]
-            W2[Romancy Workflow]
+            W2[Selvedge Workflow]
         end
         subgraph pod3["order-service Pod 3"]
-            W3[Romancy Workflow]
+            W3[Selvedge Workflow]
         end
     end
 
@@ -140,7 +140,7 @@ import (
     "log"
     "net/http"
 
-    "github.com/i2y/romancy"
+    "github.com/CaliLuke/selvedge"
 )
 
 // Result types
@@ -155,7 +155,7 @@ type OrderResult struct {
 }
 
 // Define an activity
-var processPayment = romancy.DefineActivity("process_payment",
+var processPayment = selvedge.DefineActivity("process_payment",
     func(ctx context.Context, amount float64) (PaymentResult, error) {
         log.Printf("Processing payment: $%.2f", amount)
         return PaymentResult{Status: "paid", Amount: amount}, nil
@@ -163,8 +163,8 @@ var processPayment = romancy.DefineActivity("process_payment",
 )
 
 // Define a workflow
-var orderWorkflow = romancy.DefineWorkflow("order_workflow",
-    func(ctx *romancy.WorkflowContext, orderID string, amount float64) (OrderResult, error) {
+var orderWorkflow = selvedge.DefineWorkflow("order_workflow",
+    func(ctx *selvedge.WorkflowContext, orderID string, amount float64) (OrderResult, error) {
         result, err := processPayment.Execute(ctx, amount)
         if err != nil {
             return OrderResult{}, err
@@ -175,9 +175,9 @@ var orderWorkflow = romancy.DefineWorkflow("order_workflow",
 
 func main() {
     // Create app with SQLite storage
-    app := romancy.NewApp(
-        romancy.WithDatabase("workflow.db"),
-        romancy.WithWorkerID("worker-1"),
+    app := selvedge.NewApp(
+        selvedge.WithDatabase("workflow.db"),
+        selvedge.WithWorkerID("worker-1"),
     )
 
     ctx := context.Background()
@@ -208,7 +208,7 @@ func main() {
 ## Installation
 
 ```bash
-go get github.com/i2y/romancy
+go get github.com/CaliLuke/selvedge
 ```
 
 **Database Support**:
@@ -225,7 +225,7 @@ go get github.com/i2y/romancy
 
 - **[Getting Started](getting-started/installation)**: Installation and setup guide
 - **[Core Concepts](getting-started/concepts)**: Learn about workflows, activities, and durable execution
-- **[Examples](examples/simple)**: See Romancy in action with real-world examples
+- **[Examples](examples/simple)**: See Selvedge in action with real-world examples
 - **[HTTP Integration](examples/http-integration)**: Integrate with any Go HTTP router
 - **[Channels](core-features/channels)**: Pub/Sub and work queue patterns with channel-based messaging
 - **[Recur Pattern](core-features/recur)**: Handle unbounded workflows with Erlang-style tail recursion
@@ -236,9 +236,9 @@ go get github.com/i2y/romancy
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](https://github.com/i2y/romancy/blob/main/LICENSE) file for details.
+This project is licensed under the MIT License - see the [LICENSE](https://github.com/CaliLuke/selvedge/blob/main/LICENSE) file for details.
 
 ## Support
 
-- **GitHub Issues**: [https://github.com/i2y/romancy/issues](https://github.com/i2y/romancy/issues)
-- **GitHub Repository**: [https://github.com/i2y/romancy](https://github.com/i2y/romancy)
+- **GitHub Issues**: [https://github.com/CaliLuke/selvedge/issues](https://github.com/CaliLuke/selvedge/issues)
+- **GitHub Repository**: [https://github.com/CaliLuke/selvedge](https://github.com/CaliLuke/selvedge)

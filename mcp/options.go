@@ -1,4 +1,4 @@
-// Package mcp provides Model Context Protocol (MCP) integration for Romancy.
+// Package mcp provides Model Context Protocol (MCP) integration for Selvedge.
 // It allows exposing workflows as MCP tools for AI assistants like Claude.
 package mcp
 
@@ -28,7 +28,7 @@ const (
 // defaultServerConfig returns the default server configuration.
 func defaultServerConfig() *serverConfig {
 	return &serverConfig{
-		name:          "romancy-mcp-server",
+		name:          "selvedge-mcp-server",
 		version:       "1.0.0",
 		transportMode: TransportStdio,
 	}

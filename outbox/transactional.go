@@ -8,11 +8,11 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/i2y/romancy/internal/storage"
+	"github.com/CaliLuke/selvedge/internal/storage"
 )
 
 // WorkflowContext interface that we need for outbox operations.
-// This avoids circular imports with the main romancy package.
+// This avoids circular imports with the main selvedge package.
 type WorkflowContext interface {
 	Context() interface{ Done() <-chan struct{} }
 	InstanceID() string

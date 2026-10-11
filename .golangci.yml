@@ -75,7 +75,7 @@ formatters:
   settings:
     goimports:
       local-prefixes:
-        - github.com/i2y/romancy
+        - github.com/CaliLuke/selvedge
 
 output:
   # Sort results by file, line, column

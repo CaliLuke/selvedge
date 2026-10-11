@@ -1,11 +1,11 @@
-// Package main provides a CLI tool for interacting with Romancy workflows.
+// Package main provides a CLI tool for interacting with Selvedge workflows.
 //
 // Usage:
 //
-//	romancy get <instance_id> [--db <path>]
-//	romancy event <instance_id> <event_type> <json_data> [--db <path>] [--url <base_url>]
-//	romancy list [--db <path>] [--status <status>] [--page-token <token>]
-//	romancy cancel <instance_id> [--db <path>] [--url <base_url>]
+//	selvedge get <instance_id> [--db <path>]
+//	selvedge event <instance_id> <event_type> <json_data> [--db <path>] [--url <base_url>]
+//	selvedge list [--db <path>] [--status <status>] [--page-token <token>]
+//	selvedge cancel <instance_id> [--db <path>] [--url <base_url>]
 //
 // Note: Database migrations are handled by dbmate. See schema/db/migrations/
 package main
@@ -22,7 +22,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/i2y/romancy/internal/storage"
+	"github.com/CaliLuke/selvedge/internal/storage"
 )
 
 var (
@@ -42,13 +42,13 @@ func main() {
 	switch cmd {
 	case "get":
 		fs := flag.NewFlagSet("get", flag.ExitOnError)
-		fs.StringVar(&dbPath, "db", "romancy.db", "Database path or URL")
+		fs.StringVar(&dbPath, "db", "selvedge.db", "Database path or URL")
 		_ = fs.Parse(cmdArgs)
 		args := fs.Args()
 
 		if len(args) < 1 {
 			fmt.Println("Error: instance_id is required")
-			fmt.Println("Usage: romancy get <instance_id> [--db <path>]")
+			fmt.Println("Usage: selvedge get <instance_id> [--db <path>]")
 			os.Exit(1)
 		}
 		if err := cmdGet(args[0]); err != nil {
@@ -58,14 +58,14 @@ func main() {
 
 	case "event":
 		fs := flag.NewFlagSet("event", flag.ExitOnError)
-		fs.StringVar(&dbPath, "db", "romancy.db", "Database path or URL")
-		fs.StringVar(&baseURL, "url", "http://localhost:8080", "Base URL of running Romancy server")
+		fs.StringVar(&dbPath, "db", "selvedge.db", "Database path or URL")
+		fs.StringVar(&baseURL, "url", "http://localhost:8080", "Base URL of running Selvedge server")
 		_ = fs.Parse(cmdArgs)
 		args := fs.Args()
 
 		if len(args) < 3 {
 			fmt.Println("Error: instance_id, event_type, and json_data are required")
-			fmt.Println("Usage: romancy event <instance_id> <event_type> <json_data> [--db <path>] [--url <base_url>]")
+			fmt.Println("Usage: selvedge event <instance_id> <event_type> <json_data> [--db <path>] [--url <base_url>]")
 			os.Exit(1)
 		}
 		if err := cmdEvent(args[0], args[1], args[2]); err != nil {
@@ -75,7 +75,7 @@ func main() {
 
 	case "list":
 		fs := flag.NewFlagSet("list", flag.ExitOnError)
-		fs.StringVar(&dbPath, "db", "romancy.db", "Database path or URL")
+		fs.StringVar(&dbPath, "db", "selvedge.db", "Database path or URL")
 		statusFlag := fs.String("status", "", "Filter by status")
 		pageToken := fs.String("page-token", "", "Pagination token for next page")
 		_ = fs.Parse(cmdArgs)
@@ -87,14 +87,14 @@ func main() {
 
 	case "cancel":
 		fs := flag.NewFlagSet("cancel", flag.ExitOnError)
-		fs.StringVar(&dbPath, "db", "romancy.db", "Database path or URL")
-		fs.StringVar(&baseURL, "url", "http://localhost:8080", "Base URL of running Romancy server")
+		fs.StringVar(&dbPath, "db", "selvedge.db", "Database path or URL")
+		fs.StringVar(&baseURL, "url", "http://localhost:8080", "Base URL of running Selvedge server")
 		_ = fs.Parse(cmdArgs)
 		args := fs.Args()
 
 		if len(args) < 1 {
 			fmt.Println("Error: instance_id is required")
-			fmt.Println("Usage: romancy cancel <instance_id> [--db <path>]")
+			fmt.Println("Usage: selvedge cancel <instance_id> [--db <path>]")
 			os.Exit(1)
 		}
 		if err := cmdCancel(args[0]); err != nil {
@@ -118,10 +118,10 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Println("Romancy CLI - Interact with Romancy workflows")
+	fmt.Println("Selvedge CLI - Interact with Selvedge workflows")
 	fmt.Println()
 	fmt.Println("Usage:")
-	fmt.Println("  romancy <command> [arguments] [flags]")
+	fmt.Println("  selvedge <command> [arguments] [flags]")
 	fmt.Println()
 	fmt.Println("Commands:")
 	fmt.Println("  get <instance_id>                     Get workflow instance details")
@@ -130,8 +130,8 @@ func printUsage() {
 	fmt.Println("  cancel <instance_id>                  Cancel a workflow")
 	fmt.Println()
 	fmt.Println("Flags:")
-	fmt.Println("  --db <url>          Database path or URL (default: romancy.db)")
-	fmt.Println("  --url <base_url>    Romancy server URL (default: http://localhost:8080)")
+	fmt.Println("  --db <url>          Database path or URL (default: selvedge.db)")
+	fmt.Println("  --url <base_url>    Selvedge server URL (default: http://localhost:8080)")
 	fmt.Println("  --status <status>   Filter by workflow status (for list command)")
 	fmt.Println("  --page-token <tok>  Pagination token for next page (for list command)")
 	fmt.Println()
@@ -146,11 +146,11 @@ func printUsage() {
 	fmt.Println("  dbmate -d schema/db/migrations/mysql up")
 	fmt.Println()
 	fmt.Println("Examples:")
-	fmt.Println("  romancy get wf-123abc")
-	fmt.Println("  romancy event wf-123abc payment.completed '{\"transaction_id\":\"TX-001\"}'")
-	fmt.Println("  romancy list --status running")
-	fmt.Println("  romancy list --page-token 'eyJ...'")
-	fmt.Println("  romancy cancel wf-123abc")
+	fmt.Println("  selvedge get wf-123abc")
+	fmt.Println("  selvedge event wf-123abc payment.completed '{\"transaction_id\":\"TX-001\"}'")
+	fmt.Println("  selvedge list --status running")
+	fmt.Println("  selvedge list --page-token 'eyJ...'")
+	fmt.Println("  selvedge cancel wf-123abc")
 }
 
 func openStorage() (storage.Storage, error) {
@@ -244,7 +244,7 @@ func cmdGet(instanceID string) error {
 	return nil
 }
 
-// cmdEvent sends a CloudEvent to a running Romancy server.
+// cmdEvent sends a CloudEvent to a running Selvedge server.
 func cmdEvent(instanceID, eventType, jsonData string) error {
 	// Validate JSON
 	var data interface{}
@@ -256,13 +256,13 @@ func cmdEvent(instanceID, eventType, jsonData string) error {
 	cloudEvent := map[string]interface{}{
 		"specversion":     "1.0",
 		"type":            eventType,
-		"source":          "romancy-cli",
+		"source":          "selvedge-cli",
 		"id":              fmt.Sprintf("cli-%d", time.Now().UnixNano()),
 		"time":            time.Now().UTC().Format(time.RFC3339),
 		"datacontenttype": "application/json",
 		"data":            data,
 		// Extension for targeting specific instance
-		"romancyinstanceid": instanceID,
+		"selvedgeinstanceid": instanceID,
 	}
 
 	body, err := json.Marshal(cloudEvent)

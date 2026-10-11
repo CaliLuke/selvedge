@@ -1,4 +1,4 @@
-# Romancy - Development Commands
+# Selvedge - Development Commands
 # Run `make` or `make help` to see available commands
 
 .PHONY: help build test test-coverage test-verbose lint lint-fix fmt tidy clean install-tools check build-examples build-cmd sync-schema check-schema-sync
@@ -19,7 +19,7 @@ GOLANGCI_LINT_VERSION := v2.7.1
 GOLANGCI_LINT := $(shell which golangci-lint 2>/dev/null || echo "$(shell go env GOPATH)/bin/golangci-lint")
 
 help: ## Show this help message
-	@echo "Romancy - Development Commands"
+	@echo "Selvedge - Development Commands"
 	@echo ""
 	@echo "Usage: make [target]"
 	@echo ""
@@ -30,7 +30,7 @@ build: ## Build the project
 	$(GOBUILD) ./...
 
 build-cmd: ## Build the CLI tool
-	$(GOBUILD) -o romancy ./cmd/romancy
+	$(GOBUILD) -o selvedge ./cmd/selvedge
 
 build-examples: ## Build all examples
 	@for dir in examples/*/; do \
@@ -61,7 +61,7 @@ tidy: ## Run go mod tidy
 
 clean: ## Clean build artifacts and caches
 	$(GOCLEAN) ./...
-	rm -rf romancy
+	rm -rf selvedge
 	rm -f examples/*/app
 	rm -f *.db *.db-shm *.db-wal
 	rm -rf .golangci-lint-cache

@@ -1,4 +1,4 @@
-// Package main provides a CLI tool for cross-language channel testing between Romancy (Go) and Edda (Python).
+// Package main provides a CLI tool for cross-language channel testing between Selvedge (Go) and Edda (Python).
 //
 // Usage:
 //
@@ -21,7 +21,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/i2y/romancy"
+	"github.com/CaliLuke/selvedge"
 )
 
 // TestMessage is a message type with strict Go types.
@@ -87,23 +87,23 @@ type SendToResult struct {
 }
 
 // subscriberWorkflow waits for a message on the channel.
-var subscriberWorkflow = romancy.DefineWorkflow("crosstest_subscriber",
-	func(ctx *romancy.WorkflowContext, input SubscriberInput) (SubscriberResult, error) {
+var subscriberWorkflow = selvedge.DefineWorkflow("crosstest_subscriber",
+	func(ctx *selvedge.WorkflowContext, input SubscriberInput) (SubscriberResult, error) {
 		result := SubscriberResult{Received: false}
 
 		// Determine subscription mode
-		var mode romancy.ChannelMode
+		var mode selvedge.ChannelMode
 		switch input.ChannelMode {
 		case "competing":
-			mode = romancy.ModeCompeting
+			mode = selvedge.ModeCompeting
 		case "direct":
-			mode = romancy.ModeDirect
+			mode = selvedge.ModeDirect
 		default:
-			mode = romancy.ModeBroadcast
+			mode = selvedge.ModeBroadcast
 		}
 
 		log.Printf("[Subscriber] Subscribing to channel '%s' in %s mode (instance: %s)", input.Channel, input.ChannelMode, ctx.InstanceID())
-		if err := romancy.Subscribe(ctx, input.Channel, mode); err != nil {
+		if err := selvedge.Subscribe(ctx, input.Channel, mode); err != nil {
 			result.Error = fmt.Sprintf("subscribe failed: %v", err)
 			return result, nil
 		}
@@ -114,14 +114,14 @@ var subscriberWorkflow = romancy.DefineWorkflow("crosstest_subscriber",
 		// Use different message types based on MessageType setting
 		if input.MessageType == "compatible" {
 			// Use CompatibleMessage (string timestamp) for cross-language compatibility
-			msg, err := romancy.Receive[CompatibleMessage](ctx, input.Channel, romancy.WithReceiveTimeout(timeout))
+			msg, err := selvedge.Receive[CompatibleMessage](ctx, input.Channel, selvedge.WithReceiveTimeout(timeout))
 			if err != nil {
-				var timeoutErr *romancy.ChannelMessageTimeoutError
+				var timeoutErr *selvedge.ChannelMessageTimeoutError
 				if errors.As(err, &timeoutErr) {
 					result.Error = "timeout"
 					return result, nil
 				}
-				if romancy.IsSuspendSignal(err) {
+				if selvedge.IsSuspendSignal(err) {
 					return result, err
 				}
 				result.Error = fmt.Sprintf("receive failed: %v", err)
@@ -135,14 +135,14 @@ var subscriberWorkflow = romancy.DefineWorkflow("crosstest_subscriber",
 		}
 
 		// Default: Use TestMessage (time.Time timestamp) - may fail with Python messages
-		msg, err := romancy.Receive[TestMessage](ctx, input.Channel, romancy.WithReceiveTimeout(timeout))
+		msg, err := selvedge.Receive[TestMessage](ctx, input.Channel, selvedge.WithReceiveTimeout(timeout))
 		if err != nil {
-			var timeoutErr *romancy.ChannelMessageTimeoutError
+			var timeoutErr *selvedge.ChannelMessageTimeoutError
 			if errors.As(err, &timeoutErr) {
 				result.Error = "timeout"
 				return result, nil
 			}
-			if romancy.IsSuspendSignal(err) {
+			if selvedge.IsSuspendSignal(err) {
 				return result, err
 			}
 			result.Error = fmt.Sprintf("receive failed: %v", err)
@@ -158,8 +158,8 @@ var subscriberWorkflow = romancy.DefineWorkflow("crosstest_subscriber",
 )
 
 // publisherWorkflow sends a message to the channel.
-var publisherWorkflow = romancy.DefineWorkflow("crosstest_publisher",
-	func(ctx *romancy.WorkflowContext, input PublisherInput) (PublisherResult, error) {
+var publisherWorkflow = selvedge.DefineWorkflow("crosstest_publisher",
+	func(ctx *selvedge.WorkflowContext, input PublisherInput) (PublisherResult, error) {
 		result := PublisherResult{Published: false}
 
 		msg := TestMessage{
@@ -170,12 +170,12 @@ var publisherWorkflow = romancy.DefineWorkflow("crosstest_publisher",
 
 		log.Printf("[Publisher] Publishing message to channel '%s': %s", input.Channel, input.Text)
 
-		var opts []romancy.PublishOption
+		var opts []selvedge.PublishOption
 		if input.Metadata != nil {
-			opts = append(opts, romancy.WithMetadata(input.Metadata))
+			opts = append(opts, selvedge.WithMetadata(input.Metadata))
 		}
 
-		if err := romancy.Publish(ctx, input.Channel, msg, opts...); err != nil {
+		if err := selvedge.Publish(ctx, input.Channel, msg, opts...); err != nil {
 			result.Error = fmt.Sprintf("publish failed: %v", err)
 			return result, nil
 		}
@@ -187,8 +187,8 @@ var publisherWorkflow = romancy.DefineWorkflow("crosstest_publisher",
 )
 
 // sendToWorkflow sends a message directly to a specific workflow instance.
-var sendToWorkflow = romancy.DefineWorkflow("crosstest_send_to",
-	func(ctx *romancy.WorkflowContext, input SendToInput) (SendToResult, error) {
+var sendToWorkflow = selvedge.DefineWorkflow("crosstest_send_to",
+	func(ctx *selvedge.WorkflowContext, input SendToInput) (SendToResult, error) {
 		result := SendToResult{Sent: false}
 
 		msg := TestMessage{
@@ -199,12 +199,12 @@ var sendToWorkflow = romancy.DefineWorkflow("crosstest_send_to",
 
 		log.Printf("[SendTo] Sending direct message to instance '%s' on channel '%s': %s", input.TargetInstanceID, input.Channel, input.Text)
 
-		var opts []romancy.PublishOption
+		var opts []selvedge.PublishOption
 		if input.Metadata != nil {
-			opts = append(opts, romancy.WithMetadata(input.Metadata))
+			opts = append(opts, selvedge.WithMetadata(input.Metadata))
 		}
 
-		if err := romancy.SendTo(ctx, input.TargetInstanceID, input.Channel, msg, opts...); err != nil {
+		if err := selvedge.SendTo(ctx, input.TargetInstanceID, input.Channel, msg, opts...); err != nil {
 			result.Error = fmt.Sprintf("send_to failed: %v", err)
 			return result, nil
 		}
@@ -216,12 +216,12 @@ var sendToWorkflow = romancy.DefineWorkflow("crosstest_send_to",
 )
 
 // waitForResult polls for workflow completion and returns the result.
-func waitForResult[O any](ctx context.Context, app *romancy.App, instanceID string, timeout time.Duration) (*O, error) {
+func waitForResult[O any](ctx context.Context, app *selvedge.App, instanceID string, timeout time.Duration) (*O, error) {
 	deadline := time.Now().Add(timeout)
 	pollInterval := 100 * time.Millisecond
 
 	for time.Now().Before(deadline) {
-		result, err := romancy.GetWorkflowResult[O](ctx, app, instanceID)
+		result, err := selvedge.GetWorkflowResult[O](ctx, app, instanceID)
 		if err != nil {
 			return nil, err
 		}
@@ -278,16 +278,16 @@ func main() {
 
 	ctx := context.Background()
 
-	// Create Romancy app with SQLite
-	app := romancy.NewApp(
-		romancy.WithDatabase(*dbPath),
-		romancy.WithWorkerID(*workerID),
+	// Create Selvedge app with SQLite
+	app := selvedge.NewApp(
+		selvedge.WithDatabase(*dbPath),
+		selvedge.WithWorkerID(*workerID),
 	)
 
 	// Register workflows
-	romancy.RegisterWorkflow[SubscriberInput, SubscriberResult](app, subscriberWorkflow)
-	romancy.RegisterWorkflow[PublisherInput, PublisherResult](app, publisherWorkflow)
-	romancy.RegisterWorkflow[SendToInput, SendToResult](app, sendToWorkflow)
+	selvedge.RegisterWorkflow[SubscriberInput, SubscriberResult](app, subscriberWorkflow)
+	selvedge.RegisterWorkflow[PublisherInput, PublisherResult](app, publisherWorkflow)
+	selvedge.RegisterWorkflow[SendToInput, SendToResult](app, sendToWorkflow)
 
 	// Start the app
 	if err := app.Start(ctx); err != nil {
@@ -314,7 +314,7 @@ func main() {
 		}
 
 		log.Printf("Starting subscriber workflow...")
-		instanceID, err := romancy.StartWorkflow(ctx, app, subscriberWorkflow, input)
+		instanceID, err := selvedge.StartWorkflow(ctx, app, subscriberWorkflow, input)
 		if err != nil {
 			log.Fatalf("Failed to start subscriber workflow: %v", err)
 		}
@@ -353,7 +353,7 @@ func main() {
 		}
 
 		log.Printf("Starting publisher workflow...")
-		instanceID, err := romancy.StartWorkflow(ctx, app, publisherWorkflow, input)
+		instanceID, err := selvedge.StartWorkflow(ctx, app, publisherWorkflow, input)
 		if err != nil {
 			log.Fatalf("Failed to start publisher workflow: %v", err)
 		}
@@ -393,7 +393,7 @@ func main() {
 		}
 
 		log.Printf("Starting send-to workflow...")
-		instanceID, err := romancy.StartWorkflow(ctx, app, sendToWorkflow, input)
+		instanceID, err := selvedge.StartWorkflow(ctx, app, sendToWorkflow, input)
 		if err != nil {
 			log.Fatalf("Failed to start send-to workflow: %v", err)
 		}
