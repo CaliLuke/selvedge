@@ -27,7 +27,9 @@ func createTestAppWithPostgres(t *testing.T, opts ...Option) (*App, func()) {
 		testcontainers.WithWaitStrategy(
 			wait.ForLog("database system is ready to accept connections").
 				WithOccurrence(2).
-				WithStartupTimeout(5*time.Minute)),
+				WithStartupTimeout(5*time.Minute),
+			// Container logs can precede the host port forward on macOS.
+			wait.ForListeningPort("5432/tcp")),
 	)
 	if err != nil {
 		t.Fatalf("failed to start PostgreSQL container: %v", err)

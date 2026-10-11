@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // ========================================
@@ -43,13 +45,8 @@ func TestPostgresIntegration_LeaderElection(t *testing.T) {
 	}
 	defer func() { _ = app.Shutdown(ctx) }()
 
-	// Wait for leader election to run
-	time.Sleep(200 * time.Millisecond)
-
-	// Single worker should become leader
-	if !app.isLeader.Load() {
-		t.Error("expected single worker to become leader")
-	}
+	// Wait for the asynchronous election instead of assuming startup latency.
+	require.Eventually(t, app.isLeader.Load, 5*time.Second, 10*time.Millisecond, "expected single worker to become leader")
 }
 
 func TestPostgresIntegration_LeaderElectionMultiWorker(t *testing.T) {
@@ -66,12 +63,8 @@ func TestPostgresIntegration_LeaderElectionMultiWorker(t *testing.T) {
 		t.Fatalf("failed to start app1: %v", err)
 	}
 
-	// Wait for app1 to become leader
-	time.Sleep(200 * time.Millisecond)
-
-	if !app1.isLeader.Load() {
-		t.Error("expected app1 to become leader")
-	}
+	// Wait for the asynchronous election instead of assuming startup latency.
+	require.Eventually(t, app1.isLeader.Load, 5*time.Second, 10*time.Millisecond, "expected app1 to become leader")
 
 	// Note: Creating a second app with the same container is complex
 	// because we'd need to reuse the same container's connection.
