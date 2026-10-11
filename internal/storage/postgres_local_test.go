@@ -47,11 +47,7 @@ func pgLocalCleanup(t *testing.T, s *PostgresStorage) {
 		"channel_delivery_cursors",
 		"channel_messages",
 		"channel_subscriptions",
-		"workflow_group_memberships",
-		"workflow_compensations",
-		"outbox_events",
 		"workflow_timer_subscriptions",
-		"workflow_history_archive",
 		"workflow_history",
 		"workflow_instances",
 		"workflow_definitions",
@@ -82,8 +78,8 @@ func pgLocalInsertInstance(t *testing.T, s *PostgresStorage, id, name, framework
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO workflow_instances (
 			instance_id, workflow_name, framework, status, input_data, source_hash,
-			started_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
+			started_at, updated_at, owner_service
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $7, 'test')
 	`, id, name, framework, string(status), "{}", "test-hash", now)
 	if err != nil {
 		t.Fatalf("insert workflow_instances: %v", err)

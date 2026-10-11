@@ -43,7 +43,7 @@ func setupPostgresContainer(t *testing.T) (*PostgresStorage, func()) {
 		t.Fatalf("failed to create PostgreSQL storage: %v", err)
 	}
 
-	// Use embedded test schema instead of Initialize() (which is now no-op)
+	// Apply the embedded schema instead of Initialize() (which is a no-op)
 	if err := InitializeTestSchemaPostgres(ctx, store); err != nil {
 		store.Close()
 		testcontainers.CleanupContainer(t, container)
@@ -67,11 +67,7 @@ func cleanupPostgresTables(t *testing.T, store *PostgresStorage) {
 		"channel_delivery_cursors",
 		"channel_subscriptions",
 		"channel_messages",
-		"workflow_group_memberships",
-		"outbox_events",
-		"workflow_compensations",
 		"workflow_timer_subscriptions",
-		"workflow_history_archive",
 		"workflow_history",
 		"workflow_instances",
 		"system_locks",

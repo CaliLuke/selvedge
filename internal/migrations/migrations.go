@@ -19,6 +19,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 )
 
 // DetectDBType detects database type from connection URL.
@@ -41,25 +42,20 @@ func DetectDBType(url string) (string, error) {
 // This table is compatible with dbmate's migration tracking.
 // Safe for concurrent execution by multiple workers.
 func EnsureSchemaMigrationsTable(ctx context.Context, db *sql.DB, dbType string) error {
-	// All databases use the same schema (VARCHAR(255) is universal)
-	createSQL := `
-		CREATE TABLE IF NOT EXISTS schema_migrations (
-			version VARCHAR(255) PRIMARY KEY
-		)
-	`
+	return withMigrationTransaction(ctx, db, dbType, func(conn *sql.Conn) error {
+		return ensureSchemaMigrationsTable(ctx, conn)
+	})
+}
 
-	_, err := db.ExecContext(ctx, createSQL)
-	if err != nil {
-		// Handle concurrent table creation - another worker might have created it
-		errMsg := strings.ToLower(err.Error())
-		if strings.Contains(errMsg, "already exists") ||
-			strings.Contains(errMsg, "duplicate") ||
-			strings.Contains(errMsg, "42p07") { // PostgreSQL: relation already exists
-			return nil
-		}
-		return err
-	}
-	return nil
+type sqlExecutor interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+func ensureSchemaMigrationsTable(ctx context.Context, conn sqlExecutor) error {
+	_, err := conn.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
+  version VARCHAR(255) PRIMARY KEY
+ )`)
+	return err
 }
 
 // GetAppliedMigrations returns a set of already applied migration versions.
@@ -88,25 +84,16 @@ func GetAppliedMigrations(ctx context.Context, db *sql.DB) (map[string]bool, err
 //
 // Returns true if recorded successfully, false if already recorded (race condition).
 func RecordMigration(ctx context.Context, db *sql.DB, dbType, version string) (bool, error) {
-	// Use appropriate placeholder syntax
-	var query string
+	query := "INSERT INTO schema_migrations (version) VALUES (?) ON CONFLICT (version) DO NOTHING"
 	if dbType == "postgresql" {
-		query = "INSERT INTO schema_migrations (version) VALUES ($1)"
-	} else {
-		query = "INSERT INTO schema_migrations (version) VALUES (?)"
+		query = "INSERT INTO schema_migrations (version) VALUES ($1) ON CONFLICT (version) DO NOTHING"
 	}
-	_, err := db.ExecContext(ctx, query, version)
+	result, err := db.ExecContext(ctx, query, version)
 	if err != nil {
-		// Handle race condition: another worker already recorded this migration
-		errMsg := strings.ToLower(err.Error())
-		if strings.Contains(errMsg, "unique") ||
-			strings.Contains(errMsg, "duplicate") ||
-			strings.Contains(errMsg, "constraint") {
-			return false, nil
-		}
 		return false, err
 	}
-	return true, nil
+	count, err := result.RowsAffected()
+	return count == 1, err
 }
 
 // ExtractVersionFromFilename extracts version from migration filename.
@@ -145,72 +132,67 @@ func ParseMigrationFile(content string) (upSQL, downSQL string) {
 	return upSQL, downSQL
 }
 
-// ExecuteSQLStatements executes SQL statements from migration file.
-//
-// Handles:
-//   - Multiple statements separated by semicolons
-//   - Comment lines
-//   - "already exists" errors (idempotent)
+// ExecuteSQLStatements executes a SQL batch atomically and returns every SQL error.
+// The database parses statements, including quoted semicolons and comments.
 func ExecuteSQLStatements(ctx context.Context, db *sql.DB, sqlContent, dbType string) error {
-	if sqlContent == "" {
+	if strings.TrimSpace(sqlContent) == "" {
 		return nil
 	}
+	return withMigrationTransaction(ctx, db, dbType, func(conn *sql.Conn) error {
+		return executeSQL(ctx, conn, sqlContent)
+	})
+}
 
-	// Split by semicolons
-	statements := splitSQLStatements(sqlContent)
-
-	for _, stmt := range statements {
-		stmt = strings.TrimSpace(stmt)
-		if stmt == "" {
-			continue
-		}
-
-		// Remove leading comment-only lines
-		lines := strings.Split(stmt, "\n")
-		var sqlLines []string
-		for _, line := range lines {
-			trimmed := strings.TrimSpace(line)
-			if trimmed == "" || strings.HasPrefix(trimmed, "--") {
-				continue
-			}
-			sqlLines = append(sqlLines, line)
-		}
-
-		actualSQL := strings.TrimSpace(strings.Join(sqlLines, "\n"))
-		if actualSQL == "" {
-			continue
-		}
-
-		_, err := db.ExecContext(ctx, actualSQL)
-		if err != nil {
-			// Log but continue - some statements might fail if objects exist
-			errMsg := strings.ToLower(err.Error())
-			if strings.Contains(errMsg, "already exists") ||
-				strings.Contains(errMsg, "duplicate") {
-				slog.Debug("object already exists, skipping", "error", err)
-				continue
-			}
-			return fmt.Errorf("failed to execute SQL: %w", err)
-		}
+func executeSQL(ctx context.Context, conn sqlExecutor, content string) error {
+	if _, err := conn.ExecContext(ctx, content); err != nil {
+		return fmt.Errorf("failed to execute SQL: %w", err)
 	}
-
 	return nil
 }
 
-// splitSQLStatements splits SQL content by semicolons.
-// Handles basic cases but may not work for complex stored procedures.
-func splitSQLStatements(sqlContent string) []string {
-	// Simple split by semicolon
-	// Note: This doesn't handle semicolons inside strings or complex cases
-	parts := strings.Split(sqlContent, ";")
-	var result []string
-	for _, part := range parts {
-		trimmed := strings.TrimSpace(part)
-		if trimmed != "" {
-			result = append(result, trimmed)
+// migrationLockID is the stable Selvedge advisory-lock namespace, encoded as
+// ASCII "SELVEDGE". Lock tracking-table creation too, including on a fresh DB.
+const migrationLockID int64 = 0x53454c5645444745
+
+func withMigrationTransaction(ctx context.Context, db *sql.DB, dbType string, apply func(*sql.Conn) error) error {
+	begin := "BEGIN"
+	switch dbType {
+	case "sqlite":
+		begin = "BEGIN IMMEDIATE"
+	case "postgresql":
+	default:
+		return fmt.Errorf("unsupported migration database type: %s", dbType)
+	}
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err := conn.ExecContext(ctx, begin); err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			// Cancellation of application startup must still release the writer lock.
+			rollbackCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_, _ = conn.ExecContext(rollbackCtx, "ROLLBACK")
+		}
+	}()
+	if dbType == "postgresql" {
+		if _, err := conn.ExecContext(ctx, "SELECT pg_advisory_xact_lock($1)", migrationLockID); err != nil {
+			return err
 		}
 	}
-	return result
+	if err := apply(conn); err != nil {
+		return err
+	}
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 // ApplyMigrations applies dbmate migration files automatically.
@@ -245,17 +227,6 @@ func ApplyMigrations(ctx context.Context, db *sql.DB, dbType string, migrationsF
 		return nil, nil
 	}
 
-	// Ensure schema_migrations table exists
-	if err := EnsureSchemaMigrationsTable(ctx, db, dbType); err != nil {
-		return nil, fmt.Errorf("failed to create schema_migrations table: %w", err)
-	}
-
-	// Get already applied migrations
-	applied, err := GetAppliedMigrations(ctx, db)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get applied migrations: %w", err)
-	}
-
 	// Get all migration files sorted by name (timestamp order)
 	var migrationFiles []string
 	for _, entry := range entries {
@@ -270,14 +241,6 @@ func ApplyMigrations(ctx context.Context, db *sql.DB, dbType string, migrationsF
 	for _, filename := range migrationFiles {
 		version := ExtractVersionFromFilename(filename)
 
-		// Skip if already applied
-		if applied[version] {
-			slog.Debug("migration already applied, skipping", "version", version)
-			continue
-		}
-
-		slog.Info("applying migration", "filename", filename)
-
 		// Read and parse migration file
 		filePath := filepath.Join(migrationsDir, filename)
 		content, err := fs.ReadFile(migrationsFS, filePath)
@@ -291,23 +254,12 @@ func ApplyMigrations(ctx context.Context, db *sql.DB, dbType string, migrationsF
 			continue
 		}
 
-		// Execute migration
-		if err := ExecuteSQLStatements(ctx, db, upSQL, dbType); err != nil {
+		applied, err := applyMigration(ctx, db, dbType, version, upSQL)
+		if err != nil {
 			return appliedVersions, fmt.Errorf("failed to apply migration %s: %w", version, err)
 		}
-
-		// Record as applied (handles race condition with other workers)
-		recorded, err := RecordMigration(ctx, db, dbType, version)
-		if err != nil {
-			return appliedVersions, fmt.Errorf("failed to record migration %s: %w", version, err)
-		}
-
-		if recorded {
+		if applied {
 			appliedVersions = append(appliedVersions, version)
-			slog.Info("successfully applied migration", "version", version)
-		} else {
-			// Another worker already applied this migration
-			slog.Debug("migration was applied by another worker", "version", version)
 		}
 	}
 
@@ -318,4 +270,34 @@ func ApplyMigrations(ctx context.Context, db *sql.DB, dbType string, migrationsF
 	}
 
 	return appliedVersions, nil
+}
+
+// Version lookup, DDL, and version insertion share the same locked transaction.
+func applyMigration(ctx context.Context, db *sql.DB, dbType, version, upSQL string) (bool, error) {
+	applied := false
+	err := withMigrationTransaction(ctx, db, dbType, func(conn *sql.Conn) error {
+		if err := ensureSchemaMigrationsTable(ctx, conn); err != nil {
+			return err
+		}
+		placeholder := "?"
+		if dbType == "postgresql" {
+			placeholder = "$1"
+		}
+		var exists bool
+		if err := conn.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = "+placeholder+")", version).Scan(&exists); err != nil {
+			return err
+		}
+		if exists {
+			return nil
+		}
+		if err := executeSQL(ctx, conn, upSQL); err != nil {
+			return err
+		}
+		if _, err := conn.ExecContext(ctx, "INSERT INTO schema_migrations (version) VALUES ("+placeholder+")", version); err != nil {
+			return err
+		}
+		applied = true
+		return nil
+	})
+	return applied && err == nil, err
 }

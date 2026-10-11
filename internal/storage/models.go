@@ -22,23 +22,22 @@ const (
 type WorkflowInstance struct {
 	InstanceID        string         `json:"instance_id"`
 	WorkflowName      string         `json:"workflow_name"`
-	Framework         string         `json:"framework"` // "go" or "python" (Edda unification)
+	Framework         string         `json:"framework"` // "go" or "python"
 	Status            WorkflowStatus `json:"status"`
 	InputData         []byte         `json:"input_data"`          // JSON-encoded input
 	OutputData        []byte         `json:"output_data"`         // JSON-encoded output (if completed)
 	CurrentActivityID string         `json:"current_activity_id"` // Last executed activity ID
-	SourceHash        string         `json:"source_hash"`         // Source code hash (Edda compatibility)
-	OwnerService      string         `json:"owner_service"`       // Service that owns this workflow (Edda compatibility)
+	SourceHash        string         `json:"source_hash"`         // Source code hash
+	OwnerService      string         `json:"owner_service"`       // Service that owns this workflow
 	LockedBy          string         `json:"locked_by"`           // Worker ID holding the lock
 	LockedAt          *time.Time     `json:"locked_at"`           // When the lock was acquired
 	LockTimeoutSec    *int           `json:"lock_timeout_seconds"`
 	LockExpiresAt     *time.Time     `json:"lock_expires_at"`
-	StartedAt         time.Time      `json:"started_at"` // When the workflow was created (unified with Edda)
+	StartedAt         time.Time      `json:"started_at"` // When the workflow was created
 	UpdatedAt         time.Time      `json:"updated_at"`
 }
 
 // HistoryEventType represents the type of history event.
-// Values are unified with Edda (Python) for cross-language compatibility.
 type HistoryEventType string
 
 const (
@@ -81,7 +80,7 @@ type TimerSubscription struct {
 	InstanceID string    `json:"instance_id"`
 	TimerID    string    `json:"timer_id"`
 	ExpiresAt  time.Time `json:"expires_at"`
-	ActivityID string    `json:"activity_id"` // Activity ID for replay matching (Edda compatibility)
+	ActivityID string    `json:"activity_id"` // Activity ID for replay matching
 	CreatedAt  time.Time `json:"created_at"`
 }
 
@@ -123,13 +122,13 @@ const (
 // ChannelMessage represents a message in a channel.
 type ChannelMessage struct {
 	ID          int64     `json:"id"`
-	Channel     string    `json:"channel"`               // Channel name (unified with Edda)
-	MessageID   string    `json:"message_id"`            // UUID for message (Edda compatibility)
-	DataType    string    `json:"data_type"`             // "json" or "binary" (Edda compatibility)
-	Data        []byte    `json:"data,omitempty"`        // JSON data (unified with Edda)
+	Channel     string    `json:"channel"`               // Channel name
+	MessageID   string    `json:"message_id"`            // UUID for message
+	DataType    string    `json:"data_type"`             // "json" or "binary"
+	Data        []byte    `json:"data,omitempty"`        // JSON data
 	DataBinary  []byte    `json:"data_binary,omitempty"` // Binary data
 	Metadata    []byte    `json:"metadata,omitempty"`    // JSON-encoded metadata
-	PublishedAt time.Time `json:"published_at"`          // When the message was published (unified with Edda)
+	PublishedAt time.Time `json:"published_at"`          // When the message was published
 }
 
 // ChannelSubscription represents a workflow's subscription to a channel.
@@ -137,12 +136,12 @@ type ChannelMessage struct {
 type ChannelSubscription struct {
 	ID              int64       `json:"id"`
 	InstanceID      string      `json:"instance_id"`
-	Channel         string      `json:"channel"` // Channel name (unified with Edda)
+	Channel         string      `json:"channel"` // Channel name
 	Mode            ChannelMode `json:"mode"`
-	CursorMessageID int64       `json:"cursor_message_id"` // Last delivered message ID (Edda compatibility)
+	CursorMessageID int64       `json:"cursor_message_id"` // Last delivered message ID
 	TimeoutAt       *time.Time  `json:"timeout_at,omitempty"`
 	ActivityID      string      `json:"activity_id,omitempty"` // Activity ID for replay matching; non-null = waiting
-	SubscribedAt    time.Time   `json:"subscribed_at"`         // When the subscription was created (unified with Edda)
+	SubscribedAt    time.Time   `json:"subscribed_at"`         // When the subscription was created
 }
 
 // ChannelDeliveryResult contains information about a successful message delivery.

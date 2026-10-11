@@ -110,9 +110,9 @@ SQLite and PostgreSQL are the supported storage backends. PostgreSQL also suppor
 
 `App.Start` applies embedded migrations by default. `WithAutoMigrate(false)` disables this behavior. `WithMigrationsFS` supplies an alternative migration filesystem.
 
-The `schema/` submodule contains the canonical schema. The module embeds copies of the SQLite and PostgreSQL migrations from `internal/migrations/sql/`.
+`internal/migrations/sql/` is the schema source of truth. The module embeds one initial schema file for each dialect, and tests apply those same files. Before the first release, edit both schema files in place. Numbered migrations start at S20.
 
-After a schema update, run `make sync-schema`. Run `make check-schema-sync` to check the retained migration copies against the submodule.
+Schema application is transactional: SQLite uses `BEGIN IMMEDIATE`; PostgreSQL takes a transaction-scoped advisory lock before checking `schema_migrations`. SQL errors abort and roll back the schema application.
 
 ## Development
 
@@ -121,7 +121,6 @@ go build ./...
 go vet ./...
 go test ./...
 make lint
-make check-schema-sync
 ```
 
 For PostgreSQL storage tests, start the development database and run:

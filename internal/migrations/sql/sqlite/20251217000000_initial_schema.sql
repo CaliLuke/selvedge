@@ -1,12 +1,5 @@
 -- migrate:up
 
--- Schema version tracking
-CREATE TABLE IF NOT EXISTS schema_version (
-    version INTEGER PRIMARY KEY,
-    applied_at TEXT NOT NULL DEFAULT (datetime('now')),
-    description TEXT NOT NULL
-);
-
 -- Workflow definitions (source code storage)
 CREATE TABLE IF NOT EXISTS workflow_definitions (
     workflow_name TEXT NOT NULL,
@@ -25,7 +18,7 @@ CREATE TABLE IF NOT EXISTS workflow_instances (
     workflow_name TEXT NOT NULL,
     source_hash TEXT NOT NULL,
     owner_service TEXT NOT NULL,
-    framework TEXT NOT NULL DEFAULT 'python',
+    framework TEXT NOT NULL DEFAULT 'go',
     status TEXT NOT NULL DEFAULT 'running',
     current_activity_id TEXT,
     continued_from TEXT,
@@ -38,7 +31,7 @@ CREATE TABLE IF NOT EXISTS workflow_instances (
     lock_timeout_seconds INTEGER,
     lock_expires_at TEXT,
     CONSTRAINT valid_status CHECK (
-        status IN ('running', 'completed', 'failed', 'waiting_for_event', 'waiting_for_timer', 'waiting_for_message', 'compensating', 'cancelled', 'recurred')
+        status IN ('running', 'completed', 'failed', 'waiting_for_event', 'waiting_for_timer', 'waiting_for_message', 'cancelled')
     ),
     FOREIGN KEY (continued_from) REFERENCES workflow_instances(instance_id),
     FOREIGN KEY (workflow_name, source_hash) REFERENCES workflow_definitions(workflow_name, source_hash)
@@ -72,36 +65,6 @@ CREATE TABLE IF NOT EXISTS workflow_history (
 CREATE INDEX IF NOT EXISTS idx_history_instance ON workflow_history(instance_id, activity_id);
 CREATE INDEX IF NOT EXISTS idx_history_created ON workflow_history(created_at);
 
--- Archived workflow history (for recur pattern)
-CREATE TABLE IF NOT EXISTS workflow_history_archive (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    instance_id TEXT NOT NULL,
-    activity_id TEXT NOT NULL,
-    event_type TEXT NOT NULL,
-    data_type TEXT NOT NULL DEFAULT 'json',
-    event_data TEXT,
-    event_data_binary BLOB,
-    created_at TEXT NOT NULL,
-    archived_at TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (instance_id) REFERENCES workflow_instances(instance_id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_history_archive_instance ON workflow_history_archive(instance_id);
-CREATE INDEX IF NOT EXISTS idx_history_archive_archived ON workflow_history_archive(archived_at);
-
--- Compensation transactions (LIFO stack for Saga pattern)
-CREATE TABLE IF NOT EXISTS workflow_compensations (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    instance_id TEXT NOT NULL,
-    activity_id TEXT NOT NULL,
-    activity_name TEXT NOT NULL,
-    args TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (instance_id) REFERENCES workflow_instances(instance_id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_compensations_instance ON workflow_compensations(instance_id, created_at DESC);
-
 -- Timer subscriptions (for wait_timer)
 CREATE TABLE IF NOT EXISTS workflow_timer_subscriptions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -116,40 +79,6 @@ CREATE TABLE IF NOT EXISTS workflow_timer_subscriptions (
 
 CREATE INDEX IF NOT EXISTS idx_timer_subscriptions_expires ON workflow_timer_subscriptions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_timer_subscriptions_instance ON workflow_timer_subscriptions(instance_id);
-
--- Group memberships (Erlang pg style)
-CREATE TABLE IF NOT EXISTS workflow_group_memberships (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    instance_id TEXT NOT NULL,
-    group_name TEXT NOT NULL,
-    joined_at TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (instance_id) REFERENCES workflow_instances(instance_id) ON DELETE CASCADE,
-    CONSTRAINT unique_instance_group UNIQUE (instance_id, group_name)
-);
-
-CREATE INDEX IF NOT EXISTS idx_group_memberships_group ON workflow_group_memberships(group_name);
-CREATE INDEX IF NOT EXISTS idx_group_memberships_instance ON workflow_group_memberships(instance_id);
-
--- Transactional outbox pattern
-CREATE TABLE IF NOT EXISTS outbox_events (
-    event_id TEXT PRIMARY KEY,
-    event_type TEXT NOT NULL,
-    event_source TEXT NOT NULL,
-    data_type TEXT NOT NULL DEFAULT 'json',
-    event_data TEXT,
-    event_data_binary BLOB,
-    content_type TEXT NOT NULL DEFAULT 'application/json',
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    published_at TEXT,
-    status TEXT NOT NULL DEFAULT 'pending',
-    retry_count INTEGER DEFAULT 0,
-    last_error TEXT,
-    CONSTRAINT valid_outbox_status CHECK (status IN ('pending', 'processing', 'published', 'failed', 'invalid', 'expired'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_outbox_status ON outbox_events(status, created_at);
-CREATE INDEX IF NOT EXISTS idx_outbox_retry ON outbox_events(status, retry_count);
-CREATE INDEX IF NOT EXISTS idx_outbox_published ON outbox_events(published_at);
 
 -- Channel messages (persistent message queue)
 CREATE TABLE IF NOT EXISTS channel_messages (
@@ -225,7 +154,6 @@ CREATE TABLE IF NOT EXISTS system_locks (
 
 CREATE INDEX IF NOT EXISTS idx_system_locks_expires ON system_locks(lock_expires_at);
 
-
 -- migrate:down
 
 DROP INDEX IF EXISTS idx_channel_message_claims_instance;
@@ -243,25 +171,9 @@ DROP INDEX IF EXISTS idx_channel_messages_id;
 DROP INDEX IF EXISTS idx_channel_messages_channel;
 DROP TABLE IF EXISTS channel_messages;
 
-DROP INDEX IF EXISTS idx_outbox_published;
-DROP INDEX IF EXISTS idx_outbox_retry;
-DROP INDEX IF EXISTS idx_outbox_status;
-DROP TABLE IF EXISTS outbox_events;
-
-DROP INDEX IF EXISTS idx_group_memberships_instance;
-DROP INDEX IF EXISTS idx_group_memberships_group;
-DROP TABLE IF EXISTS workflow_group_memberships;
-
 DROP INDEX IF EXISTS idx_timer_subscriptions_instance;
 DROP INDEX IF EXISTS idx_timer_subscriptions_expires;
 DROP TABLE IF EXISTS workflow_timer_subscriptions;
-
-DROP INDEX IF EXISTS idx_compensations_instance;
-DROP TABLE IF EXISTS workflow_compensations;
-
-DROP INDEX IF EXISTS idx_history_archive_archived;
-DROP INDEX IF EXISTS idx_history_archive_instance;
-DROP TABLE IF EXISTS workflow_history_archive;
 
 DROP INDEX IF EXISTS idx_history_created;
 DROP INDEX IF EXISTS idx_history_instance;
@@ -280,5 +192,3 @@ DROP TABLE IF EXISTS workflow_instances;
 DROP INDEX IF EXISTS idx_definitions_hash;
 DROP INDEX IF EXISTS idx_definitions_name;
 DROP TABLE IF EXISTS workflow_definitions;
-
-DROP TABLE IF EXISTS schema_version;

@@ -43,9 +43,9 @@ func NewPostgresStorage(connStr string) (*PostgresStorage, error) {
 }
 
 // Initialize is deprecated. Use dbmate for migrations:
-// dbmate -d schema/db/migrations/postgresql up
+// dbmate -d internal/migrations/sql/postgresql up
 func (s *PostgresStorage) Initialize(ctx context.Context) error {
-	slog.Warn("Initialize() is deprecated. Use dbmate for migrations: dbmate -d schema/db/migrations/postgresql up")
+	slog.Warn("Initialize() is deprecated. Use dbmate for migrations: dbmate -d internal/migrations/sql/postgresql up")
 	return nil
 }
 
@@ -466,7 +466,7 @@ func (s *PostgresStorage) FindResumableWorkflows(ctx context.Context, limit int)
 // --- Lock Manager ---
 
 // TryAcquireLock attempts to acquire a lock on a workflow instance.
-// Uses SELECT FOR UPDATE SKIP LOCKED pattern (matches Edda/Shikibu).
+// Uses SELECT FOR UPDATE SKIP LOCKED pattern.
 // SKIP LOCKED allows concurrent workers to not block on locked rows.
 func (s *PostgresStorage) TryAcquireLock(ctx context.Context, instanceID, workerID string, timeoutSec int) (bool, error) {
 	conn := s.getConn(ctx)

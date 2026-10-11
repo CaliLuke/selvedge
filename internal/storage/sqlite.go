@@ -56,9 +56,9 @@ func NewSQLiteStorage(dbPath string) (*SQLiteStorage, error) {
 }
 
 // Initialize is deprecated. Use dbmate for migrations:
-// dbmate -d schema/db/migrations/sqlite up
+// dbmate -d internal/migrations/sql/sqlite up
 func (s *SQLiteStorage) Initialize(ctx context.Context) error {
-	slog.Warn("Initialize() is deprecated. Use dbmate for migrations: dbmate -d schema/db/migrations/sqlite up")
+	slog.Warn("Initialize() is deprecated. Use dbmate for migrations: dbmate -d internal/migrations/sql/sqlite up")
 	return nil
 }
 

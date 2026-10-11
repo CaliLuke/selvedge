@@ -40,7 +40,7 @@ func createTestApp(t *testing.T, opts ...Option) (*App, func()) {
 	_ = store.Close()
 
 	// Create app with the database path and any additional options
-	// Disable auto-migrate since we already created the schema manually
+	// Disable auto-migrate since we already applied the embedded schema
 	allOpts := append([]Option{WithDatabase(tmpPath), WithAutoMigrate(false)}, opts...)
 	app := NewApp(allOpts...)
 

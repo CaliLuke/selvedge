@@ -72,7 +72,7 @@ func defaultConfig() *appConfig {
 		messageCheckInterval:       5 * time.Second,
 		channelCleanupInterval:     300 * time.Second,
 		channelMessageRetention:    24 * time.Hour,
-		workflowResumptionInterval: 1 * time.Second, // Same as Edda
+		workflowResumptionInterval: 1 * time.Second,
 		maxConcurrentResumptions:   10,
 		maxConcurrentTimers:        10,
 		maxConcurrentMessages:      10,
@@ -100,14 +100,14 @@ func WithDatabase(url string) Option {
 // WithAutoMigrate enables or disables automatic database migrations on startup.
 //
 // When enabled (default), selvedge will automatically apply pending dbmate-compatible
-// migrations from the embedded schema/db/migrations/ directory during App.Start().
+// migrations from the embedded internal/migrations/sql/ directory during App.Start().
 //
 // This is compatible with the dbmate CLI tool and uses the same schema_migrations
 // table for tracking applied migrations.
 //
 // Set to false if you prefer to manage migrations manually using dbmate CLI:
 //
-//	dbmate -d schema/db/migrations/sqlite up
+//	dbmate -d internal/migrations/sql/sqlite up
 func WithAutoMigrate(enabled bool) Option {
 	return func(c *appConfig) {
 		c.autoMigrate = enabled
@@ -116,7 +116,7 @@ func WithAutoMigrate(enabled bool) Option {
 
 // WithMigrationsFS sets a custom filesystem for database migrations.
 //
-// By default, selvedge uses embedded migrations from schema/db/migrations/.
+// By default, selvedge uses embedded migrations from internal/migrations/sql/.
 // Use this option to provide custom migrations from a different source.
 //
 // The filesystem should contain subdirectories for each database type:
@@ -212,7 +212,7 @@ func WithChannelMessageRetention(d time.Duration) Option {
 // WithWorkflowResumptionInterval sets the interval for the workflow resumption task.
 // This task finds workflows with status='running' that don't have an active lock
 // and resumes them. This is essential for load balancing in multi-worker environments.
-// Default: 1 second (same as Edda).
+// Default: 1 second.
 func WithWorkflowResumptionInterval(d time.Duration) Option {
 	return func(c *appConfig) {
 		c.workflowResumptionInterval = d
