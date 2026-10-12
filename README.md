@@ -437,6 +437,56 @@ WorkflowStatus has four values: StatusRunning, StatusCompleted, StatusFailed, an
 StatusCancelled. A newly created instance reports StatusRunning before execution.
 Describe returns WorkflowNotFoundError for an unknown instance.
 
+## Replay checks
+
+Use `ExportHistory(ctx, app, instanceID)` to capture one consistent snapshot of an
+instance. The App must have initialized storage. Marshal the returned
+`RecordedHistory` with `json.Marshal`, and load it with `ParseHistory`. The
+`selvedge.history/v1` format contains command history, workflow metadata, and
+signal delivery positions. It excludes ownership, leases, and signal payloads.
+Missing event values remain distinct from recorded JSON `null` results.
+`ParseHistory` rejects unknown fields and unsupported formats or versions.
+
+Register the workflow on an App, then call `ReplayHistory(ctx, app, history)` to
+check its code against the snapshot. This App need not be started. Replay takes
+no lease, writes no state, fires no hooks, and neither registers nor executes
+activities. Workflow code must still avoid external I/O and blocking outside
+workflow commands. Query and replay checks use the same read-only execution path.
+
+A running history can stop at its recorded frontier. A closed history must reach
+the recorded close: completed outputs must contain the same JSON value, failed
+outcomes must preserve the error kind and message, and cancelled outcomes must
+preserve cancellation. JSON object order and equivalent number spellings do not
+change an output. Command changes and leftover commands produce
+`NondeterminismError`; changed outcomes produce `ReplayOutcomeError`.
+`ReplayError` wraps the divergence and the workflow's original Go error, so
+`errors.Is` and `errors.As` can inspect either cause.
+
+`ReplayInstance` combines export and verification. For example, check one page of
+running instances using registered workflow code:
+
+```go
+func checkRunning(ctx context.Context, app *selvedge.App) error {
+    instances, err := app.FindInstancesWithOptions(ctx, selvedge.FindInstancesOptions{
+        StatusFilter: selvedge.StatusRunning,
+        Limit: 100,
+    })
+    if err != nil {
+        return err
+    }
+    for _, instance := range instances {
+        if err := selvedge.ReplayInstance(ctx, app, instance.InstanceID); err != nil {
+            return err
+        }
+    }
+    return nil
+}
+```
+
+Check exported histories before deployment, and drain running instances before
+changing their workflow code. A successful check covers only the recorded
+history; it does not predict commands on paths the instance has not reached.
+
 ## Storage and migrations
 
 SQLite and PostgreSQL are the supported storage backends. PostgreSQL also supports LISTEN/NOTIFY for workflow wakeups.

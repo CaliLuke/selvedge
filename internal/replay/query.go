@@ -20,10 +20,40 @@ var errQueryForeignGoroutine = errors.New("query stop requested off the workflow
 type QueryExecution struct {
 	execution *ExecutionContext
 	coroutine *coroutine
+	// Position is the last recorded command reached by snapshot replay.
+	Position int64
+	// Stopped means execution reached a command or storage boundary needing live input.
+	Stopped bool
+	// Result and WorkflowErr retain the runner's actual return values in verify mode.
+	Result      any
+	WorkflowErr error
 }
+
+// ReplayPurpose selects the consumer of a detached snapshot execution.
+type ReplayPurpose uint8
+
+const (
+	// QueryPurpose preserves handlers at the recorded frontier.
+	QueryPurpose ReplayPurpose = iota
+	// VerifyPurpose preserves the workflow's result and live error for outcome checking.
+	VerifyPurpose
+)
 
 // Query replays a detached snapshot without a lease, database access, or hooks.
 func (e *Engine) Query(ctx context.Context, id string, runner WorkflowRunner, snapshot *storage.InstanceSnapshot) (*QueryExecution, error) {
+	execution, err := e.Replay(ctx, id, runner, snapshot, QueryPurpose)
+	if err != nil {
+		if execution != nil {
+			execution.Close()
+		}
+		return nil, err
+	}
+	return execution, nil
+}
+
+// Replay is the shared read-only execution path for queries and history verification.
+// A returned execution must be closed even when divergence is non-nil.
+func (e *Engine) Replay(ctx context.Context, id string, runner WorkflowRunner, snapshot *storage.InstanceSnapshot, purpose ReplayPurpose) (*QueryExecution, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -45,28 +75,27 @@ func (e *Engine) Query(ctx context.Context, id string, runner WorkflowRunner, sn
 	for _, p := range snapshot.Signals {
 		ec.signals[p.ID] = p
 	}
-	co := startCoroutine(ec, func(ec *ExecutionContext) (any, error) {
-		_, _ = runner(ec)
-		return nil, ec.stopQuery()
-	})
+	replayRunner := runner
+	if purpose == QueryPurpose {
+		replayRunner = func(ec *ExecutionContext) (any, error) { _, _ = runner(ec); return nil, ec.stopQuery() }
+	}
+	co := startCoroutine(ec, replayRunner)
 	outcome := <-co.outcomes
-	q := &QueryExecution{execution: ec, coroutine: co}
+	q := &QueryExecution{execution: ec, coroutine: co, Position: ec.Position(), Stopped: outcome.wait != nil, Result: outcome.result, WorkflowErr: outcome.err}
 	if outcome.wait == nil {
 		<-co.exited
 		q.coroutine = nil
 	}
 	if err := ec.checkLeftover(); err != nil {
-		q.Close()
-		return nil, err
+		return q, err
 	}
 	if err := ctx.Err(); err != nil {
-		q.Close()
-		return nil, err
+		return q, err
 	}
-	if outcome.wait == nil {
+	if purpose == QueryPurpose && outcome.wait == nil {
 		var workflowPanic *WorkflowPanicError
 		if !errors.As(outcome.err, &workflowPanic) {
-			return nil, outcome.err
+			return q, outcome.err
 		}
 	}
 	return q, nil
@@ -76,6 +105,7 @@ func (e *Engine) Query(ctx context.Context, id string, runner WorkflowRunner, sn
 func (q *QueryExecution) Close() {
 	if q.coroutine != nil {
 		q.coroutine.closeBlocked(q.execution)
+		q.coroutine = nil
 	}
 }
 

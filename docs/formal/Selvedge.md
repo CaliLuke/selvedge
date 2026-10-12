@@ -381,9 +381,14 @@ There are three write classes:
 
 30. An attempt holds its task through a claim: a store-clock lease with its own owner and epoch that the worker renews. A heartbeat is a renewal. `HeartbeatTimeout` is the claim's TTL, and `StartToCloseTimeout` caps every renewal at the attempt's deadline. A claim that is not renewed lapses strictly on the store clock, as rule 4 requires for leases. The attempt may still be running, so the next claim starts a second, concurrent attempt (`ActStart` with `DupAttempts`). The lapsed attempt's writes are rejected by its epoch. This removes behaviours from `ActFinish` and keeps `ResultRecordedOnce`. A retryable failure writes no history: it returns the task to the queue with a durable not-before time and an incremented failure count. This is an `ActCrash` that re-queues, and the retry starts only from the re-queued task row (rule 18). Only the final outcome is a history write, under the class-3 rules: a success, a non-retryable failure, the failure that exhausts the retry policy, or a timeout. The activity sweeper records a `ScheduleToStartTimeout` or an exhausted lapsed claim. It is an environment writer like the timer poller. It sets the value only if it is still unset, only while the task is still in the state that timed out (queued past its deadline, or running with the same lapsed epoch), and in the same transaction as the task update. It sets the runnable flag (rule 9) and never writes the status (as rule 24). Retry and timeout decisions read the options recorded on the task row at reservation, never the options of the worker that runs the attempt. The attempt number is the task's claim count. Only the attempt itself sees it; workflow code and replay never do. A cancelled task is final: no retry claims it, and a running attempt learns of the cancel at its next renewal and its result is dropped. The model bounds retries with the crash budget (`MaxTries`). With an unbounded retry policy, `Termination` depends on the activity eventually succeeding, which `EnvFair` assumes. Not gated: each behaviour is an existing action or removes behaviours. Go tests `TestRetryIsDurable`, `TestHeartbeatTimeoutStartsNewAttempt`, `TestActivityTimeoutRecordedOnce` and `TestRecordedOptionsDriveRetries` must check it.
 
+### Replay checks
+
+31. A code change is safe for running instances only if every recorded history still replays. Each position must hold the command that the new code issues (rule 13), and no recorded command may be left over. The replay harness runs the acquire replay (`FastForward`) on an exported history, with no store, lease, hooks or activities. It reports the first divergence as rule 13 and the leftover check do. On a closed history it must also reach the recorded close, with the same status and output. Not gated: the model runs one fixed script. Go tests `TestReplayHarnessDetectsDivergence` and `TestReplayHarnessWritesNothing` must check it.
+
 | Selvedge API | In the model |
 |--------------|--------------|
 | `ActivityOptions` (StartToCloseTimeout, ScheduleToStartTimeout, HeartbeatTimeout, RetryPolicy, Queue), `RecordHeartbeat`, `GetActivityInfo` | No new action; rule 30 |
+| replay harness (`ReplayHistory`) | Not modelled; rule 31 |
 
 ## How it maps to loom-mcp's engine interface
 
@@ -413,10 +418,7 @@ There are three write classes:
 - **Data values.** Payloads, typed results and error decoding are not
   modelled (Romancy's decode bug, and its replay of errors as strings).
 - **Queries.** The model has no query action. A query writes nothing, so it is a stuttering step, and every invariant and liveness property holds with queries added. Rule 29 states what the engine must do.
-- **Versioning markers (S16).** These are not modelled, and neither is
-  their interaction with the fail-fast command-mismatch check. A version
-  marker must be a recorded command, so that replay of old histories takes
-  the old branch rather than failing.
+- **Versioning.** The model runs one fixed script, so code changes between executions are outside it. Selvedge versions by draining running instances before a code change, and rule 31 states what the replay harness checks.
 - **`ReceiveWithTimeout` edge cases.** A non-positive timeout must be a
   recorded immediate timeout. When the signal wins the race, the losing
   timer's later fire must not wake the instance or change its observation.
