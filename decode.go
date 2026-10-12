@@ -54,8 +54,10 @@ func replayRecordedError(ctx *WorkflowContext, event *storage.HistoryEvent) erro
 	err := decodeError(event.EventData)
 	var decodeErr *ReplayDecodeError
 	if errors.As(err, &decodeErr) {
-		decodeErr.InstanceID = event.InstanceID
-		decodeErr.Key = event.ActivityID
+		if decodeErr.InstanceID == "" && decodeErr.Key == "" {
+			decodeErr.InstanceID = event.InstanceID
+			decodeErr.Key = event.ActivityID
+		}
 		if ctx.execCtx != nil {
 			ctx.execCtx.Fail(err)
 		}

@@ -51,7 +51,7 @@ func Now(ctx *WorkflowContext) (value time.Time, err error) {
 	if err != nil {
 		return time.Time{}, fmt.Errorf("encode workflow time: %w", err)
 	}
-	stored, err := ctx.Storage().RecordHistory(ctx.Context(), ctx.execCtx.Fence(), &storage.HistoryEvent{
+	stored, err := ctx.execCtx.Storage().RecordHistory(ctx.Context(), ctx.execCtx.Fence(), &storage.HistoryEvent{
 		InstanceID: ctx.InstanceID(), Seq: cmd.Seq, ActivityID: cmd.Key,
 		Command: "now", EventType: storage.HistoryNowRecorded, EventData: data, DataType: "json",
 	})

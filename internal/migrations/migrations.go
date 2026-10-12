@@ -12,6 +12,7 @@ package migrations
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -62,44 +63,6 @@ func ensureSchemaMigrationsTable(ctx context.Context, conn sqlExecutor) error {
 	return err
 }
 
-// GetAppliedMigrations returns a set of already applied migration versions.
-func GetAppliedMigrations(ctx context.Context, db *sql.DB) (map[string]bool, error) {
-	applied := make(map[string]bool)
-
-	rows, err := db.QueryContext(ctx, "SELECT version FROM schema_migrations")
-	if err != nil {
-		// Table might not exist yet
-		return applied, nil
-	}
-	defer func() { _ = rows.Close() }()
-
-	for rows.Next() {
-		var version string
-		if err := rows.Scan(&version); err != nil {
-			return nil, err
-		}
-		applied[version] = true
-	}
-
-	return applied, rows.Err()
-}
-
-// RecordMigration records a migration as applied.
-//
-// Returns true if recorded successfully, false if already recorded (race condition).
-func RecordMigration(ctx context.Context, db *sql.DB, dbType, version string) (bool, error) {
-	query := "INSERT INTO schema_migrations (version) VALUES (?) ON CONFLICT (version) DO NOTHING"
-	if dbType == "postgresql" {
-		query = "INSERT INTO schema_migrations (version) VALUES ($1) ON CONFLICT (version) DO NOTHING"
-	}
-	result, err := db.ExecContext(ctx, query, version)
-	if err != nil {
-		return false, err
-	}
-	count, err := result.RowsAffected()
-	return count == 1, err
-}
-
 // ExtractVersionFromFilename extracts version from migration filename.
 //
 // dbmate uses format: YYYYMMDDHHMMSS_description.sql
@@ -136,17 +99,6 @@ func ParseMigrationFile(content string) (upSQL, downSQL string) {
 	return upSQL, downSQL
 }
 
-// ExecuteSQLStatements executes a SQL batch atomically and returns every SQL error.
-// The database parses statements, including quoted semicolons and comments.
-func ExecuteSQLStatements(ctx context.Context, db *sql.DB, sqlContent, dbType string) error {
-	if strings.TrimSpace(sqlContent) == "" {
-		return nil
-	}
-	return withMigrationTransaction(ctx, db, dbType, func(conn *sql.Conn) error {
-		return executeSQL(ctx, conn, sqlContent)
-	})
-}
-
 func executeSQL(ctx context.Context, conn sqlExecutor, content string) error {
 	if _, err := conn.ExecContext(ctx, content); err != nil {
 		return fmt.Errorf("failed to execute SQL: %w", err)
@@ -158,12 +110,13 @@ func executeSQL(ctx context.Context, conn sqlExecutor, content string) error {
 // ASCII "SELVEDGE". Lock tracking-table creation too, including on a fresh DB.
 const migrationLockID int64 = 0x53454c5645444745
 
-func withMigrationTransaction(ctx context.Context, db *sql.DB, dbType string, apply func(*sql.Conn) error) error {
-	begin := "BEGIN"
+func withMigrationTransaction(ctx context.Context, db *sql.DB, dbType string, apply func(*sql.Conn) error) (err error) {
+	var begin string
 	switch dbType {
 	case "sqlite":
 		begin = "BEGIN IMMEDIATE"
 	case "postgresql":
+		begin = "BEGIN ISOLATION LEVEL READ COMMITTED"
 	default:
 		return fmt.Errorf("unsupported migration database type: %s", dbType)
 	}
@@ -181,7 +134,12 @@ func withMigrationTransaction(ctx context.Context, db *sql.DB, dbType string, ap
 			// Cancellation of application startup must still release the writer lock.
 			rollbackCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			_, _ = conn.ExecContext(rollbackCtx, "ROLLBACK")
+			_, rollbackErr := conn.ExecContext(rollbackCtx, "ROLLBACK")
+			if rollbackErr != nil {
+				// An uncertain transaction must never return to the pool.
+				_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+				err = errors.Join(err, fmt.Errorf("rollback migration: %w", rollbackErr))
+			}
 		}
 	}()
 	if dbType == "postgresql" {

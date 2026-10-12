@@ -8,17 +8,20 @@ import (
 )
 
 type errorEnvelope struct {
-	V            int    `json:"v"`
-	Kind         string `json:"kind"`
-	Type         string
-	Message      string
-	NonRetryable bool
-	Details      json.RawMessage `json:"details,omitempty"`
-	Activity     string
-	Attempts     int
-	InstanceID   string         `json:"instance_id,omitempty"`
-	Reason       string         `json:"reason,omitempty"`
-	Cause        *errorEnvelope `json:"cause,omitempty"`
+	V            int              `json:"v"`
+	Kind         string           `json:"kind"`
+	Type         string           `json:"type,omitempty"`
+	Message      string           `json:"message"`
+	NonRetryable bool             `json:"non_retryable,omitempty"`
+	Details      json.RawMessage  `json:"details,omitempty"`
+	Activity     string           `json:"activity,omitempty"`
+	Attempts     int              `json:"attempts,omitempty"`
+	InstanceID   string           `json:"instance_id,omitempty"`
+	Reason       string           `json:"reason,omitempty"`
+	Cause        *errorEnvelope   `json:"cause,omitempty"`
+	Causes       []*errorEnvelope `json:"causes,omitempty"`
+	Key          string           `json:"key,omitempty"`
+	GoType       string           `json:"go_type,omitempty"`
 }
 
 // errorCodec bridges the root error types into the replay engine without an import cycle.
@@ -43,6 +46,9 @@ func envelopeForError(err error) *errorEnvelope {
 	ev := &errorEnvelope{V: 1, Kind: "generic", Message: err.Error()}
 	// Match the current node, not errors.As/Is: those would discard outer wrappers.
 	switch e := err.(type) {
+	case *ReplayDecodeError:
+		ev.Kind = "replay_decode"
+		ev.InstanceID, ev.Key, ev.GoType = e.InstanceID, e.Key, e.GoType
 	case *WorkflowPanicError:
 		ev.Kind = "panic"
 		ev.Details, _ = json.Marshal(e)
@@ -83,7 +89,16 @@ func envelopeForError(err error) *errorEnvelope {
 			ev.Kind = "nondeterminism"
 		}
 	}
-	ev.Cause = envelopeForError(errors.Unwrap(err))
+	if multi, ok := err.(interface{ Unwrap() []error }); ok {
+		ev.Kind = "multi"
+		for _, cause := range multi.Unwrap() {
+			if cause != nil {
+				ev.Causes = append(ev.Causes, envelopeForError(cause))
+			}
+		}
+	} else {
+		ev.Cause = envelopeForError(errors.Unwrap(err))
+	}
 	return ev
 }
 
@@ -95,6 +110,15 @@ type recordedError struct {
 
 func (e *recordedError) Error() string { return e.message }
 func (e *recordedError) Unwrap() error { return e.cause }
+
+// recordedMultiError also preserves custom multi-%w formatting.
+type recordedMultiError struct {
+	message string
+	causes  []error
+}
+
+func (e *recordedMultiError) Error() string   { return e.message }
+func (e *recordedMultiError) Unwrap() []error { return e.causes }
 
 func decodeError(data []byte) error {
 	var ev *errorEnvelope
@@ -116,6 +140,16 @@ func errorFromEnvelope(ev *errorEnvelope) error {
 	}
 	cause := errorFromEnvelope(ev.Cause)
 	switch ev.Kind {
+	case "replay_decode":
+		return &ReplayDecodeError{InstanceID: ev.InstanceID, Key: ev.Key, GoType: ev.GoType, Err: cause}
+	case "multi":
+		causes := make([]error, 0, len(ev.Causes))
+		for _, child := range ev.Causes {
+			if child != nil {
+				causes = append(causes, errorFromEnvelope(child))
+			}
+		}
+		return &recordedMultiError{message: ev.Message, causes: causes}
 	case "application":
 		var details any
 		if len(ev.Details) > 0 {

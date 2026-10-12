@@ -42,14 +42,14 @@ func Sleep(ctx *WorkflowContext, duration time.Duration, opts ...SleepOption) er
 		return sleepOutcome(ctx, event)
 	}
 	if duration <= 0 && event == nil {
-		stored, err := ctx.Storage().RecordHistory(ctx.Context(), ctx.execCtx.Fence(), &storage.HistoryEvent{Seq: cmd.Seq, InstanceID: ctx.InstanceID(), ActivityID: timerID, Command: "sleep", EventType: storage.HistoryTimerExpired, EventData: []byte(`true`), DataType: "json"})
+		stored, err := ctx.execCtx.Storage().RecordHistory(ctx.Context(), ctx.execCtx.Fence(), &storage.HistoryEvent{Seq: cmd.Seq, InstanceID: ctx.InstanceID(), ActivityID: timerID, Command: "sleep", EventType: storage.HistoryTimerExpired, EventData: []byte(`true`), DataType: "json"})
 		if err != nil {
 			ctx.execCtx.Fail(err)
 			return err
 		}
 		return sleepOutcome(ctx, stored)
 	}
-	stored, err := ctx.Storage().ReserveTimer(ctx.Context(), ctx.execCtx.Fence(), cmd.Seq, &storage.TimerSubscription{
+	stored, err := ctx.execCtx.Storage().ReserveTimer(ctx.Context(), ctx.execCtx.Fence(), cmd.Seq, &storage.TimerSubscription{
 		InstanceID: ctx.InstanceID(), TimerID: timerID, ActivityID: timerID, ExpiresAt: time.Now().Add(duration),
 	})
 	if err != nil {
@@ -59,7 +59,7 @@ func Sleep(ctx *WorkflowContext, duration time.Duration, opts ...SleepOption) er
 	if stored.EventData != nil {
 		return sleepOutcome(ctx, stored)
 	}
-	requested, err := ctx.Storage().IsCancelRequested(ctx.Context(), ctx.InstanceID())
+	requested, err := ctx.execCtx.Storage().IsCancelRequested(ctx.Context(), ctx.InstanceID())
 	if err != nil {
 		ctx.execCtx.Fail(err)
 		return err
@@ -69,7 +69,7 @@ func Sleep(ctx *WorkflowContext, duration time.Duration, opts ...SleepOption) er
 		if err != nil {
 			return err
 		}
-		stored, err = ctx.Storage().SetHistoryValueIfNull(ctx.Context(), ctx.execCtx.Fence(), ctx.InstanceID(), timerID, "sleep", storage.HistoryTimerCancelled, encodeError(cancellation))
+		stored, err = ctx.execCtx.Storage().SetHistoryValueIfNull(ctx.Context(), ctx.execCtx.Fence(), ctx.InstanceID(), timerID, "sleep", storage.HistoryTimerCancelled, encodeError(cancellation))
 		if err != nil {
 			ctx.execCtx.Fail(err)
 			return err
@@ -97,7 +97,7 @@ func Sleep(ctx *WorkflowContext, duration time.Duration, opts ...SleepOption) er
 }
 
 func cancellationAtYield(ctx *WorkflowContext) (*WorkflowCancelledError, error) {
-	instance, err := ctx.Storage().GetInstance(ctx.Context(), ctx.InstanceID())
+	instance, err := ctx.execCtx.Storage().GetInstance(ctx.Context(), ctx.InstanceID())
 	if err == nil && instance == nil {
 		err = storage.ErrInstanceNotFound
 	}

@@ -27,7 +27,10 @@ type Wait struct {
 }
 
 // WorkflowPanicError is a recovered workflow panic or unexpected goroutine exit.
-type WorkflowPanicError struct{ Value, Stack string }
+type WorkflowPanicError struct {
+	Value string `json:"value"`
+	Stack string `json:"stack"`
+}
 
 func (e *WorkflowPanicError) Error() string { return "workflow panic: " + e.Value }
 

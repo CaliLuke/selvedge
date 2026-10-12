@@ -19,7 +19,7 @@ func postgresSchemaBackend(t *testing.T) schemaBackend {
 	ctx := context.Background()
 	container, err := postgres.Run(ctx, "postgres:15-alpine",
 		postgres.WithDatabase("schema_test"), postgres.WithUsername("selvedge"), postgres.WithPassword("selvedge"),
-		testcontainers.WithWaitStrategy(wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(5*time.Minute)))
+		testcontainers.WithWaitStrategy(wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(5*time.Minute), wait.ForListeningPort("5432/tcp")))
 	if err != nil {
 		t.Fatal(err)
 	}

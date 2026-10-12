@@ -5,6 +5,7 @@ package migrations
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -67,7 +68,8 @@ func TestApplyMigrations_PostgreSQL_Integration(t *testing.T) {
 		testcontainers.WithWaitStrategy(
 			wait.ForLog("database system is ready to accept connections").
 				WithOccurrence(2).
-				WithStartupTimeout(5*time.Minute)),
+				WithStartupTimeout(5*time.Minute),
+			wait.ForListeningPort("5432/tcp")),
 	)
 	if err != nil {
 		t.Fatalf("failed to start PostgreSQL container: %v", err)
@@ -79,11 +81,30 @@ func TestApplyMigrations_PostgreSQL_Integration(t *testing.T) {
 		t.Fatalf("failed to get connection string: %v", err)
 	}
 
-	db, err := sql.Open("pgx", connStr)
+	db, err := sql.Open("pgx", connStr+"&default_transaction_isolation=repeatable+read")
 	if err != nil {
 		t.Fatalf("failed to open database: %v", err)
 	}
 	defer db.Close()
+
+	// A server may default to repeatable read. The advisory lock wait must not
+	// freeze the snapshot used by the subsequent version lookup.
+	db.SetMaxOpenConns(1)
+	if _, err := db.ExecContext(ctx, "SET default_transaction_isolation = 'repeatable read'"); err != nil {
+		t.Fatal(err)
+	}
+	if err := withMigrationTransaction(ctx, db, "postgresql", func(conn *sql.Conn) error {
+		var isolation string
+		if err := conn.QueryRowContext(ctx, "SHOW transaction_isolation").Scan(&isolation); err != nil {
+			return err
+		}
+		if isolation != "read committed" {
+			return fmt.Errorf("migration isolation = %q, want read committed", isolation)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	// Apply migrations
 	applied, err := ApplyMigrations(ctx, db, "postgresql", integrationTestFS)
@@ -135,7 +156,8 @@ func TestApplyMigrations_MultiWorker_PostgreSQL_Integration(t *testing.T) {
 		testcontainers.WithWaitStrategy(
 			wait.ForLog("database system is ready to accept connections").
 				WithOccurrence(2).
-				WithStartupTimeout(5*time.Minute)),
+				WithStartupTimeout(5*time.Minute),
+			wait.ForListeningPort("5432/tcp")),
 	)
 	if err != nil {
 		t.Fatalf("failed to start PostgreSQL container: %v", err)
@@ -153,7 +175,7 @@ func TestApplyMigrations_MultiWorker_PostgreSQL_Integration(t *testing.T) {
 
 	for i := 0; i < numWorkers; i++ {
 		go func(workerID int) {
-			db, err := sql.Open("pgx", connStr)
+			db, err := sql.Open("pgx", connStr+"&default_transaction_isolation=repeatable+read")
 			if err != nil {
 				results <- err
 				return
@@ -178,7 +200,7 @@ func TestApplyMigrations_MultiWorker_PostgreSQL_Integration(t *testing.T) {
 	}
 
 	// Verify migration was applied exactly once
-	db, _ := sql.Open("pgx", connStr)
+	db, _ := sql.Open("pgx", connStr+"&default_transaction_isolation=repeatable+read")
 	defer db.Close()
 
 	var count int

@@ -56,7 +56,7 @@ func Receive[T any](ctx *WorkflowContext, channel string) (T, error) {
 	if event != nil && event.EventData != nil {
 		return signalOutcome[T](ctx, event)
 	}
-	s := ctx.Storage()
+	s := ctx.execCtx.Storage()
 	requested, err := s.IsCancelRequested(ctx.Context(), ctx.InstanceID())
 	if err != nil {
 		ctx.execCtx.Fail(err)

@@ -4,8 +4,11 @@ import "fmt"
 
 // NondeterminismError identifies the first divergent command position.
 type NondeterminismError struct {
-	Seq                           int64
-	Key, Recorded, Issued, Reason string
+	Seq      int64  `json:"seq"`
+	Key      string `json:"key"`
+	Recorded string `json:"recorded"`
+	Issued   string `json:"issued"`
+	Reason   string `json:"reason"`
 }
 
 func (e *NondeterminismError) Error() string {

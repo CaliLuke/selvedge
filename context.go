@@ -154,11 +154,22 @@ func (c *WorkflowContext) Done() <-chan struct{} {
 	return c.ctx.Done()
 }
 
-// Storage returns the storage interface for database operations.
-// Returns nil if not using the replay engine.
-func (c *WorkflowContext) Storage() storage.Storage {
-	if c.execCtx != nil {
-		return c.execCtx.Storage()
+// WorkflowStorage exposes recorded history for diagnostics. Workflow commands
+// must use the workflow APIs rather than direct database writes.
+type WorkflowStorage interface {
+	GetHistoryEvent(context.Context, string, string) (*storage.HistoryEvent, error)
+}
+
+type workflowStorageReader struct{ store storage.HistoryManager }
+
+func (s workflowStorageReader) GetHistoryEvent(ctx context.Context, instanceID, key string) (*storage.HistoryEvent, error) {
+	return s.store.GetHistoryEvent(ctx, instanceID, key)
+}
+
+// Storage returns read-only history access, or nil outside the replay engine.
+func (c *WorkflowContext) Storage() WorkflowStorage {
+	if c.execCtx != nil && c.execCtx.Storage() != nil {
+		return workflowStorageReader{store: c.execCtx.Storage()}
 	}
 	return nil
 }

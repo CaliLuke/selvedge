@@ -161,6 +161,8 @@ SQLite and PostgreSQL are the supported storage backends. PostgreSQL also suppor
 
 `internal/migrations/sql/` is the schema source of truth. The module embeds one initial schema file for each dialect, and tests apply those same files. Before the first release, edit both schema files in place. Numbered migrations start at S20.
 
+Error envelopes use snake_case JSON fields, including panic and nondeterminism details. Pre-1.0 databases must be recreated after envelope-format changes; no compatibility shim is provided.
+
 Pre-S7 databases must be recreated: histories without command positions fail on first history access.
 
 Schema application is transactional: SQLite uses `BEGIN IMMEDIATE`; PostgreSQL takes a transaction-scoped advisory lock before checking `schema_migrations`. SQL errors abort and roll back the schema application.
@@ -185,6 +187,12 @@ SELVEDGE_TEST_POSTGRES_URL='postgres://selvedge:selvedge@localhost:5433/selvedge
 ```
 
 Tests with the `integration` build tag use PostgreSQL testcontainers and require Docker.
+
+Dispatch filters use registered workflow names. The storage `FindDispatchable` variadic names filter treats omitted names or a nil slice as all workflows, and a non-nil empty slice as none.
+
+Workers sharing a database must use distinct workflow names for different implementations. Dispatch does not scope names by `owner_service`; workers that register the same name can execute each other's instances. Use separate databases when services need independent namespaces.
+
+`WorkflowContext.Storage()` exposes read-only history lookup for diagnostics. It does not expose database connections or storage mutations.
 
 The development Compose file also includes Jaeger for OpenTelemetry traces.
 

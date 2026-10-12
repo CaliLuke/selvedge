@@ -204,7 +204,7 @@ func getWorkflowErrorFromHistory(ctx context.Context, s storage.Storage, instanc
 		return nil, nil
 	}
 	failure = decodeError(event.EventData)
-	if decodeErr, ok := failure.(*ReplayDecodeError); ok {
+	if decodeErr, ok := failure.(*ReplayDecodeError); ok && decodeErr.InstanceID == "" && decodeErr.Key == "" {
 		decodeErr.InstanceID = instanceID
 		decodeErr.Key = event.ActivityID
 	}

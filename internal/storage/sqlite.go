@@ -68,7 +68,15 @@ func NewSQLiteStorage(dbPath string) (*SQLiteStorage, error) {
 
 func enableSQLiteWAL(ctx context.Context, db *sql.DB) error {
 	for {
-		_, err := db.ExecContext(ctx, "PRAGMA journal_mode=WAL")
+		var mode string
+		err := db.QueryRowContext(ctx, "PRAGMA journal_mode=WAL").Scan(&mode)
+		if err == nil {
+			// SQLite memory databases cannot use WAL and report "memory".
+			if mode != "wal" && mode != "memory" {
+				return fmt.Errorf("journal mode = %q after requesting WAL", mode)
+			}
+			return nil
+		}
 		var sqliteErr *sqlite.Error
 		if !errors.As(err, &sqliteErr) || sqliteErr.Code()&0xff != sqlite3.SQLITE_BUSY {
 			return err
@@ -189,8 +197,8 @@ func (s *SQLiteStorage) InTransaction(ctx context.Context) bool {
 //
 // Example:
 //
-//	conn := ctx.Storage().Conn(ctx.Context())
-//	_, err := conn.ExecContext(ctx.Context(), "INSERT INTO orders ...", ...)
+//	conn := store.Conn(ctx)
+//	_, err := conn.ExecContext(ctx, "INSERT INTO orders (id) VALUES (?)", orderID)
 func (s *SQLiteStorage) Conn(ctx context.Context) Executor {
 	return s.getConn(ctx)
 }
@@ -621,3 +629,6 @@ func (s *SQLiteStorage) CleanupExpiredSystemLocks(ctx context.Context) error {
 	`)
 	return err
 }
+
+// NotifyRunnable is a no-op: SQLite workers use polling.
+func (s *SQLiteStorage) NotifyRunnable(context.Context) {}

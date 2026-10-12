@@ -196,7 +196,7 @@ func TestErrorEnvelopeUnknownKindDecodesGeneric(t *testing.T) {
 }
 func testErrorEnvelopeUnknownKindDecodesGeneric(t *testing.T, factory replayAppFactory) {
 	t.Helper()
-	for _, payload := range []string{`{"v":1,"kind":"future","Message":"future failure"}`, `{"v":99,"kind":"application","Message":"future failure"}`, `{"v":0,"kind":"application","Message":"future failure"}`} {
+	for _, payload := range []string{`{"v":1,"kind":"future","message":"future failure"}`, `{"v":99,"kind":"application","message":"future failure"}`, `{"v":0,"kind":"application","message":"future failure"}`} {
 		t.Run(payload, func(t *testing.T) {
 			h := newTypedReplayHarness(t, factory)
 			a := DefineActivity("never", func(context.Context, string) (string, error) { t.Fatal("recorded error reran"); return "", nil })
@@ -216,7 +216,7 @@ func TestCorruptFailureFailsRunEvenWhenCaught(t *testing.T) {
 }
 func testCorruptFailureFailsRunEvenWhenCaught(t *testing.T, factory replayAppFactory) {
 	t.Helper()
-	for _, payload := range []string{`{`, `"string"`, `null`, `{"v":1,"kind":"application","Cause":4}`} {
+	for _, payload := range []string{`{`, `"string"`, `null`, `{"v":1,"kind":"application","cause":4}`} {
 		t.Run(payload, func(t *testing.T) {
 			h := newTypedReplayHarness(t, factory)
 			calls := 0
@@ -256,8 +256,8 @@ func testLiveActivityUsesStoredOutcome(t *testing.T, factory replayAppFactory) {
 		want    string
 		failed  bool
 	}{
-		{"stored_failure_live_success", storage.HistoryActivityFailed, `{"v":1,"kind":"canceled","Message":"context canceled"}`, nil, "", true},
-		{"stored_failure_live_failure", storage.HistoryActivityFailed, `{"v":1,"kind":"canceled","Message":"context canceled"}`, NewTerminalError(errors.New("different")), "", true},
+		{"stored_failure_live_success", storage.HistoryActivityFailed, `{"v":1,"kind":"canceled","message":"context canceled"}`, nil, "", true},
+		{"stored_failure_live_failure", storage.HistoryActivityFailed, `{"v":1,"kind":"canceled","message":"context canceled"}`, NewTerminalError(errors.New("different")), "", true},
 		{"stored_success_live_failure", storage.HistoryActivityCompleted, `"winner"`, NewTerminalError(errors.New("loser")), "winner", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -87,17 +87,11 @@ func TestPostgresIntegration_LeaderTasksRunning(t *testing.T) {
 	}
 	defer func() { _ = app.Shutdown(ctx) }()
 
-	// Wait for leader election
-	time.Sleep(200 * time.Millisecond)
-
-	// Check that leader tasks are running
-	app.leaderMu.Lock()
-	tasksRunning := app.leaderTasksRunning
-	app.leaderMu.Unlock()
-
-	if !tasksRunning {
-		t.Error("expected leaderTasksRunning=true after becoming leader")
-	}
+	require.Eventually(t, func() bool {
+		app.leaderMu.Lock()
+		defer app.leaderMu.Unlock()
+		return app.leaderTasksRunning
+	}, 5*time.Second, 10*time.Millisecond, "expected leader tasks to start")
 }
 
 func TestPostgresIntegration_GracefulShutdown(t *testing.T) {
@@ -113,13 +107,7 @@ func TestPostgresIntegration_GracefulShutdown(t *testing.T) {
 		t.Fatalf("failed to start app: %v", err)
 	}
 
-	// Wait for leader election
-	time.Sleep(200 * time.Millisecond)
-
-	// Verify we became leader
-	if !app.isLeader.Load() {
-		t.Error("expected to become leader")
-	}
+	require.Eventually(t, app.isLeader.Load, 5*time.Second, 10*time.Millisecond, "expected to become leader")
 
 	// Shutdown should complete without hanging
 	shutdownCtx, cancel := context.WithTimeout(ctx, 2*time.Second)

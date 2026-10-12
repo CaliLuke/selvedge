@@ -22,6 +22,10 @@ type Storage interface {
 	// Initialize sets up the storage (create tables, etc.)
 	Initialize(ctx context.Context) error
 
+	// NotifyRunnable wakes dispatchers after committed runnable mutations.
+	// Backends without cross-worker notifications implement a no-op.
+	NotifyRunnable(context.Context)
+
 	// Close closes the storage connection
 	Close() error
 

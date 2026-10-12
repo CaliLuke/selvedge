@@ -140,6 +140,13 @@ func (a *App) Shutdown(ctx context.Context) error {
 	done := make(chan struct{})
 	go func() {
 		a.wg.Wait()
+		// Lease releases must commit before the wake, including when the caller
+		// has already timed out. Use a bounded context independent of shutdown.
+		if a.storage != nil {
+			notifyCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			a.storage.NotifyRunnable(notifyCtx)
+			cancel()
+		}
 		close(done)
 	}()
 
@@ -150,12 +157,6 @@ func (a *App) Shutdown(ctx context.Context) error {
 		return fmt.Errorf("shutdown timed out")
 	case <-time.After(a.config.shutdownTimeout):
 		return fmt.Errorf("shutdown timed out after %v", a.config.shutdownTimeout)
-	}
-
-	// Executions have finished committing their lease releases. Wake other
-	// workers once so shutdown abandons do not wait for idle polling backoff.
-	if notifier, ok := a.storage.(interface{ NotifyRunnable(context.Context) }); ok {
-		notifier.NotifyRunnable(ctx)
 	}
 
 	// Release the leader lock if we held it. Without this, a fresh
