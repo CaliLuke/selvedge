@@ -128,6 +128,29 @@ The runtime cannot detect non-overlapping foreign commands that finish without a
 
 S7 removes the public `SuspendSignal` family and the unused `OnEvent*` hooks.
 
+## Workflow time
+
+Use `Now(ctx)` for time-based decisions in workflow code. It returns a
+`(time.Time, error)`. Each live call writes one fenced history observation;
+values are not cached or batched. Replay returns the recorded value, even if
+the deadline has passed since the previous execution.
+
+Values use UTC and contain no monotonic clock reading. Live and replay values
+compare identically with both `==` and `Equal`. Each execution tracks the largest
+time returned so far, including replayed values. Contexts made with
+`WithContext` share this floor, so a backward clock step cannot lower a later
+live value. On error, `Now` returns the floor and a sticky error that fails the
+execution even if workflow code ignores it.
+
+`WithClock(func() time.Time)` configures the wall clock used by `Now`; the
+default (also for a nil clock) is `time.Now`. It does not change lease clocks
+or timer behavior. Timer expiry and fired timers do not yet advance the
+workflow time floor.
+
+Like other workflow commands, `Now` must be called serially from workflow
+code. Calls while the coroutine is closing return an error and the floor,
+without writing history.
+
 ## Storage and migrations
 
 SQLite and PostgreSQL are the supported storage backends. PostgreSQL also supports LISTEN/NOTIFY for workflow wakeups.

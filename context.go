@@ -47,6 +47,8 @@ type WorkflowContext struct {
 
 	// Reference to the App for accessing app-level configuration
 	app *App
+
+	timeFloor *workflowTimeFloor
 }
 
 // NewWorkflowContext creates a standalone context without recorded history.
@@ -63,6 +65,7 @@ func NewWorkflowContext(
 		workerID:     workerID,
 		workflowName: workflowName,
 		execCtx:      replay.NewExecutionContext(ctx, instanceID),
+		timeFloor:    new(workflowTimeFloor),
 	}
 }
 
@@ -74,6 +77,7 @@ func NewWorkflowContextFromExecution(execCtx *replay.ExecutionContext) *Workflow
 		cancel:     cancel,
 		instanceID: execCtx.InstanceID(),
 		execCtx:    execCtx,
+		timeFloor:  new(workflowTimeFloor),
 	}
 }
 
@@ -92,6 +96,7 @@ func (c *WorkflowContext) WithContext(ctx context.Context) *WorkflowContext {
 		workflowName: c.workflowName,
 		execCtx:      c.execCtx,
 		app:          c.app,
+		timeFloor:    c.timeFloor,
 	}
 }
 

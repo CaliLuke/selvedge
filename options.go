@@ -14,6 +14,7 @@ type Option func(*appConfig)
 // appConfig holds the configuration for an App.
 type appConfig struct {
 	lease replay.LeaseConfig
+	clock func() time.Time
 	// Database
 	databaseURL string
 
