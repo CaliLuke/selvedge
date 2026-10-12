@@ -90,7 +90,9 @@ func (x *Execution) renew(ctx context.Context, s storage.Storage) {
 	x.mu.Lock()
 	defer x.mu.Unlock()
 	if err != nil || !ok {
-		x.lost = ErrLeaseLost
+		if x.lost == nil {
+			x.lost = ErrLeaseLost
+		}
 		return
 	}
 	if x.lost == nil {

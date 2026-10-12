@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/CaliLuke/selvedge/internal/replay"
@@ -362,11 +363,20 @@ func TestSwallowedFenceRejectionStopsExecution(t *testing.T) {
 }
 func testSwallowedFenceRejectionStopsExecution(t *testing.T, factory replayAppFactory) {
 	h, _, fs := leaseHarness(t, factory)
+	fenced := make(chan struct{})
+	renewalProcessed := make(chan struct{})
+	renewals := 0 // Only accessed by the keepalive goroutine.
 	calls := 0
 	a := DefineActivity("forbidden", func(context.Context, string) (string, error) { calls++; return "", nil })
 	w := DefineWorkflow("rejected_signal", func(ctx *WorkflowContext, input string) (string, error) {
 		_, err := Receive[string](ctx, "messages")
 		require.ErrorIs(t, err, storage.ErrFenced)
+		close(fenced)
+		select {
+		case <-renewalProcessed:
+		case <-time.After(5 * time.Second):
+			return "", errors.New("renewal did not progress after fence rejection")
+		}
 		_, err = a.Execute(ctx, input)
 		require.ErrorIs(t, err, storage.ErrFenced)
 		return "caught", nil
@@ -374,6 +384,20 @@ func testSwallowedFenceRejectionStopsExecution(t *testing.T, factory replayAppFa
 	id := seedErrorWorkflow(t, h, w)
 	require.NoError(t, h.app.Signal(h.app.ctx, id, "messages", "payload"))
 	fs.Before = func(ctx context.Context, method string) error {
+		if method == "RenewLease" {
+			// Delay renewal until Receive has observed the real store rejection.
+			select {
+			case <-fenced:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			renewals++
+			if renewals == 2 {
+				// The next renewal proves the previous result was processed by
+				// Execution.renew, beyond the faultstore's After hook.
+				close(renewalProcessed)
+			}
+		}
 		if method == "ConsumeSignal" {
 			setStoreClock(t, h, 2001)
 			_, ok, err := fs.Storage.AcquireLease(ctx, id, "other/owner", time.Second)
@@ -382,10 +406,13 @@ func testSwallowedFenceRejectionStopsExecution(t *testing.T, factory replayAppFa
 		}
 		return nil
 	}
-	require.ErrorIs(t, h.RunOnce(id), storage.ErrFenced)
+	err := h.RunOnce(id)
+	assert.ErrorIs(t, err, storage.ErrFenced)
+	assert.NotErrorIs(t, err, replay.ErrLeaseLost)
+	assert.GreaterOrEqual(t, renewals, 2, "renewal must be processed before the workflow returns")
 	require.Zero(t, calls)
 	require.NotContains(t, fs.Calls(), "CloseInstance")
-	require.NotContains(t, fs.Calls(), "ReleaseLease")
+	assert.NotContains(t, fs.Calls(), "ReleaseLease")
 }
 
 func TestReplayDeterministicAfterCrash(t *testing.T) {
