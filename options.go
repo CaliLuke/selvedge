@@ -13,8 +13,10 @@ type Option func(*appConfig)
 
 // appConfig holds the configuration for an App.
 type appConfig struct {
+	maxPollInterval         time.Duration
 	lease                   replay.LeaseConfig
 	clock                   func() time.Time
+	waitPollInterval        time.Duration
 	maxConcurrentActivities int
 	activityPollInterval    time.Duration
 	// Database
@@ -59,6 +61,8 @@ type appConfig struct {
 func defaultConfig() *appConfig {
 	return &appConfig{
 		databaseURL:                "file:selvedge.db",
+		maxPollInterval:            time.Minute,
+		waitPollInterval:           time.Second,
 		maxConcurrentActivities:    10,
 		activityPollInterval:       time.Second,
 		lease:                      replay.DefaultLeaseConfig(),
@@ -270,6 +274,26 @@ func WithActivityPollInterval(d time.Duration) Option {
 	return func(c *appConfig) {
 		if d > 0 {
 			c.activityPollInterval = d
+		}
+	}
+}
+
+// WithWaitPollInterval sets the completion wait fallback interval (default one second).
+// Nonpositive values leave the configured interval unchanged.
+func WithWaitPollInterval(d time.Duration) Option {
+	return func(c *appConfig) {
+		if d > 0 {
+			c.waitPollInterval = d
+		}
+	}
+}
+
+// WithMaxPollInterval caps workflow and activity polling delays, including jitter.
+// The default is one minute. Nonpositive values leave the configured cap unchanged.
+func WithMaxPollInterval(d time.Duration) Option {
+	return func(c *appConfig) {
+		if d > 0 {
+			c.maxPollInterval = d
 		}
 	}
 }

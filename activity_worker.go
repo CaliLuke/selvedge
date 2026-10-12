@@ -192,7 +192,7 @@ func (a *App) runActivityWorkers() {
 		} else {
 			empty = 0
 		}
-		delay := addJitterFraction(calculateBackoff(a.config.activityPollInterval, empty, 60*time.Second), 0.3)
+		delay := cappedPollDelay(a.config.activityPollInterval, empty, a.config.maxPollInterval)
 		timer := time.NewTimer(delay)
 		select {
 		case <-a.ctx.Done():

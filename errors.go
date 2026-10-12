@@ -82,6 +82,9 @@ func (e *WorkflowNotFoundError) Error() string {
 	return fmt.Sprintf("workflow instance %s not found", e.InstanceID)
 }
 
+// Unwrap makes a missing workflow match ErrInstanceNotFound.
+func (e *WorkflowNotFoundError) Unwrap() error { return ErrInstanceNotFound }
+
 // LockAcquisitionError indicates failure to acquire a workflow lock.
 type LockAcquisitionError struct {
 	InstanceID string
@@ -95,13 +98,13 @@ func (e *LockAcquisitionError) Error() string {
 }
 
 // ErrWorkflowAlreadyCompleted indicates an operation on a completed workflow.
-var ErrWorkflowAlreadyCompleted = errors.New("workflow already completed")
+var ErrWorkflowAlreadyCompleted = storage.ErrWorkflowAlreadyCompleted
 
 // ErrWorkflowAlreadyCancelled indicates an operation on a cancelled workflow.
-var ErrWorkflowAlreadyCancelled = errors.New("workflow already cancelled")
+var ErrWorkflowAlreadyCancelled = storage.ErrWorkflowAlreadyCancelled
 
 // ErrWorkflowAlreadyFailed indicates an operation on a failed workflow.
-var ErrWorkflowAlreadyFailed = errors.New("workflow already failed")
+var ErrWorkflowAlreadyFailed = storage.ErrWorkflowAlreadyFailed
 
 // ErrInvalidWorkflowState indicates an invalid workflow state transition.
 var ErrInvalidWorkflowState = errors.New("invalid workflow state")

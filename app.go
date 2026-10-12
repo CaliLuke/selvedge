@@ -31,7 +31,10 @@ type App struct {
 	engine  *replay.Engine
 
 	// PostgreSQL LISTEN/NOTIFY listener (if enabled)
-	notifyListener *notify.Listener
+	notifyListener   *notify.Listener
+	localUnsubscribe func()
+	waitMu           sync.Mutex
+	waiters          map[string]map[chan struct{}]struct{}
 
 	activities        map[string]activityDefinition
 	activitiesMu      sync.RWMutex
@@ -68,6 +71,7 @@ type App struct {
 	// State
 	initialized bool
 	running     bool
+	closed      atomic.Bool
 	mu          sync.Mutex
 }
 
@@ -111,9 +115,23 @@ func (a *App) Start(ctx context.Context) error {
 
 	// Initialize storage
 	if err := a.initStorage(); err != nil {
+		a.cancel()
+		if a.storage != nil {
+			_ = a.storage.Close()
+			a.storage = nil
+		}
 		return fmt.Errorf("failed to initialize storage: %w", err)
 	}
+	a.closed.Store(false)
 
+	// Subscribe before dispatch starts so commits from other Apps wake this one.
+	a.localUnsubscribe = storage.SubscribeLocal(a.config.databaseURL, func(n storage.LocalNotification) {
+		if n.Closed {
+			a.wakeWaiters(n.InstanceID)
+		} else {
+			a.wakeDispatcher()
+		}
+	})
 	// Start background tasks
 	a.startBackgroundTasks()
 
@@ -130,7 +148,12 @@ func (a *App) Shutdown(ctx context.Context) error {
 		return nil
 	}
 	a.running = false
+	a.closed.Store(true)
 	a.mu.Unlock()
+
+	if a.localUnsubscribe != nil {
+		a.localUnsubscribe()
+	}
 
 	// Stop LISTEN/NOTIFY listener if enabled
 	if a.notifyListener != nil {
@@ -287,6 +310,7 @@ func (a *App) initNotifyListener(connString string) {
 	// Register notification handlers
 	a.notifyListener.OnNotification(notify.ChannelWorkflowResumable, a.handleWorkflowResumableNotify)
 	a.notifyListener.OnNotification(notify.ChannelTimerExpired, a.handleTimerExpiredNotify)
+	a.notifyListener.OnNotification(notify.ChannelWorkflowClosed, func(_ context.Context, _ notify.NotifyChannel, id string) { a.wakeWaiters(id) })
 	a.notifyListener.OnNotification(notify.ChannelActivityTask, func(context.Context, notify.NotifyChannel, string) { a.wakeActivityWorkers() })
 
 	slog.Info("PostgreSQL LISTEN/NOTIFY configured",
@@ -337,10 +361,16 @@ func calculateBackoff(base time.Duration, consecutiveEmpty int, maxBackoff time.
 }
 
 // addJitterFraction adds random jitter as a fraction of the duration.
-// jitterFraction is the maximum fraction of d to add (e.g., 0.3 for ±30%).
+// A positive fraction adds up to that fraction of d; a negative one subtracts it.
 func addJitterFraction(d time.Duration, jitterFraction float64) time.Duration {
 	jitter := time.Duration(rand.Float64() * float64(d) * jitterFraction)
 	return d + jitter
+}
+
+// cappedPollDelay spreads wake-ups even at the cap by jittering downward by up to 30%.
+func cappedPollDelay(base time.Duration, empty int, maxDelay time.Duration) time.Duration {
+	delay := min(calculateBackoff(base, empty, maxDelay), maxDelay)
+	return addJitterFraction(delay, -0.3)
 }
 
 // startBackgroundTasks starts all background goroutines.
@@ -548,6 +578,12 @@ func (a *App) registerWorkflowWithRunner(name string, workflow any, runner repla
 
 // startWorkflow starts a new workflow instance.
 func (a *App) startWorkflow(ctx context.Context, workflowName string, input any, opts *startOptions) (string, error) {
+	if a.closed.Load() || a.storage == nil {
+		return "", fmt.Errorf("%w: %w", ErrWorkflowStartRejected, ErrAppNotStarted)
+	}
+	if workflowName == "" || len(workflowName) > 255 {
+		return "", fmt.Errorf("%w: workflow name must contain 1 to 255 bytes", ErrWorkflowStartRejected)
+	}
 	// Generate instance ID if not provided
 	instanceID := opts.instanceID
 	if instanceID == "" {
@@ -557,7 +593,7 @@ func (a *App) startWorkflow(ctx context.Context, workflowName string, input any,
 	// Serialize input
 	inputData, err := json.Marshal(input)
 	if err != nil {
-		return "", fmt.Errorf("failed to serialize input: %w", err)
+		return "", fmt.Errorf("%w: failed to serialize input: %w", ErrWorkflowStartRejected, err)
 	}
 
 	// Create instance in storage
@@ -571,10 +607,11 @@ func (a *App) startWorkflow(ctx context.Context, workflowName string, input any,
 		UpdatedAt:    now,
 	}
 
-	if a.storage != nil {
-		if err := a.storage.CreateInstance(ctx, instance); err != nil {
-			return "", fmt.Errorf("failed to create instance: %w", err)
-		}
+	if err := ctx.Err(); err != nil {
+		return "", fmt.Errorf("%w: %w", ErrWorkflowStartRejected, err)
+	}
+	if err := a.storage.CreateInstance(ctx, instance); err != nil {
+		return "", fmt.Errorf("failed to create instance: %w", err)
 	}
 
 	// Call hook
@@ -616,7 +653,7 @@ func (a *App) resumeWorkflow(ctx context.Context, instanceID string) error {
 // GetInstance retrieves a workflow instance by ID.
 func (a *App) GetInstance(ctx context.Context, instanceID string) (*storage.WorkflowInstance, error) {
 	if a.storage == nil {
-		return nil, fmt.Errorf("storage not initialized")
+		return nil, ErrAppNotStarted
 	}
 
 	instance, err := a.storage.GetInstance(ctx, instanceID)
@@ -673,8 +710,8 @@ func (a *App) FindInstancesWithOptions(ctx context.Context, opts storage.ListIns
 
 // cancelWorkflow durably requests cancellation and wakes dispatch.
 func (a *App) cancelWorkflow(ctx context.Context, instanceID, reason string) error {
-	if a.storage == nil {
-		return fmt.Errorf("storage not initialized")
+	if a.closed.Load() || a.storage == nil {
+		return ErrAppNotStarted
 	}
 	status, err := a.storage.RequestCancel(ctx, instanceID, reason)
 	if errors.Is(err, storage.ErrInstanceNotFound) {
@@ -684,10 +721,8 @@ func (a *App) cancelWorkflow(ctx context.Context, instanceID, reason string) err
 		return err
 	}
 	switch status {
-	case storage.StatusCompleted:
-		return ErrWorkflowAlreadyCompleted
-	case storage.StatusFailed:
-		return ErrWorkflowAlreadyFailed
+	case storage.StatusCompleted, storage.StatusFailed:
+		return &InstanceClosedError{InstanceID: instanceID, Status: status}
 	case storage.StatusRunning:
 		a.wakeDispatcher()
 	}
@@ -718,7 +753,7 @@ func (a *App) runWorkflowResumption() {
 	defer a.wg.Done()
 
 	consecutiveEmpty := 0
-	const maxBackoff = 60 * time.Second
+	maxBackoff := a.config.maxPollInterval
 
 	for {
 		select {
@@ -739,8 +774,7 @@ func (a *App) runWorkflowResumption() {
 		}
 
 		// Calculate adaptive backoff
-		backoff := calculateBackoff(a.config.workflowResumptionInterval, consecutiveEmpty, maxBackoff)
-		waitTime := addJitterFraction(backoff, 0.3)
+		waitTime := cappedPollDelay(a.config.workflowResumptionInterval, consecutiveEmpty, maxBackoff)
 
 		// Wait with optional NOTIFY wake
 		select {

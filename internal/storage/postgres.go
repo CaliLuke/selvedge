@@ -17,6 +17,7 @@ import (
 
 // PostgresStorage implements the Storage interface using PostgreSQL.
 type PostgresStorage struct {
+	notifyKey     string
 	db            *sql.DB
 	driver        Driver
 	notifyEnabled bool
@@ -37,8 +38,9 @@ func NewPostgresStorage(connStr string) (*PostgresStorage, error) {
 	db.SetConnMaxLifetime(5 * time.Minute)
 
 	return &PostgresStorage{
-		db:     db,
-		driver: &PostgresDriver{},
+		notifyKey: localNotifyKey(connStr),
+		db:        db,
+		driver:    &PostgresDriver{},
 	}, nil
 }
 
@@ -529,7 +531,8 @@ func (s *PostgresStorage) CleanupExpiredSystemLocks(ctx context.Context) error {
 }
 
 // NotifyRunnable wakes dispatchers after a batch of runnable mutations, such as
-// lease releases during shutdown. It is a no-op when notifications are disabled.
+// lease releases during shutdown. Local notifications remain enabled independently
+// of PostgreSQL LISTEN/NOTIFY.
 func (s *PostgresStorage) NotifyRunnable(ctx context.Context) {
 	s.notifyRunnable(ctx, "")
 }
@@ -537,10 +540,11 @@ func (s *PostgresStorage) NotifyRunnable(ctx context.Context) {
 // notifyRunnable publishes only after the mutation's transaction commits. The
 // notification is a hint to all dispatchers; the runnable flag remains durable.
 func (s *PostgresStorage) notifyRunnable(ctx context.Context, instanceID string) {
-	if !s.notifyEnabled {
-		return
+	send := func() error {
+		publishLocal(s.notifyKey, LocalNotification{InstanceID: instanceID})
+		s.sendRunnableNotify(ctx, instanceID)
+		return nil
 	}
-	send := func() error { s.sendRunnableNotify(ctx, instanceID); return nil }
 	if s.InTransaction(ctx) {
 		_ = s.RegisterPostCommitCallback(ctx, send)
 	} else {
@@ -557,5 +561,23 @@ func (s *PostgresStorage) sendRunnableNotify(ctx context.Context, instanceID str
 	_, err := s.db.ExecContext(ctx, "SELECT pg_notify($1, $2)", string(notify.ChannelWorkflowResumable), string(payload))
 	if err != nil {
 		slog.Debug("failed to notify runnable workflow", "error", err)
+	}
+}
+
+// notifyClosed publishes after the close transaction commits.
+func (s *PostgresStorage) notifyClosed(ctx context.Context, id string) {
+	send := func() error {
+		publishLocal(s.notifyKey, LocalNotification{InstanceID: id, Closed: true})
+		if s.notifyEnabled {
+			if _, err := s.db.ExecContext(ctx, "SELECT pg_notify($1,$2)", string(notify.ChannelWorkflowClosed), id); err != nil {
+				slog.Debug("failed to notify closed workflow", "error", err)
+			}
+		}
+		return nil
+	}
+	if s.InTransaction(ctx) {
+		_ = s.RegisterPostCommitCallback(ctx, send)
+	} else {
+		_ = send()
 	}
 }

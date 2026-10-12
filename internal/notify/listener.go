@@ -15,6 +15,8 @@ import (
 type NotifyChannel string
 
 const (
+	// ChannelWorkflowClosed wakes clients awaiting terminal results.
+	ChannelWorkflowClosed NotifyChannel = "workflow_closed"
 	// ChannelActivityTask wakes workers when activity work becomes available.
 	ChannelActivityTask NotifyChannel = "workflow_activity_task"
 	// ChannelWorkflowResumable is notified when a workflow becomes resumable.
@@ -26,6 +28,7 @@ const (
 // AllChannels returns all notification channels.
 func AllChannels() []NotifyChannel {
 	return []NotifyChannel{
+		ChannelWorkflowClosed,
 		ChannelActivityTask,
 		ChannelWorkflowResumable,
 		ChannelTimerExpired,

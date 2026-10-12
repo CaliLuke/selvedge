@@ -145,6 +145,42 @@ Use IsReady and Pending only on the workflow coroutine, including inside Await
 predicates. Off-coroutine calls to these pure reads are unsupported and are not
 detected.
 
+## Starting, signalling and cancelling from other processes
+
+A client App can start with the same database configuration as a worker and
+register no workflows. Use `StartWorkflowByName(ctx, client, name, input)` to
+start by name, `client.Signal(ctx, id, channel, payload)` to send JSON payloads,
+and `CancelWorkflow(ctx, client, id, reason)` to request cancellation. These
+operations also accept child instance IDs.
+
+`WaitWorkflow[Output](ctx, client, id)` waits for a terminal result. Workflow
+failures appear in `result.Error`; cancelling the wait context stops the wait.
+`GetWorkflowResult` reads the current result without waiting. Application error
+messages and typed cancellation errors survive storage and replay.
+
+Call `App.Start` before using the client APIs. A start rejected before the insert
+matches `ErrWorkflowStartRejected`. An unstarted App also matches
+`ErrAppNotStarted`. Duplicate IDs, including closed and child IDs, match
+`ErrWorkflowAlreadyStarted` and cannot be reused. Storage errors can leave the
+start outcome uncertain: retrying an ID whose insert committed returns
+`ErrWorkflowAlreadyStarted`.
+
+Unknown IDs return `*WorkflowNotFoundError`, which matches `ErrInstanceNotFound`.
+Signals to closed instances and cancellation of completed or failed instances
+return `*InstanceClosedError` with the terminal status. Cancelling an already
+cancelled instance succeeds. Signal encoding failures match
+`ErrInvalidSignalPayload` and do not write a signal.
+
+Apps in one process share notifications for the same database. PostgreSQL also
+notifies other processes of runnable and closed instances. SQLite processes use
+polling. `WithMaxPollInterval(d)` caps workflow and activity polling delays
+(default one minute). `WithWaitPollInterval(d)` sets completion waits' fallback
+polling interval (default one second). Nonpositive values leave the current
+setting unchanged. SQLite memory databases do not share the local bus.
+
+There are no separate run IDs: the instance ID identifies the run. RunTimeout,
+Memo, SearchAttributes, and start RetryPolicy are not supported.
+
 ## Install
 
 Use Go 1.24.3 or later.

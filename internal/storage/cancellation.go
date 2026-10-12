@@ -89,6 +89,7 @@ func closeInstance(ctx context.Context, s Storage, f Fence, status WorkflowStatu
 		return err
 	}, parent)
 	if err == nil {
+		notifyClosed(ctx, s, f.InstanceID)
 		for _, id := range children {
 			notifyRunnable(ctx, s, id)
 		}

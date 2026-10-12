@@ -129,12 +129,7 @@ func StartWorkflow[I, O any](
 	input I,
 	opts ...StartOption,
 ) (string, error) {
-	options := &startOptions{}
-	for _, opt := range opts {
-		opt(options)
-	}
-
-	return app.startWorkflow(ctx, workflow.Name(), input, options)
+	return StartWorkflowByName(ctx, app, workflow.Name(), input, opts...)
 }
 
 // StartOption configures workflow start options.
@@ -163,6 +158,18 @@ type WorkflowResult[O any] struct {
 
 // GetWorkflowResult retrieves the result of a workflow instance.
 func GetWorkflowResult[O any](ctx context.Context, app *App, instanceID string) (*WorkflowResult[O], error) {
+	result, err := readWorkflowResult[O](ctx, app, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	if result.Status == string(storage.StatusCompleted) && result.Error != nil {
+		return nil, result.Error
+	}
+	return result, nil
+}
+
+// readWorkflowResult separates lookup errors from errors decoding the stored result.
+func readWorkflowResult[O any](ctx context.Context, app *App, instanceID string) (*WorkflowResult[O], error) {
 	instance, err := app.GetInstance(ctx, instanceID)
 	if err != nil {
 		return nil, err
@@ -186,7 +193,8 @@ func GetWorkflowResult[O any](ctx context.Context, app *App, instanceID string) 
 	if instance.Status == storage.StatusCompleted && len(instance.OutputData) > 0 {
 		var output O
 		if err := json.Unmarshal(instance.OutputData, &output); err != nil {
-			return nil, fmt.Errorf("failed to deserialize output: %w", err)
+			result.Error = fmt.Errorf("failed to deserialize output: %w", err)
+			return result, nil
 		}
 		result.Output = output
 	}

@@ -14,6 +14,13 @@ var (
 	ErrSignalNotAvailable   = errors.New("signal is absent, consumed, or belongs to another instance or channel")
 )
 
+// Status errors retain identity across the storage and public APIs.
+var (
+	ErrWorkflowAlreadyCompleted = errors.New("workflow already completed")
+	ErrWorkflowAlreadyFailed    = errors.New("workflow already failed")
+	ErrWorkflowAlreadyCancelled = errors.New("workflow already cancelled")
+)
+
 // InstanceClosedError reports the status that prevented signal ingress.
 type InstanceClosedError struct {
 	InstanceID string
@@ -25,6 +32,19 @@ func (e *InstanceClosedError) Error() string {
 }
 
 func (e *InstanceClosedError) Unwrap() error { return ErrInstanceClosed }
+
+// Is also matches the sentinel for this terminal status.
+func (e *InstanceClosedError) Is(target error) bool {
+	switch e.Status {
+	case StatusCompleted:
+		return target == ErrWorkflowAlreadyCompleted
+	case StatusFailed:
+		return target == ErrWorkflowAlreadyFailed
+	case StatusCancelled:
+		return target == ErrWorkflowAlreadyCancelled
+	}
+	return false
+}
 
 // Signal is one durable inbox entry. An empty ConsumedKey denotes a pending entry.
 type Signal struct {

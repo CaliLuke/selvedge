@@ -3,6 +3,7 @@ package selvedge
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/CaliLuke/selvedge/internal/replay"
@@ -20,14 +21,20 @@ var ErrInvalidSignalChannel = storage.ErrInvalidSignalChannel
 // Signals are accepted from instance creation until closure, including while an
 // execution holds the lease. Channel names pass through unchanged (1–255 bytes).
 func (a *App) Signal(ctx context.Context, instanceID, channel string, payload any) error {
+	if a.closed.Load() || a.storage == nil {
+		return ErrAppNotStarted
+	}
 	if channel == "" || len(channel) > 255 {
 		return ErrInvalidSignalChannel
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("encode signal payload: %w", err)
+		return fmt.Errorf("%w: %w", ErrInvalidSignalPayload, err)
 	}
 	if _, err = a.storage.AppendSignal(ctx, instanceID, channel, data); err != nil {
+		if errors.Is(err, ErrInstanceNotFound) {
+			return &WorkflowNotFoundError{InstanceID: instanceID}
+		}
 		return err
 	}
 	a.wakeDispatcher()

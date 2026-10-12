@@ -190,7 +190,11 @@ func TestSignalToClosedOrUnknownInstanceTyped(t *testing.T) {
 }
 func testSignalToClosedOrUnknownInstanceTyped(t *testing.T, factory replayAppFactory) {
 	h, _, _ := leaseHarness(t, factory)
-	require.ErrorIs(t, h.app.Signal(h.app.ctx, "unknown", "c", nil), ErrInstanceNotFound)
+	err := h.app.Signal(h.app.ctx, "unknown", "c", nil)
+	require.ErrorIs(t, err, ErrInstanceNotFound)
+	var missing *WorkflowNotFoundError
+	require.ErrorAs(t, err, &missing)
+	require.Equal(t, "unknown", missing.InstanceID)
 	for _, status := range []storage.WorkflowStatus{storage.StatusCompleted, storage.StatusFailed, storage.StatusCancelled} {
 		id := string(status)
 		require.NoError(t, h.app.storage.CreateInstance(h.app.ctx, &storage.WorkflowInstance{InstanceID: id, WorkflowName: "closed", Status: status, InputData: []byte(`null`)}))

@@ -25,8 +25,9 @@ type txState struct {
 
 // SQLiteStorage implements the Storage interface using SQLite.
 type SQLiteStorage struct {
-	db     *sql.DB
-	driver Driver
+	notifyKey string
+	db        *sql.DB
+	driver    Driver
 }
 
 // NewSQLiteStorage creates a new SQLite storage.
@@ -61,8 +62,9 @@ func NewSQLiteStorage(dbPath string) (*SQLiteStorage, error) {
 	}
 
 	return &SQLiteStorage{
-		db:     db,
-		driver: &SQLiteDriver{},
+		notifyKey: localNotifyKey(dbPath),
+		db:        db,
+		driver:    &SQLiteDriver{},
 	}, nil
 }
 
@@ -253,6 +255,7 @@ func (s *SQLiteStorage) CreateInstance(ctx context.Context, instance *WorkflowIn
 	if count == 0 {
 		return ErrWorkflowAlreadyStarted
 	}
+	s.notifyRunnable(ctx, instance.InstanceID)
 	return nil
 }
 
@@ -630,5 +633,5 @@ func (s *SQLiteStorage) CleanupExpiredSystemLocks(ctx context.Context) error {
 	return err
 }
 
-// NotifyRunnable is a no-op: SQLite workers use polling.
-func (s *SQLiteStorage) NotifyRunnable(context.Context) {}
+// NotifyRunnable wakes Apps on this database in the current process.
+func (s *SQLiteStorage) NotifyRunnable(ctx context.Context) { s.notifyRunnable(ctx, "") }
