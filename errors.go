@@ -172,3 +172,32 @@ var ErrFenced = storage.ErrFenced
 
 // NondeterminismError reports a replay command divergence.
 type NondeterminismError = replay.NondeterminismError
+
+// TimeoutKind identifies which activity deadline elapsed.
+type TimeoutKind string
+
+const (
+	// TimeoutScheduleToStart means the scheduled task was not claimed in time.
+	TimeoutScheduleToStart TimeoutKind = "schedule_to_start"
+	// TimeoutStartToClose means the attempt exceeded its execution deadline.
+	TimeoutStartToClose TimeoutKind = "start_to_close"
+	// TimeoutHeartbeat means the activity claim expired without renewed progress.
+	TimeoutHeartbeat TimeoutKind = "heartbeat"
+)
+
+// ActivityTimeoutError describes a recorded activity deadline failure.
+type ActivityTimeoutError struct {
+	Activity string
+	Kind     TimeoutKind
+	Attempt  int
+}
+
+func (e *ActivityTimeoutError) Error() string {
+	return fmt.Sprintf("activity %q timed out (%s), attempt %d", e.Activity, e.Kind, e.Attempt)
+}
+
+// Unwrap identifies a timeout as context.DeadlineExceeded.
+func (e *ActivityTimeoutError) Unwrap() error { return context.DeadlineExceeded }
+
+// ErrNotActivityContext rejects heartbeats outside an activity attempt.
+var ErrNotActivityContext = errors.New("not an activity context")

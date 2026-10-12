@@ -69,6 +69,11 @@ func envelopeForError(err error) *errorEnvelope {
 		}
 	case *TerminalError:
 		ev.Kind = "terminal"
+	case *ActivityTimeoutError:
+		ev.Kind = "activity_timeout"
+		ev.Activity = e.Activity
+		ev.Type = string(e.Kind)
+		ev.Attempts = e.Attempt
 	case *RetryExhaustedError:
 		ev.Kind = "retry_exhausted"
 		ev.Activity = e.ActivityName
@@ -162,6 +167,8 @@ func errorFromEnvelope(ev *errorEnvelope) error {
 		return &ApplicationError{Type: ev.Type, Message: ev.Message, NonRetryable: ev.NonRetryable, Details: details, Cause: cause}
 	case "terminal":
 		return &TerminalError{Err: cause}
+	case "activity_timeout":
+		return &ActivityTimeoutError{Activity: ev.Activity, Kind: TimeoutKind(ev.Type), Attempt: ev.Attempts}
 	case "retry_exhausted":
 		return &RetryExhaustedError{ActivityName: ev.Activity, Attempts: ev.Attempts, LastErr: cause}
 	case "canceled":

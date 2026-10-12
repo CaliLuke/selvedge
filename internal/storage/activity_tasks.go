@@ -13,21 +13,31 @@ import (
 
 // ActivityTask is the durable input and current claim for one activity.
 type ActivityTask struct {
-	ID                     int64
-	InstanceID, ActivityID string
-	Seq                    int64
-	ActivityName           string
-	InputData              []byte
-	Queue                  string
-	Options                []byte
-	MaxAttempts, Failures  int
-	NotBeforeMS            int64
-	LastError              []byte
-	Status                 string
-	Attempts               int
-	ClaimOwner             string
-	ClaimEpoch             int64
-	ClaimExpiresMS         *int64
+	ID                                                    int64
+	InstanceID, ActivityID                                string
+	Seq                                                   int64
+	ActivityName                                          string
+	InputData                                             []byte
+	Queue                                                 string
+	Options                                               []byte
+	MaxAttempts, Failures                                 int
+	NotBeforeMS                                           int64
+	LastError                                             []byte
+	Status                                                string
+	Attempts                                              int
+	ClaimOwner                                            string
+	ClaimEpoch                                            int64
+	ClaimExpiresMS                                        *int64
+	ScheduleToStartMS, StartToCloseMS, HeartbeatTimeoutMS int64
+	ScheduleDeadlineMS, AttemptDeadlineMS                 *int64
+	ClaimStarted                                          time.Time
+}
+
+// ActivityTimeout is a snapshot candidate for a fenced timeout write.
+type ActivityTimeout struct {
+	Task      *ActivityTask
+	Kind      string
+	Exhausted bool
 }
 
 // TaskFilter restricts claims to registered names and optionally served queues.
@@ -59,6 +69,8 @@ type ActivityTaskManager interface {
 	RetryActivityTask(context.Context, TaskClaim, []byte, time.Duration) error
 	NextActivityDue(context.Context, TaskFilter) (time.Duration, bool, error)
 	ListActivityTasks(context.Context, string) ([]*ActivityTask, error)
+	FindActivityTimeouts(context.Context, int) ([]*ActivityTimeout, error)
+	TimeoutActivityTask(context.Context, *ActivityTimeout, []byte) error
 }
 
 type taskStore struct {
@@ -83,7 +95,7 @@ func (s taskStore) ReserveActivity(ctx context.Context, f *Fence, seq int64, key
 		if len(options) == 0 {
 			options = []byte(`{}`)
 		}
-		_, e = conn.ExecContext(ctx, `INSERT INTO workflow_activity_tasks(instance_id,activity_id,seq,activity_name,input_data,queue,options,max_attempts,not_before_ms) VALUES($1,$2,CAST($3 AS BIGINT),$4,$5,$6,$7,$8,`+s.driver.NowMillisExpr()+`) ON CONFLICT DO NOTHING`, task.InstanceID, key, seq, task.ActivityName, string(task.InputData), task.Queue, string(options), task.MaxAttempts)
+		_, e = conn.ExecContext(ctx, s.activityClockSQL()+`INSERT INTO workflow_activity_tasks(instance_id,activity_id,seq,activity_name,input_data,queue,options,max_attempts,not_before_ms,schedule_to_start_ms,start_to_close_ms,heartbeat_timeout_ms,schedule_deadline_ms) VALUES($1,$2,CAST($3 AS BIGINT),$4,$5,$6,$7,$8,`+activityClockValue+`,$9,$10,$11,CASE WHEN CAST($9 AS BIGINT)>0 THEN `+activityClockValue+`+CAST($9 AS BIGINT) ELSE NULL END) ON CONFLICT DO NOTHING`, task.InstanceID, key, seq, task.ActivityName, string(task.InputData), task.Queue, string(options), task.MaxAttempts, task.ScheduleToStartMS, task.StartToCloseMS, task.HeartbeatTimeoutMS)
 		return e
 	})
 	if err == nil {
@@ -92,11 +104,11 @@ func (s taskStore) ReserveActivity(ctx context.Context, f *Fence, seq int64, key
 	return stored, err
 }
 
-const taskColumns = "id,instance_id,activity_id,seq,activity_name,input_data,status,attempts,COALESCE(claim_owner,''),claim_epoch,claim_expires_ms,queue,options,max_attempts,failures,not_before_ms,last_error"
+const taskColumns = "id,instance_id,activity_id,seq,activity_name,input_data,status,attempts,COALESCE(claim_owner,''),claim_epoch,claim_expires_ms,queue,options,max_attempts,failures,not_before_ms,last_error,schedule_to_start_ms,start_to_close_ms,heartbeat_timeout_ms,schedule_deadline_ms,attempt_deadline_ms"
 
 func scanTask(row interface{ Scan(...any) error }) (*ActivityTask, error) {
 	task := new(ActivityTask)
-	err := row.Scan(&task.ID, &task.InstanceID, &task.ActivityID, &task.Seq, &task.ActivityName, &task.InputData, &task.Status, &task.Attempts, &task.ClaimOwner, &task.ClaimEpoch, &task.ClaimExpiresMS, &task.Queue, &task.Options, &task.MaxAttempts, &task.Failures, &task.NotBeforeMS, &task.LastError)
+	err := row.Scan(&task.ID, &task.InstanceID, &task.ActivityID, &task.Seq, &task.ActivityName, &task.InputData, &task.Status, &task.Attempts, &task.ClaimOwner, &task.ClaimEpoch, &task.ClaimExpiresMS, &task.Queue, &task.Options, &task.MaxAttempts, &task.Failures, &task.NotBeforeMS, &task.LastError, &task.ScheduleToStartMS, &task.StartToCloseMS, &task.HeartbeatTimeoutMS, &task.ScheduleDeadlineMS, &task.AttemptDeadlineMS)
 	return task, err
 }
 
@@ -108,9 +120,18 @@ func (s taskStore) claim(ctx context.Context, owner string, ttl time.Duration, l
 		limit = 100
 	}
 	now := s.driver.NowMillisExpr()
-	eligible := `((status='queued' AND not_before_ms <= ` + now + `) OR (status='running' AND claim_expires_ms < ` + now + ` AND (max_attempts=0 OR failures+1 < max_attempts)))`
-	// The outer predicate is rechecked after concurrent UPDATEs acquire the row lock.
-	query := `UPDATE workflow_activity_tasks SET failures=failures+CASE WHEN status='running' THEN 1 ELSE 0 END,status='running',claim_owner=$1,claim_epoch=claim_epoch+1,attempts=attempts+1,claim_expires_ms=` + now + `+$2,updated_at=CURRENT_TIMESTAMP WHERE id IN (SELECT id FROM workflow_activity_tasks WHERE ` + eligible + filter + ` ORDER BY id LIMIT $3) AND ` + eligible + ` RETURNING ` + taskColumns
+	eligible := `((status='queued' AND not_before_ms <= ` + now + ` AND (schedule_deadline_ms IS NULL OR ` + now + ` <= schedule_deadline_ms)) OR (status='running' AND claim_expires_ms < ` + now + ` AND (max_attempts=0 OR failures+1 < max_attempts) AND (schedule_to_start_ms=0 OR ` + now + ` <= claim_expires_ms+schedule_to_start_ms)))`
+	effective := `CASE WHEN heartbeat_timeout_ms>0 THEN heartbeat_timeout_ms ELSE CAST($2 AS BIGINT) END`
+	expiry := activityClockValue + `+CASE WHEN start_to_close_ms>0 AND start_to_close_ms<(` + effective + `) THEN start_to_close_ms ELSE (` + effective + `) END`
+	selection := `SELECT id FROM workflow_activity_tasks WHERE ` + eligible + filter + ` ORDER BY id LIMIT $3`
+	clockSQL := s.activityClockSQL()
+	if s.driver.DriverName() == "postgres" {
+		clockSQL = s.lockedActivityClockSQL(selection)
+		selection = `SELECT id FROM activity_locked`
+		eligible = strings.ReplaceAll(eligible, now, activityClockValue)
+	}
+	// The assignment clock and final eligibility follow candidate row-lock acquisition.
+	query := clockSQL + `UPDATE workflow_activity_tasks SET failures=failures+CASE WHEN status='running' THEN 1 ELSE 0 END,status='running',claim_owner=$1,claim_epoch=claim_epoch+1,attempts=attempts+1,attempt_deadline_ms=CASE WHEN start_to_close_ms>0 THEN ` + activityClockValue + `+start_to_close_ms ELSE NULL END,claim_expires_ms=` + expiry + `,updated_at=CURRENT_TIMESTAMP WHERE id IN (` + selection + `) AND ` + eligible + ` RETURNING ` + taskColumns
 	params := make([]any, 0, 3+len(args))
 	params = append(params, owner, leaseMillis(ttl), limit)
 	params = append(params, args...)
@@ -118,6 +139,9 @@ func (s taskStore) claim(ctx context.Context, owner string, ttl time.Duration, l
 	if err != nil {
 		return nil, err
 	}
+	// Connection and lock waits precede acquisition; dispatch delay after this point
+	// consumes the local timeout. The store deadline still fences all durable writes.
+	started := time.Now()
 	defer func() { _ = rows.Close() }()
 	var tasks []*ActivityTask
 	for rows.Next() {
@@ -125,6 +149,7 @@ func (s taskStore) claim(ctx context.Context, owner string, ttl time.Duration, l
 		if e != nil {
 			return nil, e
 		}
+		task.ClaimStarted = started
 		tasks = append(tasks, task)
 	}
 	return tasks, rows.Err()
@@ -204,15 +229,16 @@ func (s taskStore) RenewActivityTask(ctx context.Context, c TaskClaim, ttl time.
 	if leaseMillis(ttl) <= 0 {
 		return fmt.Errorf("activity claim TTL must be positive")
 	}
-	now := s.driver.NowMillisExpr()
 	if !extend {
-		return checkTaskWrite(s.Conn(ctx).ExecContext(ctx, `UPDATE workflow_activity_tasks SET claim_epoch=claim_epoch`+claimWhere+` AND claim_expires_ms >= `+now, claimArgs(c)...))
+		return checkTaskWrite(s.Conn(ctx).ExecContext(ctx, s.claimClockSQL()+`UPDATE workflow_activity_tasks SET claim_epoch=claim_epoch`+claimWhere+` AND claim_expires_ms >= `+s.claimClockPredicate(), claimArgs(c)...))
 	}
 	args := append(claimArgs(c), leaseMillis(ttl))
-	return checkTaskWrite(s.Conn(ctx).ExecContext(ctx, `UPDATE workflow_activity_tasks SET claim_expires_ms=`+now+`+$6,updated_at=CURRENT_TIMESTAMP`+claimWhere+` AND claim_expires_ms >= `+now, args...))
+	proposed := activityClockValue + `+CASE WHEN heartbeat_timeout_ms>0 THEN heartbeat_timeout_ms ELSE CAST($6 AS BIGINT) END`
+	expiry := `CASE WHEN attempt_deadline_ms IS NOT NULL AND attempt_deadline_ms < (` + proposed + `) THEN attempt_deadline_ms ELSE (` + proposed + `) END`
+	return checkTaskWrite(s.Conn(ctx).ExecContext(ctx, s.claimClockSQL()+`UPDATE workflow_activity_tasks SET claim_expires_ms=`+expiry+`,updated_at=CURRENT_TIMESTAMP`+claimWhere+` AND claim_expires_ms >= `+s.claimClockPredicate(), args...))
 }
 func (s taskStore) ReleaseActivityTask(ctx context.Context, c TaskClaim) error {
-	err := checkTaskWrite(s.Conn(ctx).ExecContext(ctx, `UPDATE workflow_activity_tasks SET status='queued',claim_owner=NULL,claim_expires_ms=NULL,not_before_ms=`+s.driver.NowMillisExpr()+`,updated_at=CURRENT_TIMESTAMP`+claimWhere, claimArgs(c)...))
+	err := checkTaskWrite(s.Conn(ctx).ExecContext(ctx, s.claimClockSQL()+`UPDATE workflow_activity_tasks SET status='queued',claim_owner=NULL,claim_expires_ms=NULL,not_before_ms=`+activityClockValue+`,schedule_deadline_ms=CASE WHEN schedule_to_start_ms>0 THEN `+activityClockValue+`+schedule_to_start_ms ELSE NULL END,attempt_deadline_ms=NULL,updated_at=CURRENT_TIMESTAMP`+claimWhere+` AND claim_expires_ms >= `+s.claimClockPredicate(), claimArgs(c)...))
 	if err == nil {
 		notifyActivityTasks(ctx, s.Storage)
 	}
@@ -233,7 +259,7 @@ func (s taskStore) CompleteActivityTask(ctx context.Context, c TaskClaim, event 
 			return err
 		}
 		var name string
-		err = conn.QueryRowContext(ctx, `UPDATE workflow_activity_tasks SET status='completed',updated_at=CURRENT_TIMESTAMP`+claimWhere+` RETURNING activity_name`, claimArgs(c)...).Scan(&name)
+		err = conn.QueryRowContext(ctx, s.claimClockSQL()+`UPDATE workflow_activity_tasks SET status='completed',updated_at=CURRENT_TIMESTAMP`+claimWhere+` AND claim_expires_ms >= `+s.claimClockPredicate()+` RETURNING activity_name`, claimArgs(c)...).Scan(&name)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrFenced
 		}
@@ -391,7 +417,7 @@ func (s taskStore) RetryActivityTask(ctx context.Context, c TaskClaim, data []by
 		return fmt.Errorf("activity retry delay must not be negative")
 	}
 	args := append(claimArgs(c), string(data), leaseMillis(delay))
-	err := checkTaskWrite(s.Conn(ctx).ExecContext(ctx, `UPDATE workflow_activity_tasks SET status='queued',claim_owner=NULL,claim_expires_ms=NULL,failures=failures+1,last_error=$6,not_before_ms=`+s.driver.NowMillisExpr()+`+$7,updated_at=CURRENT_TIMESTAMP`+claimWhere, args...))
+	err := checkTaskWrite(s.Conn(ctx).ExecContext(ctx, s.claimClockSQL()+`UPDATE workflow_activity_tasks SET status='queued',claim_owner=NULL,claim_expires_ms=NULL,failures=failures+1,last_error=$6,not_before_ms=`+activityClockValue+`+$7,schedule_deadline_ms=CASE WHEN schedule_to_start_ms>0 THEN `+activityClockValue+`+$7+schedule_to_start_ms ELSE NULL END,attempt_deadline_ms=NULL,updated_at=CURRENT_TIMESTAMP`+claimWhere+` AND claim_expires_ms >= `+s.claimClockPredicate(), args...))
 	if err == nil {
 		notifyActivityTasks(ctx, s.Storage)
 	}
@@ -400,7 +426,7 @@ func (s taskStore) RetryActivityTask(ctx context.Context, c TaskClaim, data []by
 func (s taskStore) NextActivityDue(ctx context.Context, f TaskFilter) (time.Duration, bool, error) {
 	filter, args := taskFilterSQL(f, 1)
 	var delta sql.NullInt64
-	err := s.Conn(ctx).QueryRowContext(ctx, `SELECT MIN(not_before_ms)-`+s.driver.NowMillisExpr()+` FROM workflow_activity_tasks WHERE status='queued'`+filter, args...).Scan(&delta)
+	err := s.Conn(ctx).QueryRowContext(ctx, `SELECT MIN(not_before_ms)-`+s.driver.NowMillisExpr()+` FROM workflow_activity_tasks WHERE status='queued' AND (schedule_deadline_ms IS NULL OR schedule_deadline_ms >= `+s.driver.NowMillisExpr()+`)`+filter, args...).Scan(&delta)
 	if err != nil || !delta.Valid {
 		return 0, false, err
 	}
@@ -424,4 +450,50 @@ func (s taskStore) ListActivityTasks(ctx context.Context, id string) ([]*Activit
 		tasks = append(tasks, task)
 	}
 	return tasks, rows.Err()
+}
+
+// FindActivityTimeouts finds eligible timeout candidates.
+func (s *SQLiteStorage) FindActivityTimeouts(ctx context.Context, limit int) ([]*ActivityTimeout, error) {
+	return (taskStore{s, s.driver}).FindActivityTimeouts(ctx, limit)
+}
+
+// TimeoutActivityTask atomically records a final timeout.
+func (s *SQLiteStorage) TimeoutActivityTask(ctx context.Context, c *ActivityTimeout, data []byte) error {
+	return (taskStore{s, s.driver}).TimeoutActivityTask(ctx, c, data)
+}
+
+// FindActivityTimeouts finds eligible timeout candidates.
+func (s *PostgresStorage) FindActivityTimeouts(ctx context.Context, limit int) ([]*ActivityTimeout, error) {
+	return (taskStore{s, s.driver}).FindActivityTimeouts(ctx, limit)
+}
+
+// TimeoutActivityTask atomically records a final timeout.
+func (s *PostgresStorage) TimeoutActivityTask(ctx context.Context, c *ActivityTimeout, data []byte) error {
+	return (taskStore{s, s.driver}).TimeoutActivityTask(ctx, c, data)
+}
+
+// activityClockSQL materializes one store timestamp for paired deadline assignments.
+// Eligibility predicates keep using the live store expression when a row is rechecked.
+func (s taskStore) activityClockSQL() string {
+	return `WITH activity_clock AS MATERIALIZED (SELECT ` + s.driver.NowMillisExpr() + ` AS now_ms) `
+}
+
+const activityClockValue = `(SELECT now_ms FROM activity_clock)`
+
+// lockedActivityClockSQL consumes every selected PostgreSQL row lock before reading
+// the volatile clock. The aggregate makes that dependency explicit even for batches.
+func (s taskStore) lockedActivityClockSQL(selection string) string {
+	return `WITH activity_locked AS MATERIALIZED (` + selection + ` FOR UPDATE), activity_clock AS MATERIALIZED (SELECT ` + s.driver.NowMillisExpr() + ` AS now_ms FROM activity_locked HAVING COUNT(*) >= 0) `
+}
+func (s taskStore) claimClockSQL() string {
+	if s.driver.DriverName() == "postgres" {
+		return s.lockedActivityClockSQL(`SELECT id FROM workflow_activity_tasks` + claimWhere)
+	}
+	return s.activityClockSQL()
+}
+func (s taskStore) claimClockPredicate() string {
+	if s.driver.DriverName() == "postgres" {
+		return activityClockValue
+	}
+	return s.driver.NowMillisExpr()
 }

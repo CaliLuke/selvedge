@@ -190,3 +190,10 @@ func (s *queryStorage) NextActivityDue(context.Context, storage.TaskFilter) (tim
 func (s *queryStorage) ListActivityTasks(context.Context, string) ([]*storage.ActivityTask, error) {
 	return nil, s.stop()
 }
+
+func (s *queryStorage) FindActivityTimeouts(context.Context, int) ([]*storage.ActivityTimeout, error) {
+	return nil, s.stop()
+}
+func (s *queryStorage) TimeoutActivityTask(context.Context, *storage.ActivityTimeout, []byte) error {
+	return s.stop()
+}

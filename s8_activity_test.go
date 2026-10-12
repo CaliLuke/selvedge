@@ -168,20 +168,31 @@ func countMethod(calls []string, name string) int {
 
 func TestFutureGetReadsHistory(t *testing.T) { testFutureGetReadsHistory(t, createTestApp) }
 func testFutureGetReadsHistory(t *testing.T, factory replayAppFactory) {
+	testFutureGetReadsHistoryWithHeartbeat(t, factory, false)
+}
+func testFutureGetReadsHistoryWithHeartbeat(t *testing.T, factory replayAppFactory, heartbeat bool) {
 	h, clock, _ := leaseHarness(t, factory)
 	// Only the activity claim lapses. Keep the independent workflow lease valid across the store-clock jump.
 	require.NoError(t, h.app.engine.ConfigureLease(replay.LeaseConfig{TTL: time.Hour, RenewInterval: time.Minute, Margin: time.Second, MaxSkew: time.Millisecond}, func() replay.Clock { return clock }))
+	injected := make(chan struct{})
 	calls := 0
+	timeout := time.Duration(0)
+	lapse := int64(100000)
+	if heartbeat {
+		timeout = 30 * time.Millisecond
+		lapse = 1031
+	}
 	a := DefineActivity("A", func(ctx context.Context, _ string) (string, error) {
+		defer close(injected)
 		calls++
 		id := GetActivityInfo(ctx).InstanceID
-		setStoreClock(t, h, 100000)
+		setStoreClock(t, h, lapse)
 		claim, err := h.ClaimTask(id, "#1")
 		require.NoError(t, err)
 		require.NotNil(t, claim)
 		require.NoError(t, claim.Complete(`"recorded"`))
 		return "live", nil
-	})
+	}, WithActivityDefaults[string, string](ActivityOptions{HeartbeatTimeout: timeout}))
 	var values []string
 	w := DefineWorkflow("read_history", func(ctx *WorkflowContext, in string) (string, error) {
 		v, err := a.Execute(ctx, in)
@@ -193,6 +204,20 @@ func testFutureGetReadsHistory(t *testing.T, factory replayAppFactory) {
 	})
 	id := seedErrorWorkflow(t, h, w)
 	require.NoError(t, h.RunOnce(id))
+	if heartbeat {
+		// Claim loss can yield before the detached invocation commits its competing result.
+		select {
+		case <-injected:
+		case <-time.After(5 * time.Second):
+			t.Fatal("injected completion did not finish")
+		}
+		if len(values) == 0 {
+			inst, err := h.app.storage.GetInstance(h.app.ctx, id)
+			require.NoError(t, err)
+			require.True(t, inst.Runnable, "the competing completion must wake the yielded workflow")
+			require.NoError(t, h.RunOnce(id))
+		}
+	}
 	require.Equal(t, []string{"recorded"}, values)
 	require.NoError(t, h.app.storage.MarkRunnable(h.app.ctx, id))
 	require.NoError(t, h.RunOnce(id))

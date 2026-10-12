@@ -75,7 +75,7 @@ func runAsyncCrashScenario(t *testing.T, factory replayAppFactory, order string,
 		mu.Lock()
 		defer mu.Unlock()
 		switch method {
-		case "AcquireLease", "ReserveHistory", "ReserveActivity", "ClaimActivityTask", "ClaimActivityTasks", "RenewActivityTask", "CompleteActivityTask", "RetryActivityTask", "ReleaseActivityTask", "CancelActivityAtYield", "CommitObservation", "SetHistoryValueIfNull", "ReserveTimer", "ReleaseLease", "FireTimer", "CloseInstance":
+		case "AcquireLease", "ReserveHistory", "ReserveActivity", "ClaimActivityTask", "ClaimActivityTasks", "RenewActivityTask", "CompleteActivityTask", "RetryActivityTask", "TimeoutActivityTask", "ReleaseActivityTask", "CancelActivityAtYield", "CommitObservation", "SetHistoryValueIfNull", "ReserveTimer", "ReleaseLease", "FireTimer", "CloseInstance":
 			writes++
 		default:
 			return nil

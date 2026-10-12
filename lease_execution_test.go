@@ -225,6 +225,9 @@ func TestLeaseRenewedDuringLongActivity(t *testing.T) {
 }
 func testLeaseRenewedDuringLongActivity(t *testing.T, factory replayAppFactory) {
 	h, clk, fs := leaseHarness(t, factory)
+	// This fixture accelerates only the workflow lease clock. Keep the independent
+	// activity claim alive while six workflow renewals advance the store by 1.2s.
+	h.app.config.lease.TTL = time.Hour
 	require.NoError(t, h.app.engine.ConfigureLease(replay.LeaseConfig{TTL: time.Second, RenewInterval: 10 * time.Millisecond, Margin: 200 * time.Millisecond, MaxSkew: 100 * time.Millisecond}, func() replay.Clock { return clk }))
 	started := make(chan struct{})
 	release := make(chan struct{})
@@ -469,7 +472,7 @@ func runCrashScenario(t *testing.T, factory replayAppFactory, crashAt int, after
 		injectionMu.Lock()
 		defer injectionMu.Unlock()
 		switch method {
-		case "AcquireLease", "ReserveHistory", "ReserveActivity", "ClaimActivityTask", "ClaimActivityTasks", "RenewActivityTask", "CompleteActivityTask", "RetryActivityTask", "ReleaseActivityTask", "CancelActivityAtYield", "CommitObservation", "SetHistoryValueIfNull", "ReserveTimer", "ReleaseLease", "FireTimer", "CloseInstance":
+		case "AcquireLease", "ReserveHistory", "ReserveActivity", "ClaimActivityTask", "ClaimActivityTasks", "RenewActivityTask", "CompleteActivityTask", "RetryActivityTask", "TimeoutActivityTask", "ReleaseActivityTask", "CancelActivityAtYield", "CommitObservation", "SetHistoryValueIfNull", "ReserveTimer", "ReleaseLease", "FireTimer", "CloseInstance":
 			writeIndex++
 		}
 		if !crashed && crashAt > 0 && writeIndex == crashAt {
@@ -627,7 +630,7 @@ func executionWrites(s *faultstore.Store) []string {
 	var writes []string
 	for _, method := range s.Calls() {
 		switch method {
-		case "AcquireLease", "ReleaseLease", "ReserveHistory", "ReserveActivity", "ClaimActivityTask", "ClaimActivityTasks", "RenewActivityTask", "CompleteActivityTask", "RetryActivityTask", "ReleaseActivityTask", "ReserveTimer", "RecordHistory", "SetHistoryValueIfNull", "CloseInstance", "UpdateInstanceActivity", "CommitObservation":
+		case "AcquireLease", "ReleaseLease", "ReserveHistory", "ReserveActivity", "ClaimActivityTask", "ClaimActivityTasks", "RenewActivityTask", "CompleteActivityTask", "RetryActivityTask", "TimeoutActivityTask", "ReleaseActivityTask", "ReserveTimer", "RecordHistory", "SetHistoryValueIfNull", "CloseInstance", "UpdateInstanceActivity", "CommitObservation":
 			writes = append(writes, method)
 		}
 	}

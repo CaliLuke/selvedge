@@ -501,6 +501,9 @@ func (a *App) runTimerCheckWithContext(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if err := a.checkActivityTimeouts(ctx); err != nil {
+				slog.Error("error checking activity timeouts", "error", err)
+			}
 			if err := a.checkExpiredTimers(); err != nil {
 				slog.Error("error checking expired timers", "error", err)
 			}

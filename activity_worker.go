@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"runtime/debug"
 	"time"
 
 	"github.com/google/uuid"
@@ -128,11 +129,12 @@ func (a *App) runActivityTask(parent context.Context, s storage.Storage, task *s
 	}
 	options.RetryPolicy.MaxAttempts = task.MaxAttempts
 	info := ActivityInfo{InstanceID: task.InstanceID, WorkflowName: inst.WorkflowName, ActivityID: task.ActivityID, ActivityName: task.ActivityName, Attempt: task.Attempts, Options: cloneActivityOptions(options)}
-	ctx, cancel := context.WithCancelCause(context.WithValue(parent, activityInfoKey{}, info))
+	heartbeat := &activityHeartbeat{}
+	ctx, cancel := context.WithCancelCause(context.WithValue(context.WithValue(parent, activityInfoKey{}, info), activityHeartbeatKey{}, heartbeat))
 	done := make(chan struct{})
 	renewCtx, stopRenew := context.WithCancel(ctx)
 	defer cancel(nil)
-	go a.renewActivityClaim(renewCtx, cancel, s, task.Claim(), check, done)
+	go a.renewActivityClaim(renewCtx, cancel, s, task, heartbeat, check, done)
 	stopped := false
 	stop := func() {
 		if !stopped {
@@ -147,10 +149,17 @@ func (a *App) runActivityTask(parent context.Context, s storage.Storage, task *s
 	attemptCtx := ctx
 	timeoutCancel := func() {}
 	if options.StartToCloseTimeout > 0 {
-		attemptCtx, timeoutCancel = context.WithTimeout(ctx, options.StartToCloseTimeout)
+		claimStarted := task.ClaimStarted
+		if claimStarted.IsZero() {
+			claimStarted = started
+		}
+		attemptCtx, timeoutCancel = context.WithDeadline(ctx, claimStarted.Add(options.StartToCloseTimeout))
 	}
-	result, runErr := definition.run(attemptCtx, task.InputData)
-	timeoutCancel()
+	defer timeoutCancel()
+	result, runErr := invokeActivityAttempt(attemptCtx, ctx, definition, task.InputData)
+	if errors.Is(runErr, context.DeadlineExceeded) && errors.Is(attemptCtx.Err(), context.DeadlineExceeded) {
+		runErr = &ActivityTimeoutError{Activity: task.ActivityName, Kind: TimeoutStartToClose, Attempt: task.Attempts}
+	}
 	if check != nil {
 		if err := check(); err != nil {
 			cancel(err)
@@ -217,9 +226,14 @@ func (a *App) runActivityTask(parent context.Context, s storage.Storage, task *s
 
 	return err
 }
-func (a *App) renewActivityClaim(ctx context.Context, cancel context.CancelCauseFunc, s storage.Storage, claim storage.TaskClaim, check func() error, done chan<- struct{}) {
+func (a *App) renewActivityClaim(ctx context.Context, cancel context.CancelCauseFunc, s storage.Storage, task *storage.ActivityTask, heartbeat *activityHeartbeat, check func() error, done chan<- struct{}) {
 	defer close(done)
-	ticker := time.NewTicker(a.config.lease.RenewInterval)
+	interval := a.config.lease.RenewInterval
+	if task.HeartbeatTimeoutMS > 0 {
+		interval = min(interval, time.Duration(task.HeartbeatTimeoutMS)*time.Millisecond/3)
+	}
+	interval = max(interval, time.Millisecond)
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -232,7 +246,7 @@ func (a *App) renewActivityClaim(ctx context.Context, cancel context.CancelCause
 					return
 				}
 			}
-			if err := s.RenewActivityTask(ctx, claim, a.config.lease.TTL, true); err != nil {
+			if err := s.RenewActivityTask(ctx, task.Claim(), a.config.lease.TTL, task.HeartbeatTimeoutMS == 0 || heartbeat.progress.Swap(false)); err != nil {
 				if ctx.Err() != nil {
 					return
 				}
@@ -304,4 +318,35 @@ func (a *App) dispatchActivityTasks() (int, error) {
 		}()
 	}
 	return count, nil
+}
+
+// invokeActivityAttempt lets an expired claim stop waiting even if user code ignores cancellation.
+// Its buffered result channel also permits late completion without holding a worker slot.
+func invokeActivityAttempt(attemptCtx, claimCtx context.Context, definition activityDefinition, data []byte) (any, error) {
+	type outcome struct {
+		value any
+		err   error
+	}
+	results := make(chan outcome, 1)
+	go func() {
+		returned := false
+		defer func() {
+			if value := recover(); value != nil {
+				results <- outcome{err: &WorkflowPanicError{Value: fmt.Sprint(value), Stack: string(debug.Stack())}}
+				return
+			}
+			if !returned {
+				results <- outcome{err: &WorkflowPanicError{Value: "runtime.Goexit", Stack: string(debug.Stack())}}
+			}
+		}()
+		value, err := definition.run(attemptCtx, data)
+		returned = true
+		results <- outcome{value, err}
+	}()
+	select {
+	case result := <-results:
+		return result.value, result.err
+	case <-claimCtx.Done():
+		return nil, context.Cause(claimCtx)
+	}
 }

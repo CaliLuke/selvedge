@@ -159,7 +159,7 @@ func s14RunQueryCrash(t *testing.T, factory replayAppFactory, scenario string, c
 	queryCount := 0
 	isWrite := func(method string) bool {
 		switch method {
-		case "AcquireLease", "ReserveActivity", "ReserveTimer", "CommitObservation", "ClaimActivityTask", "ClaimActivityTasks", "CompleteActivityTask", "RetryActivityTask", "ReleaseActivityTask", "ReleaseLease", "CloseInstance":
+		case "AcquireLease", "ReserveActivity", "ReserveTimer", "CommitObservation", "ClaimActivityTask", "ClaimActivityTasks", "CompleteActivityTask", "RetryActivityTask", "TimeoutActivityTask", "ReleaseActivityTask", "ReleaseLease", "CloseInstance":
 			return true
 		}
 		return false

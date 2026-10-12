@@ -332,7 +332,7 @@ func runDeliveryCrash(t *testing.T, factory replayAppFactory, scenario string, c
 	injected := false
 	inject := func(_ context.Context, method string) error {
 		switch method {
-		case "AcquireLease", "ReserveActivity", "ClaimActivityTasks", "ClaimActivityTask", "CompleteActivityTask", "RetryActivityTask", "ReleaseActivityTask", "ReleaseLease", "ReserveTimer", "FireTimer", "CommitObservation", "CloseInstance":
+		case "AcquireLease", "ReserveActivity", "ClaimActivityTasks", "ClaimActivityTask", "CompleteActivityTask", "RetryActivityTask", "TimeoutActivityTask", "ReleaseActivityTask", "ReleaseLease", "ReserveTimer", "FireTimer", "CommitObservation", "CloseInstance":
 			writes++
 		default:
 			return nil

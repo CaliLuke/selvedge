@@ -120,3 +120,11 @@ func validateActivityOptions(o ActivityOptions, call bool) error {
 	}
 	return nil
 }
+
+func activityMillis(d time.Duration) int64 {
+	ms := d.Milliseconds()
+	if d%time.Millisecond > 0 {
+		ms++
+	}
+	return ms
+}

@@ -277,7 +277,7 @@ func runScopeCrash(t *testing.T, factory replayAppFactory, cut int, after, race 
 	injected := false
 	inject := func(_ context.Context, method string) error {
 		switch method {
-		case "AcquireLease", "ReserveActivity", "ReserveTimer", "CommitObservation", "ClaimActivityTask", "CompleteActivityTask", "RetryActivityTask", "ReleaseActivityTask", "ReleaseLease", "CloseInstance":
+		case "AcquireLease", "ReserveActivity", "ReserveTimer", "CommitObservation", "ClaimActivityTask", "CompleteActivityTask", "RetryActivityTask", "TimeoutActivityTask", "ReleaseActivityTask", "ReleaseLease", "CloseInstance":
 			writes++
 		default:
 			return nil

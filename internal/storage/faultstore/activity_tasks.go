@@ -95,3 +95,20 @@ func (s *Store) ListActivityTasks(ctx context.Context, id string) ([]*storage.Ac
 	rows, err := s.Storage.ListActivityTasks(ctx, id)
 	return rows, s.after(ctx, "ListActivityTasks", err)
 }
+
+// FindActivityTimeouts delegates with fault hooks.
+func (s *Store) FindActivityTimeouts(ctx context.Context, limit int) ([]*storage.ActivityTimeout, error) {
+	if err := s.before(ctx, "FindActivityTimeouts"); err != nil {
+		return nil, err
+	}
+	rows, err := s.Storage.FindActivityTimeouts(ctx, limit)
+	return rows, s.after(ctx, "FindActivityTimeouts", err)
+}
+
+// TimeoutActivityTask delegates with fault hooks.
+func (s *Store) TimeoutActivityTask(ctx context.Context, c *storage.ActivityTimeout, data []byte) error {
+	if err := s.before(ctx, "TimeoutActivityTask"); err != nil {
+		return err
+	}
+	return s.after(ctx, "TimeoutActivityTask", s.Storage.TimeoutActivityTask(ctx, c, data))
+}

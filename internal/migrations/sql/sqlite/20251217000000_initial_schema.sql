@@ -126,17 +126,24 @@ CREATE TABLE IF NOT EXISTS workflow_activity_tasks (
     failures INTEGER NOT NULL DEFAULT 0,
     not_before_ms BIGINT NOT NULL DEFAULT 0,
     last_error TEXT NULL,
+    schedule_to_start_ms BIGINT NOT NULL DEFAULT 0,
+    start_to_close_ms BIGINT NOT NULL DEFAULT 0,
+    heartbeat_timeout_ms BIGINT NOT NULL DEFAULT 0,
+    schedule_deadline_ms BIGINT NULL,
+    attempt_deadline_ms BIGINT NULL,
     claim_owner TEXT NULL,
     claim_epoch BIGINT NOT NULL DEFAULT 0,
     claim_expires_ms BIGINT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     CONSTRAINT unique_activity_task UNIQUE (instance_id, activity_id),
+    CONSTRAINT task_timeouts_valid CHECK (schedule_to_start_ms >= 0 AND start_to_close_ms >= 0 AND heartbeat_timeout_ms >= 0 AND (start_to_close_ms = 0 OR heartbeat_timeout_ms <= start_to_close_ms)),
     CONSTRAINT task_counts_valid CHECK (attempts >= 0 AND failures >= 0 AND max_attempts >= 0 AND failures <= attempts),
     CONSTRAINT valid_task_status CHECK (status IN ('queued','running','completed','cancelled')),
     FOREIGN KEY (instance_id, activity_id) REFERENCES workflow_history(instance_id, activity_id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_activity_tasks_claim ON workflow_activity_tasks(status, queue, activity_name, not_before_ms);
+CREATE INDEX IF NOT EXISTS idx_activity_tasks_deadlines ON workflow_activity_tasks(status, schedule_deadline_ms);
 CREATE INDEX IF NOT EXISTS idx_activity_tasks_expiry ON workflow_activity_tasks(status, claim_expires_ms);
 
 -- System locks (for coordinating background tasks across pods)

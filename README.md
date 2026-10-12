@@ -292,11 +292,25 @@ attempts to those queues. Omitting it serves every queue; an empty list serves
 none. An empty task queue name denotes the default queue. Workflow and child task
 queues are not supported.
 
-`StartToCloseTimeout` currently cancels the local attempt context, as `WithTimeout`
-did. `ScheduleToStartTimeout` and `HeartbeatTimeout` are recorded but not yet
-enforced. A crashed claim that exhausts its retry budget is no longer claimable;
-its final failure recording follows with the timeout sweeper. Store-enforced
-deadlines and the heartbeat API follow separately.
+`StartToCloseTimeout` sets the attempt's context deadline and caps its durable
+claim, including every renewal. `HeartbeatTimeout` requires the activity to call
+`RecordHeartbeat(ctx)` to retain its claim. The call marks progress in memory
+without database I/O; a renewal tick extends the claim only after new progress.
+With no heartbeat timeout, claims renew automatically. Heartbeat calls return the
+context cause after cancellation or claim loss, and `ErrNotActivityContext`
+outside an attempt.
+
+`ScheduleToStartTimeout` limits each wait for a worker, measured from reservation,
+the retry's due time, graceful release, or claim lapse. Deadlines expire strictly
+after the stored deadline. Schedule timeout is final; start-to-close and heartbeat
+lapses consume retry budget. The leader records exhausted lapsed claims and
+schedule timeouts. `ActivityTimeoutError` identifies the timeout kind and matches
+`context.DeadlineExceeded`, including when nested in `RetryExhaustedError`.
+
+Activities should honor their context. An activity that ignores cancellation can
+continue running after its claim expires while another attempt starts. Its late
+result cannot replace the durable outcome. Inline attempts use the same deadline
+and heartbeat rules; losing a claim yields the workflow and releases its worker.
 Pre-S15 databases must be recreated because the activity task schema changed.
 
 Workflow code runs on one coroutine per execution. A pending `Sleep` or `Receive` yields to the dispatcher without returning. The dispatcher closes that coroutine, runs its defers, and releases the lease. A later dispatch replays from the beginning.

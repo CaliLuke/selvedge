@@ -144,7 +144,7 @@ func (a *Activity[I, O]) ExecuteAsync(ctx *WorkflowContext, input I, opts ...Exe
 			})
 		}
 	} else if event == nil {
-		if err := cmd.ReserveActivity(ctx.Context(), &storage.ActivityTask{InstanceID: ctx.InstanceID(), ActivityName: a.name, InputData: payload, Queue: resolved.Queue, Options: recordedOptions, MaxAttempts: resolved.RetryPolicy.MaxAttempts}); err != nil {
+		if err := cmd.ReserveActivity(ctx.Context(), &storage.ActivityTask{InstanceID: ctx.InstanceID(), ActivityName: a.name, InputData: payload, Queue: resolved.Queue, Options: recordedOptions, MaxAttempts: resolved.RetryPolicy.MaxAttempts, ScheduleToStartMS: activityMillis(resolved.ScheduleToStartTimeout), StartToCloseMS: activityMillis(resolved.StartToCloseTimeout), HeartbeatTimeoutMS: activityMillis(resolved.HeartbeatTimeout)}); err != nil {
 			return nil, err
 		}
 		ctx.app.wakeActivityWorkers()
