@@ -2,9 +2,16 @@ package selvedge
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"runtime/debug"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/CaliLuke/selvedge/internal/replay"
 
 	"github.com/CaliLuke/selvedge/hooks"
 	"github.com/CaliLuke/selvedge/internal/storage"
@@ -85,12 +92,25 @@ func (a *Activity[I, O]) Execute(
 		return zero, options.err
 	}
 
+	payload, err := json.Marshal(input)
+	if err != nil {
+		ctx.execCtx.Fail(err)
+		var zero O
+		return zero, err
+	}
+
 	cmd, claimErr := ctx.execCtx.Issue("activity:"+a.name, options.activityID)
 	if claimErr != nil {
 		var zero O
 		return zero, claimErr
 	}
 	defer cmd.End()
+	if err := RegisterActivity(ctx.app, a); err != nil {
+		ctx.execCtx.Fail(err)
+		var zero O
+		return zero, err
+	}
+
 	activityID := cmd.Key
 	event := cmd.Recorded
 
@@ -128,26 +148,56 @@ func (a *Activity[I, O]) Execute(
 		return result, nil
 	}
 
-	if err := cmd.Reserve(ctx.Context()); err != nil {
-		var zero O
-		return zero, err
+	if event == nil {
+		if err := cmd.ReserveActivity(ctx.Context(), &storage.ActivityTask{InstanceID: ctx.InstanceID(), ActivityName: a.name, InputData: payload}); err != nil {
+			var zero O
+			return zero, err
+		}
+		ctx.app.wakeActivityWorkers()
 	}
+	return a.awaitActivity(ctx, cmd)
+}
 
-	// Execute the activity
-	result, err := a.executeWithRetry(ctx, input, activityID)
-
-	// Return the serialized representation on first execution, too.
-	stored, recordErr := ctx.recordActivityResult(cmd, result, err)
-	if recordErr != nil {
+// awaitActivity always reads the winning bytes from history, including after an inline attempt.
+func (a *Activity[I, O]) awaitActivity(ctx *WorkflowContext, cmd *replay.Command) (O, error) {
+	attempted := false
+	for {
 		var zero O
-		return zero, fmt.Errorf("failed to record activity result: %w", recordErr)
+		if err := ctx.execCtx.Check(); err != nil {
+			return zero, err
+		}
+		row, err := ctx.Storage().GetHistoryEvent(ctx.Context(), ctx.InstanceID(), cmd.Key)
+		if err != nil {
+			ctx.execCtx.Fail(err)
+			return zero, err
+		}
+		if row != nil && row.EventData != nil {
+			return decodeActivityRecorded[O](ctx, row)
+		}
+		if !attempted {
+			task, err := ctx.execCtx.Storage().ClaimActivityTask(ctx.Context(), ctx.InstanceID(), cmd.Key, ctx.app.config.workerID+"/"+uuid.NewString(), ctx.app.config.lease.TTL)
+			if err != nil {
+				ctx.execCtx.Fail(err)
+				return zero, err
+			}
+			attempted = true
+			if task != nil {
+				err = ctx.app.runActivityTask(ctx.Context(), ctx.execCtx.Storage(), task, ctx.execCtx.CheckLease)
+				if err != nil && !errors.Is(err, storage.ErrFenced) && !errors.Is(err, errClaimLost) {
+					ctx.execCtx.Fail(err)
+					return zero, err
+				}
+				continue
+			}
+		}
+		if err := ctx.execCtx.Yield(replay.Wait{Seq: ctx.execCtx.Position(), Key: cmd.Key, Kind: replay.WaitActivity}); err != nil {
+			return zero, err
+		}
 	}
-
-	return decodeActivityRecorded[O](ctx, stored)
 }
 
 // executeWithRetry executes the activity with retry logic.
-func (a *Activity[I, O]) executeWithRetry(ctx *WorkflowContext, input I, activityID string) (O, error) {
+func (a *Activity[I, O]) executeWithRetry(ctx context.Context, info ActivityInfo, h hooks.WorkflowHooks, input I) (O, error) {
 	policy := a.retryPolicy
 	if policy == nil {
 		policy = retry.DefaultPolicy()
@@ -158,21 +208,21 @@ func (a *Activity[I, O]) executeWithRetry(ctx *WorkflowContext, input I, activit
 	startTime := time.Now()
 
 	for {
+		if err := ctx.Err(); err != nil {
+			var zero O
+			return zero, err
+		}
 		attempts++
 
 		// Create execution context with timeout
-		execCtx := ctx.Context()
+		execCtx := ctx
 		var cancel context.CancelFunc
 		if a.timeout > 0 {
 			execCtx, cancel = context.WithTimeout(execCtx, a.timeout)
 		}
 
-		// Embed WorkflowContext in the execution context
-		// Activities may read workflow metadata, but must not issue commands.
-		execCtx = ContextWithWorkflowContext(execCtx, ctx)
-
 		// Execute the activity
-		result, err := a.fn(execCtx, input)
+		result, err := a.invoke(execCtx, input)
 
 		if cancel != nil {
 			cancel()
@@ -180,11 +230,11 @@ func (a *Activity[I, O]) executeWithRetry(ctx *WorkflowContext, input I, activit
 
 		if err == nil {
 			// Call OnActivityComplete hook
-			if h := ctx.Hooks(); h != nil {
-				h.OnActivityComplete(ctx.Context(), hooks.ActivityCompleteInfo{
-					InstanceID:   ctx.InstanceID(),
-					WorkflowName: ctx.WorkflowName(),
-					ActivityID:   activityID,
+			if h != nil {
+				h.OnActivityComplete(ctx, hooks.ActivityCompleteInfo{
+					InstanceID:   info.InstanceID,
+					WorkflowName: info.WorkflowName,
+					ActivityID:   info.ActivityID,
 					ActivityName: a.name,
 					OutputData:   result,
 					Duration:     time.Since(startTime),
@@ -197,13 +247,13 @@ func (a *Activity[I, O]) executeWithRetry(ctx *WorkflowContext, input I, activit
 		lastErr = err
 
 		// Check if error is terminal (should not retry)
-		if IsTerminalError(err) || nonRetryableApplication(err) {
+		if IsTerminalError(err) || nonRetryableApplication(err) || isActivityPanic(err) {
 			// Call OnActivityFailed hook
-			if h := ctx.Hooks(); h != nil {
-				h.OnActivityFailed(ctx.Context(), hooks.ActivityFailedInfo{
-					InstanceID:   ctx.InstanceID(),
-					WorkflowName: ctx.WorkflowName(),
-					ActivityID:   activityID,
+			if h != nil {
+				h.OnActivityFailed(ctx, hooks.ActivityFailedInfo{
+					InstanceID:   info.InstanceID,
+					WorkflowName: info.WorkflowName,
+					ActivityID:   info.ActivityID,
 					ActivityName: a.name,
 					Error:        err,
 					Duration:     time.Since(startTime),
@@ -222,11 +272,11 @@ func (a *Activity[I, O]) executeWithRetry(ctx *WorkflowContext, input I, activit
 				LastErr:      lastErr,
 			}
 			// Call OnActivityFailed hook
-			if h := ctx.Hooks(); h != nil {
-				h.OnActivityFailed(ctx.Context(), hooks.ActivityFailedInfo{
-					InstanceID:   ctx.InstanceID(),
-					WorkflowName: ctx.WorkflowName(),
-					ActivityID:   activityID,
+			if h != nil {
+				h.OnActivityFailed(ctx, hooks.ActivityFailedInfo{
+					InstanceID:   info.InstanceID,
+					WorkflowName: info.WorkflowName,
+					ActivityID:   info.ActivityID,
 					ActivityName: a.name,
 					Error:        retryErr,
 					Duration:     time.Since(startTime),
@@ -241,11 +291,11 @@ func (a *Activity[I, O]) executeWithRetry(ctx *WorkflowContext, input I, activit
 		delay := policy.GetDelay(attempts)
 
 		// Call OnActivityRetry hook
-		if h := ctx.Hooks(); h != nil {
-			h.OnActivityRetry(ctx.Context(), hooks.ActivityRetryInfo{
-				InstanceID:   ctx.InstanceID(),
-				WorkflowName: ctx.WorkflowName(),
-				ActivityID:   activityID,
+		if h != nil {
+			h.OnActivityRetry(ctx, hooks.ActivityRetryInfo{
+				InstanceID:   info.InstanceID,
+				WorkflowName: info.WorkflowName,
+				ActivityID:   info.ActivityID,
 				ActivityName: a.name,
 				Attempt:      attempts,
 				MaxAttempts:  policy.MaxAttempts,
@@ -294,3 +344,13 @@ func reservedHistoryIDError(kind, id string) error {
 	}
 	return nil
 }
+
+func (a *Activity[I, O]) invoke(ctx context.Context, input I) (out O, err error) {
+	defer func() {
+		if value := recover(); value != nil {
+			err = &WorkflowPanicError{Value: fmt.Sprint(value), Stack: string(debug.Stack())}
+		}
+	}()
+	return a.fn(ctx, input)
+}
+func isActivityPanic(err error) bool { var p *WorkflowPanicError; return errors.As(err, &p) }

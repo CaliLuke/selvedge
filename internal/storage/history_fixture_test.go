@@ -37,7 +37,7 @@ func fixtureRecord(ctx context.Context, s Storage, ev *HistoryEvent) (*HistoryEv
 		if err != nil {
 			return nil, err
 		}
-		return s.SetHistoryValueIfNull(ctx, nil, ev.InstanceID, ev.ActivityID, ev.Command, ev.EventType, ev.EventData)
+		return s.SetHistoryValueIfNull(ctx, &f, ev.InstanceID, ev.ActivityID, ev.Command, ev.EventType, ev.EventData)
 	}
 	return s.RecordHistory(ctx, &f, ev)
 }

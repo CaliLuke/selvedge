@@ -2,34 +2,11 @@ package selvedge
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 
 	"github.com/CaliLuke/selvedge/hooks"
 	"github.com/CaliLuke/selvedge/internal/replay"
 	"github.com/CaliLuke/selvedge/internal/storage"
 )
-
-// workflowContextKey is the key used to store WorkflowContext in context.Context.
-type workflowContextKey struct{}
-
-// ContextWithWorkflowContext returns a new context with the WorkflowContext embedded.
-// This is used internally to pass WorkflowContext to activities.
-func ContextWithWorkflowContext(ctx context.Context, wfCtx *WorkflowContext) context.Context {
-	return context.WithValue(ctx, workflowContextKey{}, wfCtx)
-}
-
-// GetWorkflowContext retrieves workflow metadata from an activity context.
-// Activities must not issue workflow commands through this context.
-// Returns nil if the context does not contain a WorkflowContext.
-func GetWorkflowContext(ctx context.Context) *WorkflowContext {
-	if v := ctx.Value(workflowContextKey{}); v != nil {
-		if wfCtx, ok := v.(*WorkflowContext); ok {
-			return wfCtx
-		}
-	}
-	return nil
-}
 
 // WorkflowContext provides context for workflow execution.
 // It provides command positions, replay state, and recorded history.
@@ -118,25 +95,6 @@ func (c *WorkflowContext) WorkerID() string {
 // IsReplaying returns true if the workflow is being replayed.
 func (c *WorkflowContext) IsReplaying() bool {
 	return c.execCtx.Replaying()
-}
-
-func (c *WorkflowContext) recordActivityResult(cmd *replay.Command, result any, activityErr error) (*storage.HistoryEvent, error) {
-	event := &storage.HistoryEvent{InstanceID: c.instanceID, Seq: cmd.Seq, ActivityID: cmd.Key, DataType: "json", EventType: storage.HistoryActivityCompleted}
-	if activityErr != nil {
-		event.EventType = storage.HistoryActivityFailed
-		event.EventData = encodeError(activityErr)
-	} else {
-		data, err := json.Marshal(result)
-		if err != nil {
-			return nil, fmt.Errorf("failed to serialize result: %w", err)
-		}
-		event.EventData = data
-	}
-	if c.execCtx != nil {
-		return cmd.StoreActivityOutcome(c.ctx, event.EventType, event.EventData)
-	}
-	// Standalone contexts use the same JSON representation as engine runs.
-	return event, nil
 }
 
 // Cancel cancels the workflow execution.

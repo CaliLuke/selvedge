@@ -96,6 +96,27 @@ CREATE TABLE IF NOT EXISTS workflow_signals (
 );
 CREATE INDEX IF NOT EXISTS idx_signals_next ON workflow_signals(instance_id, channel, id);
 
+-- Durable activity inputs and attempt claims
+CREATE TABLE IF NOT EXISTS workflow_activity_tasks (
+    id BIGSERIAL PRIMARY KEY,
+    instance_id TEXT NOT NULL REFERENCES workflow_instances(instance_id) ON DELETE CASCADE,
+    activity_id TEXT NOT NULL,
+    seq BIGINT NOT NULL,
+    activity_name TEXT NOT NULL,
+    input_data TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'queued',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    claim_owner TEXT NULL,
+    claim_epoch BIGINT NOT NULL DEFAULT 0,
+    claim_expires_ms BIGINT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unique_activity_task UNIQUE (instance_id, activity_id),
+    CONSTRAINT valid_task_status CHECK (status IN ('queued','running','completed','cancelled')),
+    FOREIGN KEY (instance_id, activity_id) REFERENCES workflow_history(instance_id, activity_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_activity_tasks_claim ON workflow_activity_tasks(status, claim_expires_ms, activity_name);
+
 -- System locks (for coordinating background tasks across pods)
 CREATE TABLE IF NOT EXISTS system_locks (
     lock_name TEXT PRIMARY KEY,
@@ -109,6 +130,8 @@ CREATE INDEX IF NOT EXISTS idx_system_locks_expires ON system_locks(lock_expires
 CREATE INDEX IF NOT EXISTS idx_instances_dispatch ON workflow_instances(status, runnable, lease_expires_ms);
 
 -- migrate:down
+
+DROP TABLE IF EXISTS workflow_activity_tasks;
 
 DROP TABLE IF EXISTS workflow_signals;
 

@@ -166,43 +166,43 @@ func (ec *ExecutionContext) checkLeftover() error {
 	return ec.fatal
 }
 
-// Reserve persists an activity's command before its side effect.
-func (c *Command) Reserve(ctx context.Context) error {
+// ReserveActivity atomically reserves the command and durable activity input.
+func (c *Command) ReserveActivity(ctx context.Context, task *storage.ActivityTask) error {
 	ec := c.execution
 	if err := ec.Check(); err != nil {
 		return err
 	}
-	if ec.engine == nil {
-		return nil
-	}
-	_, err := ec.Storage().ReserveHistory(ctx, ec.Fence(), ec.instanceID, c.Key, c.name, c.Seq)
+	_, err := ec.Storage().ReserveActivity(ctx, ec.Fence(), c.Seq, c.Key, c.name, task)
 	if err != nil {
 		ec.Fail(err)
 	}
 	return err
 }
 
-// StoreActivityOutcome fills only an already reserved activity command.
-func (c *Command) StoreActivityOutcome(ctx context.Context, t storage.HistoryEventType, payload []byte) (*storage.HistoryEvent, error) {
-	ec := c.execution
-	// Class 3 may finish after another command failed, but not after lease loss.
+// Enter guards a command-free observation without consuming a position.
+func (ec *ExecutionContext) Enter() (func(), error) {
+	if err := ec.Check(); err != nil {
+		return nil, err
+	}
+	if !ec.running.Load() || !ec.inCommand.CompareAndSwap(false, true) {
+		err := &NondeterminismError{Seq: ec.Position(), Reason: "command issued off the workflow coroutine"}
+		ec.Fail(err)
+		return nil, err
+	}
+	return func() { ec.inCommand.Store(false) }, nil
+}
+
+// CheckLease checks the attempt's parent lease without treating workflow failures as claim loss.
+func (ec *ExecutionContext) CheckLease() error {
 	if ec.execution != nil {
 		if err := ec.execution.Check(); err != nil {
-			ec.Fail(err)
-			return nil, err
+			return err
 		}
 	}
-	ec.mu.Lock()
-	ec.newActivities++
-	ec.mu.Unlock()
-	if ec.engine == nil {
-		return &storage.HistoryEvent{Seq: c.Seq, InstanceID: ec.instanceID, ActivityID: c.Key, Command: c.name, EventType: t, EventData: payload, DataType: "json"}, nil
+	if ec.ctx.Err() != nil {
+		return ErrLeaseLost
 	}
-	row, err := ec.Storage().SetHistoryValueIfNull(ctx, nil, ec.instanceID, c.Key, c.name, t, payload)
-	if err != nil {
-		ec.Fail(err)
-	}
-	return row, err
+	return nil
 }
 
 // Context returns the underlying context.Context.

@@ -20,7 +20,7 @@ import (
 
 func leaseHarness(t *testing.T, factory replayAppFactory) (*typedReplayHarness, *testkit.Clock, *faultstore.Store) {
 	t.Helper()
-	h := newTypedReplayHarness(t, factory)
+	h := newTypedReplayHarness(t, factory, WithLease(time.Second, 200*time.Millisecond, 200*time.Millisecond, 100*time.Millisecond))
 	setStoreClock(t, h, 1000)
 	clk := &testkit.Clock{}
 	fs := faultstore.New(h.app.storage)
@@ -419,6 +419,7 @@ func TestReplayDeterministicAfterCrash(t *testing.T) {
 	testReplayDeterministicAfterCrash(t, createTestApp)
 }
 func testReplayDeterministicAfterCrash(t *testing.T, factory replayAppFactory) {
+	t.Run("two_attempts_of_A_return_different_values", func(t *testing.T) { testFutureGetReadsHistory(t, factory) })
 	baseline, writes := runCrashScenario(t, factory, 0, false)
 	for i := 1; i <= writes; i++ {
 		for _, after := range []bool{false, true} {
@@ -439,6 +440,7 @@ func runCrashScenario(t *testing.T, factory replayAppFactory, crashAt int, after
 	h, _, fs := leaseHarness(t, factory)
 	calls := 0
 	writeIndex := 0
+	var injectionMu sync.Mutex
 	crashed := false
 	a := DefineActivity("A", func(context.Context, string) (string, error) {
 		calls++
@@ -461,8 +463,10 @@ func runCrashScenario(t *testing.T, factory replayAppFactory, crashAt int, after
 	id := seedErrorWorkflow(t, h, w)
 	require.NoError(t, h.app.Signal(h.app.ctx, id, "messages", "signal"))
 	inject := func(_ context.Context, method string) error {
+		injectionMu.Lock()
+		defer injectionMu.Unlock()
 		switch method {
-		case "AcquireLease", "ReserveHistory", "ConsumeSignal", "SetHistoryValueIfNull", "ReserveTimer", "ReleaseLease", "FireTimer", "CloseInstance":
+		case "AcquireLease", "ReserveHistory", "ReserveActivity", "ClaimActivityTask", "ClaimActivityTasks", "RenewActivityTask", "CompleteActivityTask", "ReleaseActivityTask", "ConsumeSignal", "SetHistoryValueIfNull", "ReserveTimer", "ReleaseLease", "FireTimer", "CloseInstance":
 			writeIndex++
 		}
 		if !crashed && crashAt > 0 && writeIndex == crashAt {
@@ -495,6 +499,16 @@ func runCrashScenario(t *testing.T, factory replayAppFactory, crashAt int, after
 			}
 		}
 		setStoreClock(t, h, int64(4000+attempt*3000))
+		tasks, claimErr := fs.ClaimActivityTasks(h.app.ctx, "crash-pool", h.app.config.lease.TTL, 10, h.app.registeredActivityNames()...)
+		if claimErr != nil {
+			require.ErrorIs(t, claimErr, storage.ErrFenced)
+		} else {
+			for _, task := range tasks {
+				if taskErr := h.app.runActivityTask(h.app.ctx, fs, task, nil); taskErr != nil {
+					require.ErrorIs(t, taskErr, storage.ErrFenced)
+				}
+			}
+		}
 	}
 	assertCompletedLeaseRun(t, h, id)
 	if crashAt > 0 {
@@ -605,11 +619,12 @@ func testStalledEngineCommit(t *testing.T, factory replayAppFactory, owner strin
 	require.Equal(t, storage.StatusRunning, inst.Status)
 }
 
+// executionWrites excludes the independent workflow lease heartbeat.
 func executionWrites(s *faultstore.Store) []string {
 	var writes []string
 	for _, method := range s.Calls() {
 		switch method {
-		case "AcquireLease", "RenewLease", "ReleaseLease", "ReserveHistory", "ReserveTimer", "RecordHistory", "SetHistoryValueIfNull", "CloseInstance", "UpdateInstanceActivity", "ConsumeSignal":
+		case "AcquireLease", "ReleaseLease", "ReserveHistory", "ReserveActivity", "ClaimActivityTask", "ClaimActivityTasks", "RenewActivityTask", "CompleteActivityTask", "ReleaseActivityTask", "ReserveTimer", "RecordHistory", "SetHistoryValueIfNull", "CloseInstance", "UpdateInstanceActivity", "ConsumeSignal":
 			writes = append(writes, method)
 		}
 	}

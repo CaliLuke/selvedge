@@ -81,24 +81,18 @@ func testDeferredCommandAfterYieldIsRejected(t *testing.T, factory replayAppFact
 
 func TestCommandOffCoroutineFailsRun(t *testing.T) { testCommandOffCoroutineFailsRun(t, createTestApp) }
 func testCommandOffCoroutineFailsRun(t *testing.T, factory replayAppFactory) {
-	for _, kind := range []string{"overlapping_goroutines", "inside_activity"} {
+	for _, kind := range []string{"overlapping_goroutines"} {
 		t.Run(kind, func(t *testing.T) {
 			h := newTypedReplayHarness(t, factory)
 			entered, release := make(chan struct{}), make(chan struct{})
 			a := DefineActivity("A", func(ctx context.Context, input string) (string, error) {
-				if kind == "inside_activity" {
-					_ = Sleep(GetWorkflowContext(ctx), time.Hour)
-				} else if input == "first" {
+				if input == "first" {
 					close(entered)
 					<-release
 				}
 				return "", nil
 			})
 			w := DefineWorkflow("off_coroutine", func(ctx *WorkflowContext, _ string) (string, error) {
-				if kind == "inside_activity" {
-					_, _ = a.Execute(ctx, "")
-					return "ignored", nil
-				}
 				first, second := make(chan struct{}), make(chan struct{})
 				go func() { defer close(first); _, _ = a.Execute(ctx, "first", WithActivityID("first")) }()
 				<-entered

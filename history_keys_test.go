@@ -40,6 +40,7 @@ func testHistoryKeyWrittenOnce(t *testing.T, factory replayAppFactory) {
 			id := seedErrorWorkflow(t, h, w)
 			require.ErrorIs(t, h.RunOnce(id), ErrHistoryKeyConflict)
 			require.Equal(t, 1, calls)
+			require.Equal(t, 1, taskCount(t, h, id), "the conflicting command must not insert a second task")
 			kind := "history_key_conflict"
 			if tc.name == "automatic_then_explicit" {
 				kind = "generic"
@@ -61,7 +62,7 @@ func testHistoryKeyWrittenOnce(t *testing.T, factory replayAppFactory) {
 		require.NoError(t, err)
 		first, err = s.SetHistoryValueIfNull(ctx, nil, "writes", "timer", "sleep", storage.HistoryTimerExpired, []byte(`true`))
 		require.NoError(t, err)
-		second, err = s.SetHistoryValueIfNull(ctx, nil, "writes", "timer", "sleep", storage.HistoryActivityFailed, []byte(`false`))
+		second, err = s.SetHistoryValueIfNull(ctx, nil, "writes", "timer", "sleep", storage.HistoryTimerExpired, []byte(`false`))
 		require.NoError(t, err)
 		require.Equal(t, first, second)
 	})
@@ -75,7 +76,7 @@ func testHistoryKeyWrittenOnce(t *testing.T, factory replayAppFactory) {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newTypedReplayHarness(t, factory)
 			a := DefineActivity("A", func(ctx context.Context, _ string) (string, error) {
-				_, err := fixtureRecord(ctx, h.app.storage, &storage.HistoryEvent{InstanceID: GetWorkflowContext(ctx).InstanceID(), ActivityID: "k", Command: tc.command, EventType: storage.HistoryActivityCompleted, EventData: []byte(`"other writer"`), DataType: "json"})
+				_, err := fixtureRecord(ctx, h.app.storage, &storage.HistoryEvent{InstanceID: GetActivityInfo(ctx).InstanceID, ActivityID: "k", Command: tc.command, EventType: storage.HistoryActivityCompleted, EventData: []byte(`"other writer"`), DataType: "json"})
 				if tc.want != nil {
 					require.ErrorIs(t, err, tc.want)
 					return "", NewTerminalError(err)

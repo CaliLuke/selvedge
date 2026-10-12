@@ -14,7 +14,7 @@ Removed from Romancy: LLM and MCP integrations, public channels and groups, Saga
 
 - `App` manages workflow execution, storage, and background tasks.
 - `DefineWorkflow` and `RegisterWorkflow` define and register typed workflows.
-- `DefineActivity` creates activities with retry and timeout options.
+- `DefineActivity` creates activities with retry and timeout options. `RegisterActivity` makes them available to recovery workers.
 - `WorkflowContext` provides execution state and activity identifiers.
 - The replay engine reads stored history and returns recorded results.
 - `Receive`, `Sleep`, and `SleepUntil` provide signal and timer waits.
@@ -41,7 +41,7 @@ return confirmed, nil
 
 Channel names pass through unchanged and contain 1–255 bytes. Every signal wakes its instance, including during an active execution. Unknown instances return `ErrInstanceNotFound`. Closed instances return `*InstanceClosedError`, which also matches `ErrInstanceClosed` through `errors.Is`.
 
-`CancelWorkflow` stores a durable request and wakes the instance. `Sleep` and `Receive` observe cancellation at their next yield. Activities already in progress continue. A recorded result takes precedence during replay. At a new receive, cancellation takes precedence over a pending signal.
+`CancelWorkflow` stores a durable request and wakes the instance. `Sleep` and `Receive` observe cancellation at their next yield. A cancel request alone does not stop activity tasks. Closing the workflow cancels its queued and running tasks. A recorded result takes precedence during replay. At a new receive, cancellation takes precedence over a pending signal.
 
 An uncaught `WorkflowCancelledError` closes the instance as cancelled. A workflow that catches cancellation and returns successfully completes normally. Cancellation does not immediately change the instance status.
 
@@ -82,6 +82,9 @@ func run() error {
             return greet.Execute(ctx, name)
         },
     )
+    if err := selvedge.RegisterActivity(app, greet); err != nil {
+        return err
+    }
     selvedge.RegisterWorkflow(app, workflow)
 
     if err := app.Start(ctx); err != nil {
@@ -116,7 +119,13 @@ func main() {
 }
 ```
 
-Activities run without a database transaction around user code. Their results and failures are recorded in history before being returned to the workflow. `GetWorkflowContext(ctx)` provides workflow metadata inside an activity.
+Activities start from durable task rows and run without a database transaction around user code. Each attempt claims its task before it runs. Sync `Execute` tries to claim and run its own task inline. If another worker holds the task, the workflow yields until the stored result is available. Execute reads results and failures from history, including after an inline attempt.
+
+`GetActivityInfo(ctx)` provides `InstanceID`, `WorkflowName`, `ActivityID`, `ActivityName`, and `Attempt` inside an activity. `Attempt` counts task claims, not retry iterations. Activities no longer receive a `WorkflowContext`.
+
+Every App runs activity workers. Register each activity with `RegisterActivity(app, activity)` before `App.Start` so workers can recover pending tasks after a restart. Execute also registers its definition with the issuing App. A different definition with the same name returns `ErrActivityNameConflict`. Reusing the same definition pointer is allowed. Tasks remain queued if no worker registers their activity name.
+
+`WithMaxConcurrentActivities` limits background attempts (default 10). `WithActivityPollInterval` sets the base polling interval (default one second), with adaptive backoff during idle periods. New tasks wake local workers and PostgreSQL listeners. Activity claims use the workflow lease configuration for expiry and renewal. A lost claim cancels the attempt context. Shutdown releases interrupted claims for another worker. Activities must honor context cancellation for prompt shutdown. Retries remain in memory within one claim until S15.
 
 Workflow code runs on one coroutine per execution. A pending `Sleep` or `Receive` yields to the dispatcher without returning. The dispatcher closes that coroutine, runs its defers, and releases the lease. A later dispatch replays from the beginning.
 
@@ -124,7 +133,7 @@ Workflow defers must not block: the dispatcher waits for them without a time lim
 
 Workflow code must issue workflow commands serially. Commands inside activity functions and overlapping commands from user goroutines fail the run with nondeterminism. The runtime also rejects commands while the workflow coroutine is not running. If a command reaches a blocking yield on a foreign goroutine, Yield returns a sticky nondeterminism error without a dispatcher handoff.
 
-The runtime cannot detect non-overlapping foreign commands that finish without a blocking yield while the workflow coroutine runs pure user code. Such use remains unsupported. Activities can use `GetWorkflowContext` to read metadata.
+The runtime cannot detect non-overlapping foreign commands that finish without a blocking yield while the workflow coroutine runs pure user code. Such use remains unsupported. Activities can use `GetActivityInfo` to read metadata.
 
 S7 removes the public `SuspendSignal` family and the unused `OnEvent*` hooks.
 
@@ -163,7 +172,7 @@ SQLite and PostgreSQL are the supported storage backends. PostgreSQL also suppor
 
 Error envelopes use snake_case JSON fields, including panic and nondeterminism details. Pre-1.0 databases must be recreated after envelope-format changes; no compatibility shim is provided.
 
-Pre-S7 databases must be recreated: histories without command positions fail on first history access.
+Pre-S8 databases must be recreated: the initial schema now includes durable activity tasks and command positions. Histories without command positions fail on first history access.
 
 Schema application is transactional: SQLite uses `BEGIN IMMEDIATE`; PostgreSQL takes a transaction-scoped advisory lock before checking `schema_migrations`. SQL errors abort and roll back the schema application.
 

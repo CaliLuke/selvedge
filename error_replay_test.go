@@ -121,7 +121,7 @@ func testFailedActivityNotRerunOnReplay(t *testing.T, factory replayAppFactory) 
 	activity := DefineActivity("failure", func(ctx context.Context, _ string) (string, error) {
 		calls++
 		require.False(t, h.app.storage.InTransaction(ctx))
-		require.NotNil(t, GetWorkflowContext(ctx))
+		require.NotNil(t, GetActivityInfo(ctx))
 		return "", NewTerminalError(context.Canceled)
 	})
 	var seen []error
@@ -265,8 +265,8 @@ func testLiveActivityUsesStoredOutcome(t *testing.T, factory replayAppFactory) {
 			calls := 0
 			a := DefineActivity("competing", func(ctx context.Context, _ string) (string, error) {
 				calls++
-				wc := GetWorkflowContext(ctx)
-				requireRecordedHistory(t, h.app.storage, ctx, &storage.HistoryEvent{InstanceID: wc.InstanceID(), ActivityID: "result", Command: "activity:competing", EventType: tc.kind, EventData: []byte(tc.payload), DataType: "json"})
+				wc := GetActivityInfo(ctx)
+				requireRecordedHistory(t, h.app.storage, ctx, &storage.HistoryEvent{InstanceID: wc.InstanceID, ActivityID: "result", Command: "activity:competing", EventType: tc.kind, EventData: []byte(tc.payload), DataType: "json"})
 				return "live", tc.liveErr
 			})
 			var values []string
@@ -304,7 +304,7 @@ func testLiveCorruptFailureFailsRunEvenWhenCaught(t *testing.T, factory replayAp
 	activity := DefineActivity("corrupt_live", func(ctx context.Context, _ string) (string, error) {
 		calls++
 		requireRecordedHistory(t, h.app.storage, ctx, &storage.HistoryEvent{
-			InstanceID: GetWorkflowContext(ctx).InstanceID(), ActivityID: "result", Command: "activity:corrupt_live", EventType: storage.HistoryActivityFailed, EventData: []byte(`{`), DataType: "json",
+			InstanceID: GetActivityInfo(ctx).InstanceID, ActivityID: "result", Command: "activity:corrupt_live", EventType: storage.HistoryActivityFailed, EventData: []byte(`{`), DataType: "json",
 		})
 		return "live success", nil
 	}, WithRetryPolicy[string, string](retry.Fixed(3, 0)))

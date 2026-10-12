@@ -33,6 +33,11 @@ type App struct {
 	// PostgreSQL LISTEN/NOTIFY listener (if enabled)
 	notifyListener *notify.Listener
 
+	activities        map[string]activityDefinition
+	activitiesMu      sync.RWMutex
+	activityWakeEvent chan struct{}
+	activitySem       *semaphore.Weighted
+
 	// Registered workflows
 	workflows   map[string]any
 	workflowsMu sync.RWMutex
@@ -79,13 +84,16 @@ func NewApp(opts ...Option) *App {
 	}
 
 	return &App{
-		config:          config,
-		hooks:           config.hooks,
-		workflows:       make(map[string]any),
-		workflowRunners: make(map[string]replay.WorkflowRunner),
-		resumptionSem:   semaphore.NewWeighted(int64(config.maxConcurrentResumptions)),
-		timerSem:        semaphore.NewWeighted(int64(config.maxConcurrentTimers)),
-		resumeWakeEvent: make(chan struct{}, 1),
+		config:            config,
+		activities:        make(map[string]activityDefinition),
+		activityWakeEvent: make(chan struct{}, 1),
+		activitySem:       semaphore.NewWeighted(int64(config.maxConcurrentActivities)),
+		hooks:             config.hooks,
+		workflows:         make(map[string]any),
+		workflowRunners:   make(map[string]replay.WorkflowRunner),
+		resumptionSem:     semaphore.NewWeighted(int64(config.maxConcurrentResumptions)),
+		timerSem:          semaphore.NewWeighted(int64(config.maxConcurrentTimers)),
+		resumeWakeEvent:   make(chan struct{}, 1),
 	}
 }
 
@@ -279,6 +287,7 @@ func (a *App) initNotifyListener(connString string) {
 	// Register notification handlers
 	a.notifyListener.OnNotification(notify.ChannelWorkflowResumable, a.handleWorkflowResumableNotify)
 	a.notifyListener.OnNotification(notify.ChannelTimerExpired, a.handleTimerExpiredNotify)
+	a.notifyListener.OnNotification(notify.ChannelActivityTask, func(context.Context, notify.NotifyChannel, string) { a.wakeActivityWorkers() })
 
 	slog.Info("PostgreSQL LISTEN/NOTIFY configured",
 		"reconnect_delay", a.config.notifyReconnectDelay)
@@ -350,6 +359,9 @@ func (a *App) startBackgroundTasks() {
 	// Workflow resumption (all workers - uses execution leases for coordination)
 	a.wg.Add(1)
 	go a.runWorkflowResumption()
+
+	a.wg.Add(1)
+	go a.runActivityWorkers()
 
 	// Leader-only timer checks are started dynamically
 	// when this worker becomes the leader via runLeaderElection().

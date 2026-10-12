@@ -53,6 +53,9 @@ func decodeActivityRecorded[O any](ctx *WorkflowContext, event *storage.HistoryE
 func replayRecordedError(ctx *WorkflowContext, event *storage.HistoryEvent) error {
 	err := decodeError(event.EventData)
 	var decodeErr *ReplayDecodeError
+	if isActivityPanic(err) && ctx.execCtx != nil {
+		ctx.execCtx.Fail(err)
+	}
 	if errors.As(err, &decodeErr) {
 		if decodeErr.InstanceID == "" && decodeErr.Key == "" {
 			decodeErr.InstanceID = event.InstanceID

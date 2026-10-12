@@ -61,7 +61,8 @@ func testNowMonotonic(t *testing.T, factory replayAppFactory) {
 	WithClock(func() time.Time { clockCalls++; return clock })(h.app.config)
 	var values []time.Time
 	w := DefineWorkflow("now_floor", func(ctx *WorkflowContext, _ string) (string, error) {
-		copyCtx := ctx.WithContext(context.WithValue(ctx.Context(), workflowContextKey{}, "copy"))
+		type copyContextKey struct{}
+		copyCtx := ctx.WithContext(context.WithValue(ctx.Context(), copyContextKey{}, "copy"))
 		v, err := Now(copyCtx)
 		if err != nil {
 			return "", err
@@ -158,16 +159,18 @@ func testNowOffCoroutineAndClosing(t *testing.T, factory replayAppFactory) {
 		h := newTypedReplayHarness(t, factory)
 		var foreignErr error
 		var value time.Time
+		var workflowCtx *WorkflowContext
 		a := DefineActivity("foreign_now", func(ctx context.Context, _ string) (string, error) {
 			done := make(chan struct{})
 			go func() {
 				defer close(done)
-				value, foreignErr = Now(GetWorkflowContext(ctx))
+				value, foreignErr = Now(workflowCtx)
 			}()
 			<-done
 			return "ignored", nil
 		})
 		w := DefineWorkflow("now_foreign", func(ctx *WorkflowContext, input string) (string, error) {
+			workflowCtx = ctx
 			_, _ = a.Execute(ctx, input)
 			return "ignored", nil
 		})

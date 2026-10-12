@@ -43,6 +43,7 @@ const (
 	HistoryReserved HistoryEventType = "Reserved"
 
 	// Activity events
+	HistoryActivityCancelled HistoryEventType = "ActivityCancelled"
 	HistoryActivityCompleted HistoryEventType = "ActivityCompleted"
 	HistoryActivityFailed    HistoryEventType = "ActivityFailed"
 

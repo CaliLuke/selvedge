@@ -182,26 +182,66 @@ func TestRecordedActivityNotRescheduledOnReplay(t *testing.T) {
 
 func testRecordedActivityNotRescheduledOnReplay(t *testing.T, factory replayAppFactory) {
 	t.Helper()
-	observed := &typedReplayHooks{}
-	h := newTypedReplayHarness(t, factory, WithHooks(observed))
-	calls := 0
-	activity := DefineActivity("once", func(ctx context.Context, _ string) (string, error) {
-		wc := GetWorkflowContext(ctx)
-		row, err := h.app.storage.GetHistoryEvent(ctx, wc.InstanceID(), "result")
-		require.NoError(t, err)
-		require.NotNil(t, row, "activity must be reserved before its side effect")
-		require.Nil(t, row.EventData)
-		calls++
-		return "recorded", nil
-	})
-	var values []string
-	instanceID := addTypedReplayWorkflow(t, h, activity, &values)
-	require.NoError(t, h.RunOnce(instanceID))
-	require.NoError(t, h.RunOnce(instanceID))
-	h.forceFire(t, instanceID)
-	require.NoError(t, h.RunOnce(instanceID))
-	require.Equal(t, 1, calls)
-	require.Equal(t, []any{"recorded", "recorded"}, observed.cached)
+	for _, state := range []string{"recorded", "reserved_unfilled"} {
+		t.Run(state, func(t *testing.T) {
+			h, _, fs := leaseHarness(t, factory)
+			calls := 0
+			activity := DefineActivity("once", func(ctx context.Context, _ string) (string, error) {
+				info := GetActivityInfo(ctx)
+				row, err := fs.GetHistoryEvent(ctx, info.InstanceID, "result")
+				require.NoError(t, err)
+				require.NotNil(t, row, "activity must be reserved before its side effect")
+				require.Nil(t, row.EventData)
+				calls++
+				return "recorded", nil
+			})
+			var values []string
+			id := addTypedReplayWorkflow(t, h, activity, &values)
+			if state == "reserved_unfilled" {
+				fs.After = func(_ context.Context, method string) error {
+					if method == "ReserveActivity" {
+						return storage.ErrFenced // Crash after reservation, before inline claim.
+					}
+					return nil
+				}
+				require.ErrorIs(t, h.RunOnce(id), storage.ErrFenced)
+				require.Zero(t, calls)
+				row, err := fs.GetHistoryEvent(h.app.ctx, id, "result")
+				require.NoError(t, err)
+				require.Nil(t, row.EventData)
+				fs.After = nil
+				setStoreClock(t, h, 4000)
+			} else {
+				require.NoError(t, h.RunOnce(id))
+			}
+			require.Equal(t, 1, taskCount(t, h, id))
+			var originalTaskID int64
+			require.NoError(t, fs.DB().QueryRow("SELECT id FROM workflow_activity_tasks WHERE instance_id=$1", id).Scan(&originalTaskID))
+			before := len(fs.Calls())
+			require.NoError(t, h.RunOnce(id))
+			replayed := fs.Calls()[before:]
+			require.NotContains(t, replayed, "ReserveActivity", "even unfilled reservations must not be scheduled again")
+			if state == "recorded" {
+				require.NotContains(t, replayed, "ClaimActivityTask")
+				require.NotContains(t, replayed, "ClaimActivityTasks")
+			} else {
+				require.Equal(t, 1, countMethod(replayed, "ClaimActivityTask"), "unfilled history runs through its original task")
+			}
+			before = len(fs.Calls())
+			h.forceFire(t, id)
+			require.NoError(t, h.RunOnce(id))
+			require.NotContains(t, fs.Calls()[before:], "ClaimActivityTask")
+			require.NotContains(t, fs.Calls()[before:], "ClaimActivityTasks")
+			require.Equal(t, 1, countMethod(fs.Calls(), "ReserveActivity"))
+			require.Equal(t, 1, taskCount(t, h, id))
+			var taskID int64
+			var attempts int
+			require.NoError(t, fs.DB().QueryRow("SELECT id,attempts FROM workflow_activity_tasks WHERE instance_id=$1", id).Scan(&taskID, &attempts))
+			require.Equal(t, originalTaskID, taskID, "replay must retain the original task row")
+			require.Equal(t, 1, attempts)
+			require.Equal(t, 1, calls)
+		})
+	}
 }
 
 // Old cache fixtures now seed real history rows and load them through the engine.
@@ -228,7 +268,9 @@ func workflowContextWithRecordedHistory(t *testing.T, history map[string]any, ru
 		require.NoError(t, err)
 	}
 	require.NoError(t, h.app.engine.Run(h.app.ctx, instanceID, func(ec *replay.ExecutionContext) (any, error) {
-		run(NewWorkflowContextFromExecution(ec))
+		wc := NewWorkflowContextFromExecution(ec)
+		wc.SetApp(h.app)
+		run(wc)
 		return nil, nil
 	}))
 }

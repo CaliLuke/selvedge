@@ -138,7 +138,7 @@ func (s *SQLiteStorage) RecordHistory(ctx context.Context, f *Fence, ev *History
 
 // SetHistoryValueIfNull records the first value for a matching command.
 func (s *SQLiteStorage) SetHistoryValueIfNull(ctx context.Context, f *Fence, instanceID, key, cmd string, t HistoryEventType, data []byte) (*HistoryEvent, error) {
-	if f == nil && t != HistoryActivityCompleted && t != HistoryActivityFailed && t != HistoryTimerExpired {
+	if f == nil && t != HistoryTimerExpired {
 		return nil, rejectFence(ctx)
 	}
 	return (historyStore{s}).write(ctx, f, &HistoryEvent{InstanceID: instanceID, ActivityID: key, Command: cmd, EventType: t, EventData: data, DataType: "json"}, true)
@@ -167,7 +167,7 @@ func (s *PostgresStorage) RecordHistory(ctx context.Context, f *Fence, ev *Histo
 
 // SetHistoryValueIfNull records the first value for a matching command.
 func (s *PostgresStorage) SetHistoryValueIfNull(ctx context.Context, f *Fence, instanceID, key, cmd string, t HistoryEventType, data []byte) (*HistoryEvent, error) {
-	if f == nil && t != HistoryActivityCompleted && t != HistoryActivityFailed && t != HistoryTimerExpired {
+	if f == nil && t != HistoryTimerExpired {
 		return nil, rejectFence(ctx)
 	}
 	return (historyStore{s}).write(ctx, f, &HistoryEvent{InstanceID: instanceID, ActivityID: key, Command: cmd, EventType: t, EventData: data, DataType: "json"}, true)

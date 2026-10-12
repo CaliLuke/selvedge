@@ -13,8 +13,10 @@ type Option func(*appConfig)
 
 // appConfig holds the configuration for an App.
 type appConfig struct {
-	lease replay.LeaseConfig
-	clock func() time.Time
+	lease                   replay.LeaseConfig
+	clock                   func() time.Time
+	maxConcurrentActivities int
+	activityPollInterval    time.Duration
 	// Database
 	databaseURL string
 
@@ -57,6 +59,8 @@ type appConfig struct {
 func defaultConfig() *appConfig {
 	return &appConfig{
 		databaseURL:                "file:selvedge.db",
+		maxConcurrentActivities:    10,
+		activityPollInterval:       time.Second,
 		lease:                      replay.DefaultLeaseConfig(),
 		serviceName:                "selvedge-service",
 		useListenNotify:            nil, // auto-detect
@@ -248,6 +252,24 @@ func WithMaxTimersPerBatch(n int) Option {
 	return func(c *appConfig) {
 		if n > 0 {
 			c.maxTimersPerBatch = n
+		}
+	}
+}
+
+// WithMaxConcurrentActivities bounds the number of background activity attempts.
+func WithMaxConcurrentActivities(n int) Option {
+	return func(c *appConfig) {
+		if n > 0 {
+			c.maxConcurrentActivities = n
+		}
+	}
+}
+
+// WithActivityPollInterval sets the base activity poll interval before adaptive backoff.
+func WithActivityPollInterval(d time.Duration) Option {
+	return func(c *appConfig) {
+		if d > 0 {
+			c.activityPollInterval = d
 		}
 	}
 }

@@ -15,8 +15,9 @@ var errExecutionClosed = errors.New("workflow execution closed")
 type WaitKind string
 
 const (
-	WaitTimer  WaitKind = "timer"
-	WaitSignal WaitKind = "signal"
+	WaitActivity WaitKind = "activity"
+	WaitTimer    WaitKind = "timer"
+	WaitSignal   WaitKind = "signal"
 )
 
 // Wait identifies the command that yielded control to the dispatcher.

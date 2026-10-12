@@ -45,7 +45,11 @@ func testClassThreeFillRequiresReservation(t *testing.T, factory historyFactory)
 			ctx := context.Background()
 			require.NoError(t, s.CreateInstance(ctx, &WorkflowInstance{InstanceID: "unreserved", WorkflowName: "test", Status: StatusRunning}))
 			_, err := s.SetHistoryValueIfNull(ctx, nil, "unreserved", "missing", "activity:A", event, []byte(`true`))
-			require.ErrorIs(t, err, ErrHistoryKeyConflict)
+			if event == HistoryTimerExpired {
+				require.ErrorIs(t, err, ErrHistoryKeyConflict)
+			} else {
+				require.ErrorIs(t, err, ErrFenced)
+			}
 			row, err := s.GetHistoryEvent(ctx, "unreserved", "missing")
 			require.NoError(t, err)
 			require.Nil(t, row)

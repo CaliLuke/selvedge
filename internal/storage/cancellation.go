@@ -67,6 +67,10 @@ func closeInstance(ctx context.Context, s Storage, f Fence, status WorkflowStatu
 		if n != 1 {
 			return ErrInstanceClosed
 		}
+		_, err = conn.ExecContext(ctx, `UPDATE workflow_activity_tasks SET status='cancelled',updated_at=CURRENT_TIMESTAMP WHERE instance_id=$1 AND status IN ('queued','running')`, f.InstanceID)
+		if err != nil {
+			return err
+		}
 		_, err = conn.ExecContext(ctx, `DELETE FROM workflow_timer_subscriptions WHERE instance_id=$1`, f.InstanceID)
 		return err
 	})

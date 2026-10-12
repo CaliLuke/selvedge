@@ -69,6 +69,7 @@ func TestApplyMigrations_PostgreSQL_Integration(t *testing.T) {
 			wait.ForLog("database system is ready to accept connections").
 				WithOccurrence(2).
 				WithStartupTimeout(5*time.Minute),
+			// Container logs can precede the host port forward on macOS.
 			wait.ForListeningPort("5432/tcp")),
 	)
 	if err != nil {
@@ -157,6 +158,7 @@ func TestApplyMigrations_MultiWorker_PostgreSQL_Integration(t *testing.T) {
 			wait.ForLog("database system is ready to accept connections").
 				WithOccurrence(2).
 				WithStartupTimeout(5*time.Minute),
+			// Container logs can precede the host port forward on macOS.
 			wait.ForListeningPort("5432/tcp")),
 	)
 	if err != nil {

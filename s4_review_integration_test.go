@@ -34,10 +34,13 @@ func TestRunnableNotificationsAfterCommitPostgres(t *testing.T) {
 	f, ok, err := s.AcquireLease(h.app.ctx, "lease", "worker", time.Minute)
 	require.NoError(t, err)
 	require.True(t, ok)
-	_, err = pg.ReserveHistory(h.app.ctx, &f, "lease", "activity", "activity:A", 1)
+	_, err = pg.ReserveActivity(h.app.ctx, &f, 1, "activity", "activity:A", &storage.ActivityTask{InstanceID: "lease", ActivityName: "A", InputData: []byte(`null`)})
 	require.NoError(t, err)
 	_, err = pg.ReserveHistory(h.app.ctx, &f, "lease", "pause", "sleep", 2)
 	require.NoError(t, err)
+	task, err := pg.ClaimActivityTask(h.app.ctx, "lease", "activity", "worker/task", time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, task)
 	writes := map[string]func(context.Context) error{
 		"mark": func(ctx context.Context) error { return pg.MarkRunnable(ctx, "lease") },
 		"timer": func(ctx context.Context) error {
@@ -48,8 +51,7 @@ func TestRunnableNotificationsAfterCommitPostgres(t *testing.T) {
 			return err
 		},
 		"result": func(ctx context.Context) error {
-			_, err := pg.SetHistoryValueIfNull(ctx, nil, "lease", "activity", "activity:A", storage.HistoryActivityCompleted, []byte(`1`))
-			return err
+			return pg.CompleteActivityTask(ctx, task.Claim(), storage.HistoryActivityCompleted, []byte(`1`))
 		},
 		"create": func(ctx context.Context) error {
 			return pg.CreateInstance(ctx, &storage.WorkflowInstance{InstanceID: "new", WorkflowName: "lease", Status: storage.StatusRunning})

@@ -80,7 +80,7 @@ func testUnfilledActivityRecoveryRunsLive(t *testing.T, factory replayAppFactory
 	})
 	id := seedErrorWorkflow(t, h, w)
 	fs.Before = func(_ context.Context, method string) error {
-		if method == "SetHistoryValueIfNull" {
+		if method == "CompleteActivityTask" {
 			return replay.ErrLeaseLost
 		}
 		return nil
