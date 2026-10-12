@@ -9,10 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
-
-	"github.com/CaliLuke/selvedge/internal/replay"
-
 	"github.com/CaliLuke/selvedge/hooks"
 	"github.com/CaliLuke/selvedge/internal/storage"
 	"github.com/CaliLuke/selvedge/retry"
@@ -68,132 +64,66 @@ func WithTimeout[I, O any](d time.Duration) ActivityOption[I, O] {
 	}
 }
 
-// Execute runs the activity within a workflow context.
-// If activityID is empty, it will be auto-generated.
-func (a *Activity[I, O]) Execute(
-	ctx *WorkflowContext,
-	input I,
-	opts ...ExecuteOption,
-) (O, error) {
-	if ctx.execCtx != nil {
-		if err := ctx.execCtx.Check(); err != nil {
-			var zero O
-			return zero, err
-		}
+// Execute issues the activity and waits for its durable outcome.
+func (a *Activity[I, O]) Execute(ctx *WorkflowContext, input I, opts ...ExecuteOption) (O, error) {
+	future, err := a.ExecuteAsync(ctx, input, opts...)
+	if err != nil {
+		var zero O
+		return zero, err
+	}
+	return future.Get(ctx)
+}
+
+// ExecuteAsync reserves an activity in issue order without waiting for its result.
+// Get reads the durable outcome. Un-awaited tasks are cancelled when the workflow closes.
+func (a *Activity[I, O]) ExecuteAsync(ctx *WorkflowContext, input I, opts ...ExecuteOption) (*Future[O], error) {
+	if err := ctx.execCtx.Check(); err != nil {
+		return nil, err
 	}
 	options := &executeOptions{}
 	for _, opt := range opts {
 		opt(options)
 	}
-
 	if options.err != nil {
 		ctx.execCtx.Fail(options.err)
-		var zero O
-		return zero, options.err
+		return nil, options.err
 	}
-
 	payload, err := json.Marshal(input)
 	if err != nil {
 		ctx.execCtx.Fail(err)
-		var zero O
-		return zero, err
+		return nil, err
 	}
-
-	cmd, claimErr := ctx.execCtx.Issue("activity:"+a.name, options.activityID)
-	if claimErr != nil {
-		var zero O
-		return zero, claimErr
+	cmd, err := ctx.execCtx.Issue("activity:"+a.name, options.activityID)
+	if err != nil {
+		return nil, err
 	}
 	defer cmd.End()
 	if err := RegisterActivity(ctx.app, a); err != nil {
 		ctx.execCtx.Fail(err)
-		var zero O
-		return zero, err
+		return nil, err
 	}
-
-	activityID := cmd.Key
-	event := cmd.Recorded
-
-	// Call OnActivityStart hook
 	if h := ctx.Hooks(); h != nil {
 		h.OnActivityStart(ctx.Context(), hooks.ActivityStartInfo{
-			InstanceID:   ctx.InstanceID(),
-			WorkflowName: ctx.WorkflowName(),
-			ActivityID:   activityID,
-			ActivityName: a.name,
-			InputData:    input,
-			IsReplay:     ctx.IsReplaying(),
+			InstanceID: ctx.InstanceID(), WorkflowName: ctx.WorkflowName(), ActivityID: cmd.Key,
+			ActivityName: a.name, InputData: input, IsReplay: ctx.IsReplaying(),
 		})
 	}
-
-	// Replay uses recorded bytes decoded directly into the activity's output type.
-	if event != nil && event.EventData != nil {
-		if event.EventType == storage.HistoryActivityFailed {
-			var zero O
-			return zero, replayRecordedError(ctx, event)
-		}
-		result, err := decodeActivityRecorded[O](ctx, event)
-		if err != nil {
-			return result, err
-		}
+	future := &Future[O]{exec: ctx.execCtx, key: cmd.Key, command: "activity:" + a.name}
+	if event := cmd.Recorded; event != nil && event.EventData != nil {
+		future.readOutcome(event)
 		if h := ctx.Hooks(); h != nil {
 			h.OnActivityCacheHit(ctx.Context(), hooks.ActivityCacheHitInfo{
-				InstanceID:   ctx.InstanceID(),
-				WorkflowName: ctx.WorkflowName(),
-				ActivityID:   activityID,
-				ActivityName: a.name,
-				CachedResult: result,
+				InstanceID: ctx.InstanceID(), WorkflowName: ctx.WorkflowName(), ActivityID: cmd.Key,
+				ActivityName: a.name, CachedResult: future.value,
 			})
 		}
-		return result, nil
-	}
-
-	if event == nil {
+	} else if event == nil {
 		if err := cmd.ReserveActivity(ctx.Context(), &storage.ActivityTask{InstanceID: ctx.InstanceID(), ActivityName: a.name, InputData: payload}); err != nil {
-			var zero O
-			return zero, err
+			return nil, err
 		}
 		ctx.app.wakeActivityWorkers()
 	}
-	return a.awaitActivity(ctx, cmd)
-}
-
-// awaitActivity always reads the winning bytes from history, including after an inline attempt.
-func (a *Activity[I, O]) awaitActivity(ctx *WorkflowContext, cmd *replay.Command) (O, error) {
-	attempted := false
-	for {
-		var zero O
-		if err := ctx.execCtx.Check(); err != nil {
-			return zero, err
-		}
-		row, err := ctx.Storage().GetHistoryEvent(ctx.Context(), ctx.InstanceID(), cmd.Key)
-		if err != nil {
-			ctx.execCtx.Fail(err)
-			return zero, err
-		}
-		if row != nil && row.EventData != nil {
-			return decodeActivityRecorded[O](ctx, row)
-		}
-		if !attempted {
-			task, err := ctx.execCtx.Storage().ClaimActivityTask(ctx.Context(), ctx.InstanceID(), cmd.Key, ctx.app.config.workerID+"/"+uuid.NewString(), ctx.app.config.lease.TTL)
-			if err != nil {
-				ctx.execCtx.Fail(err)
-				return zero, err
-			}
-			attempted = true
-			if task != nil {
-				err = ctx.app.runActivityTask(ctx.Context(), ctx.execCtx.Storage(), task, ctx.execCtx.CheckLease)
-				if err != nil && !errors.Is(err, storage.ErrFenced) && !errors.Is(err, errClaimLost) {
-					ctx.execCtx.Fail(err)
-					return zero, err
-				}
-				continue
-			}
-		}
-		if err := ctx.execCtx.Yield(replay.Wait{Seq: ctx.execCtx.Position(), Key: cmd.Key, Kind: replay.WaitActivity}); err != nil {
-			return zero, err
-		}
-	}
+	return future, nil
 }
 
 // executeWithRetry executes the activity with retry logic.

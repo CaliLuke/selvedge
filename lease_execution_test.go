@@ -466,7 +466,7 @@ func runCrashScenario(t *testing.T, factory replayAppFactory, crashAt int, after
 		injectionMu.Lock()
 		defer injectionMu.Unlock()
 		switch method {
-		case "AcquireLease", "ReserveHistory", "ReserveActivity", "ClaimActivityTask", "ClaimActivityTasks", "RenewActivityTask", "CompleteActivityTask", "ReleaseActivityTask", "ConsumeSignal", "SetHistoryValueIfNull", "ReserveTimer", "ReleaseLease", "FireTimer", "CloseInstance":
+		case "AcquireLease", "ReserveHistory", "ReserveActivity", "ClaimActivityTask", "ClaimActivityTasks", "RenewActivityTask", "CompleteActivityTask", "ReleaseActivityTask", "CancelActivityAtYield", "ConsumeSignal", "SetHistoryValueIfNull", "ReserveTimer", "ReleaseLease", "FireTimer", "CloseInstance":
 			writeIndex++
 		}
 		if !crashed && crashAt > 0 && writeIndex == crashAt {

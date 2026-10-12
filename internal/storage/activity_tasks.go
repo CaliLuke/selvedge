@@ -39,6 +39,7 @@ func (t *ActivityTask) Claim() TaskClaim {
 
 // ActivityTaskManager persists and fences durable activity attempts.
 type ActivityTaskManager interface {
+	CancelActivityAtYield(context.Context, *Fence, string, string, string, []byte) (*HistoryEvent, error)
 	ReserveActivity(context.Context, *Fence, int64, string, string, *ActivityTask) (*HistoryEvent, error)
 	// ClaimActivityTasks requires registered names; a nil or empty filter claims nothing.
 	ClaimActivityTasks(context.Context, string, time.Duration, int, ...string) ([]*ActivityTask, error)
@@ -271,4 +272,35 @@ func (s *PostgresStorage) CompleteActivityTask(ctx context.Context, claim TaskCl
 // ReleaseActivityTask delegates to the durable task store.
 func (s *PostgresStorage) ReleaseActivityTask(ctx context.Context, claim TaskClaim) error {
 	return (taskStore{s, s.driver}).ReleaseActivityTask(ctx, claim)
+}
+
+// CancelActivityAtYield records cancellation and cancels the associated task atomically.
+func (s *SQLiteStorage) CancelActivityAtYield(ctx context.Context, f *Fence, id, key, cmd string, data []byte) (*HistoryEvent, error) {
+	return (taskStore{s, s.driver}).CancelActivityAtYield(ctx, f, id, key, cmd, data)
+}
+
+// CancelActivityAtYield records cancellation and cancels the associated task atomically.
+func (s *PostgresStorage) CancelActivityAtYield(ctx context.Context, f *Fence, id, key, cmd string, data []byte) (*HistoryEvent, error) {
+	return (taskStore{s, s.driver}).CancelActivityAtYield(ctx, f, id, key, cmd, data)
+}
+
+func (s taskStore) CancelActivityAtYield(ctx context.Context, f *Fence, id, key, cmd string, data []byte) (stored *HistoryEvent, err error) {
+	if f == nil || f.InstanceID != id {
+		return nil, rejectFence(ctx)
+	}
+	// withFence locks the instance before either history or tasks, matching completion and close.
+	err = (fenceStore{s.Storage}).withFence(ctx, f, func(conn Executor) error {
+		var e error
+		stored, e = writeHistory(ctx, conn, &HistoryEvent{InstanceID: id, ActivityID: key, Command: cmd, EventType: HistoryActivityCancelled, EventData: data, DataType: "json"}, true)
+		if e != nil {
+			return e
+		}
+		// A previously stored result wins without changing its task.
+		if stored.EventType != HistoryActivityCancelled {
+			return nil
+		}
+		_, e = conn.ExecContext(ctx, `UPDATE workflow_activity_tasks SET status='cancelled',updated_at=CURRENT_TIMESTAMP WHERE instance_id=$1 AND activity_id=$2 AND status IN ('queued','running')`, id, key)
+		return e
+	})
+	return stored, err
 }

@@ -41,7 +41,7 @@ return confirmed, nil
 
 Channel names pass through unchanged and contain 1–255 bytes. Every signal wakes its instance, including during an active execution. Unknown instances return `ErrInstanceNotFound`. Closed instances return `*InstanceClosedError`, which also matches `ErrInstanceClosed` through `errors.Is`.
 
-`CancelWorkflow` stores a durable request and wakes the instance. `Sleep` and `Receive` observe cancellation at their next yield. A cancel request alone does not stop activity tasks. Closing the workflow cancels its queued and running tasks. A recorded result takes precedence during replay. At a new receive, cancellation takes precedence over a pending signal.
+`CancelWorkflow` stores a durable request and wakes the instance. `Sleep` and `Receive` observe cancellation at their next yield. A cancel request alone does not stop activity tasks. `Future.Get` observes cancellation when its activity has no stored outcome, records that cancellation on the activity row, and cancels the task. A result already stored wins over cancellation. Closing the workflow cancels its queued and running tasks. A recorded result takes precedence during replay. At a new receive, cancellation takes precedence over a pending signal.
 
 An uncaught `WorkflowCancelledError` closes the instance as cancelled. A workflow that catches cancellation and returns successfully completes normally. Cancellation does not immediately change the instance status.
 
@@ -120,6 +120,8 @@ func main() {
 ```
 
 Activities start from durable task rows and run without a database transaction around user code. Each attempt claims its task before it runs. Sync `Execute` tries to claim and run its own task inline. If another worker holds the task, the workflow yields until the stored result is available. Execute reads results and failures from history, including after an inline attempt.
+
+`ExecuteAsync(ctx, input)` returns a `*Future[O]` after reserving the activity. Issue several futures serially to let activity workers run them concurrently, then call `future.Get(ctx)` for each result. `future.Key()` is fixed at issue time. Get consumes no command position and repeated calls return the same value or error. It can run a claimable task inline; otherwise it yields for redispatch. Execute and ExecuteAsync use the same history command, so switching between them preserves replay compatibility. Futures belong to their issuing execution and must be used serially from workflow code. Completing without awaiting a future cancels its unfinished task.
 
 `GetActivityInfo(ctx)` provides `InstanceID`, `WorkflowName`, `ActivityID`, `ActivityName`, and `Attempt` inside an activity. `Attempt` counts task claims, not retry iterations. Activities no longer receive a `WorkflowContext`.
 

@@ -36,34 +36,37 @@ func decodeRecorded[O any](event *storage.HistoryEvent) (O, error) {
 	return value, nil
 }
 
-func decodeActivityRecorded[O any](ctx *WorkflowContext, event *storage.HistoryEvent) (O, error) {
-	if event.EventType == storage.HistoryActivityFailed {
+// decodeActivityOutcome decodes a future without observing its failure yet.
+func decodeActivityOutcome[O any](event *storage.HistoryEvent) (O, error) {
+	if event.EventType == storage.HistoryActivityFailed || event.EventType == storage.HistoryActivityCancelled {
 		var zero O
-		return zero, replayRecordedError(ctx, event)
+		return zero, decodeRecordedError(event)
 	}
-	value, err := decodeRecorded[O](event)
-	if err != nil && ctx.execCtx != nil {
-		ctx.execCtx.Fail(err)
-	}
-	return value, err
+	return decodeRecorded[O](event)
 }
 
-// replayRecordedError attaches row identity to corrupt payloads and uses the
-// execution's existing sticky failure mechanism.
-func replayRecordedError(ctx *WorkflowContext, event *storage.HistoryEvent) error {
-	err := decodeError(event.EventData)
+func failActivityOutcome(ctx *WorkflowContext, err error) {
 	var decodeErr *ReplayDecodeError
-	if isActivityPanic(err) && ctx.execCtx != nil {
+	if ctx.execCtx != nil && (isActivityPanic(err) || errors.As(err, &decodeErr)) {
 		ctx.execCtx.Fail(err)
 	}
-	if errors.As(err, &decodeErr) {
-		if decodeErr.InstanceID == "" && decodeErr.Key == "" {
-			decodeErr.InstanceID = event.InstanceID
-			decodeErr.Key = event.ActivityID
-		}
-		if ctx.execCtx != nil {
-			ctx.execCtx.Fail(err)
-		}
+}
+
+// decodeRecordedError attaches row identity without making the outcome observed.
+func decodeRecordedError(event *storage.HistoryEvent) error {
+	err := decodeError(event.EventData)
+	var decodeErr *ReplayDecodeError
+	if errors.As(err, &decodeErr) && decodeErr.InstanceID == "" && decodeErr.Key == "" {
+		decodeErr.InstanceID = event.InstanceID
+		decodeErr.Key = event.ActivityID
 	}
+	return err
+}
+
+// replayRecordedError observes a recorded failure and makes corrupt or panic
+// outcomes sticky, even when workflow code ignores the returned error.
+func replayRecordedError(ctx *WorkflowContext, event *storage.HistoryEvent) error {
+	err := decodeRecordedError(event)
+	failActivityOutcome(ctx, err)
 	return err
 }

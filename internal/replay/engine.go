@@ -345,6 +345,9 @@ func (e *Engine) executeWorkflow(ctx context.Context, instanceID string, runner 
 	co := startCoroutine(execCtx, runner)
 	outcome := <-co.outcomes
 	if outcome.wait != nil {
+		if observe, ok := ctx.Value(testYieldObserverKey{}).(func(Wait)); ok {
+			observe(*outcome.wait)
+		}
 		co.closeBlocked(execCtx)
 		outcome.err = co.closeErr
 	} else {

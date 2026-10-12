@@ -60,3 +60,12 @@ func (s *Store) ReleaseActivityTask(ctx context.Context, claim storage.TaskClaim
 	err := s.Storage.ReleaseActivityTask(ctx, claim)
 	return s.after(ctx, "ReleaseActivityTask", err)
 }
+
+// CancelActivityAtYield delegates with fault hooks.
+func (s *Store) CancelActivityAtYield(ctx context.Context, f *storage.Fence, id, key, cmd string, data []byte) (*storage.HistoryEvent, error) {
+	if err := s.before(ctx, "CancelActivityAtYield"); err != nil {
+		return nil, err
+	}
+	value, err := s.Storage.CancelActivityAtYield(ctx, f, id, key, cmd, data)
+	return value, s.after(ctx, "CancelActivityAtYield", err)
+}

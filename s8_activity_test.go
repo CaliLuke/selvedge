@@ -13,8 +13,11 @@ import (
 	"github.com/CaliLuke/selvedge/internal/storage"
 )
 
-func (h *typedReplayHarness) RunTasks(id string) error {
-	tasks, err := h.app.storage.ClaimActivityTasks(h.app.ctx, "harness-pool", h.app.config.lease.TTL, 100, h.app.registeredActivityNames()...)
+func (h *typedReplayHarness) RunTasks(id string, names ...string) error {
+	if len(names) == 0 {
+		names = h.app.registeredActivityNames()
+	}
+	tasks, err := h.app.storage.ClaimActivityTasks(h.app.ctx, "harness-pool", h.app.config.lease.TTL, 100, names...)
 	if err != nil {
 		return err
 	}
