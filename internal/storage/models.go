@@ -17,6 +17,8 @@ const (
 
 // WorkflowInstance represents a single execution of a workflow.
 type WorkflowInstance struct {
+	ParentInstanceID  string         `json:"parent_instance_id,omitempty"`
+	ParentKey         string         `json:"parent_key,omitempty"`
 	CancelReason      string         `json:"cancel_reason,omitempty"`
 	InstanceID        string         `json:"instance_id"`
 	WorkflowName      string         `json:"workflow_name"`

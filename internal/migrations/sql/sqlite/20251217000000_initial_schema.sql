@@ -21,6 +21,8 @@ CREATE TABLE IF NOT EXISTS workflow_instances (
     lease_expires_ms BIGINT NULL,
     runnable INTEGER NOT NULL DEFAULT 0,
     instance_id TEXT PRIMARY KEY,
+    parent_instance_id TEXT NULL REFERENCES workflow_instances(instance_id),
+    parent_key TEXT NULL,
     workflow_name TEXT NOT NULL,
     source_hash TEXT NOT NULL,
     owner_service TEXT NOT NULL,
@@ -32,12 +34,16 @@ CREATE TABLE IF NOT EXISTS workflow_instances (
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     input_data TEXT NOT NULL,
     output_data TEXT,
+    CONSTRAINT child_parent_pair CHECK ((parent_instance_id IS NULL) = (parent_key IS NULL)),
+    CONSTRAINT unique_child_key UNIQUE (parent_instance_id, parent_key),
     CONSTRAINT valid_status CHECK (
         status IN ('running', 'completed', 'failed', 'cancelled')
     ),
     FOREIGN KEY (continued_from) REFERENCES workflow_instances(instance_id),
     FOREIGN KEY (workflow_name, source_hash) REFERENCES workflow_definitions(workflow_name, source_hash)
 );
+
+CREATE INDEX IF NOT EXISTS idx_instances_parent ON workflow_instances(parent_instance_id, status);
 
 CREATE INDEX IF NOT EXISTS idx_instances_status ON workflow_instances(status);
 CREATE INDEX IF NOT EXISTS idx_instances_workflow ON workflow_instances(workflow_name);

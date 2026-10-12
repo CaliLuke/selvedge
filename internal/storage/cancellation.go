@@ -48,7 +48,13 @@ func closeInstance(ctx context.Context, s Storage, f Fence, status WorkflowStatu
 	if event != nil && (event.InstanceID != f.InstanceID || event.Command != "close") {
 		return ErrHistoryKeyConflict
 	}
-	return (fenceStore{s}).withFence(ctx, &f, func(conn Executor) error {
+	parent, key, err := childParent(ctx, s, f.InstanceID)
+	if err != nil {
+		return err
+	}
+	var children []string
+	var parentWoke bool
+	err = (fenceStore{s}).withFence(ctx, &f, func(conn Executor) error {
 		if event != nil {
 			if _, err := writeHistory(ctx, conn, event, false); err != nil {
 				return err
@@ -72,8 +78,25 @@ func closeInstance(ctx context.Context, s Storage, f Fence, status WorkflowStatu
 			return err
 		}
 		_, err = conn.ExecContext(ctx, `DELETE FROM workflow_timer_subscriptions WHERE instance_id=$1`, f.InstanceID)
+		if err != nil {
+			return err
+		}
+		children, err = closeChildren(ctx, conn, f.InstanceID)
+		if err != nil {
+			return err
+		}
+		parentWoke, err = fillChildResult(ctx, conn, parent, key, status, output, event)
 		return err
-	})
+	}, parent)
+	if err == nil {
+		for _, id := range children {
+			notifyRunnable(ctx, s, id)
+		}
+		if parentWoke {
+			notifyRunnable(ctx, s, parent)
+		}
+	}
+	return err
 }
 
 // RequestCancel requests cancellation without acquiring an execution lease.

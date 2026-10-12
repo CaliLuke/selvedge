@@ -192,7 +192,7 @@ func (s *PostgresStorage) GetInstance(ctx context.Context, instanceID string) (*
 		SELECT instance_id, workflow_name, status, input_data, output_data,
 			   current_activity_id, source_hash, owner_service, framework,
 			   lease_owner, lease_epoch, lease_expires_ms, runnable,
-			   started_at, updated_at, COALESCE(cancel_reason,'')
+			   started_at, updated_at, COALESCE(cancel_reason,''), COALESCE(parent_instance_id,''), COALESCE(parent_key,'')
 		FROM workflow_instances WHERE instance_id = $1
 	`, instanceID)
 
@@ -205,7 +205,7 @@ func (s *PostgresStorage) GetInstance(ctx context.Context, instanceID string) (*
 		&inst.InstanceID, &inst.WorkflowName, &inst.Status,
 		&inputData, &outputData, &activityID, &sourceHash, &ownerService, &framework,
 		&leaseOwner, &inst.LeaseEpoch, &leaseExpires, &inst.Runnable,
-		&inst.StartedAt, &inst.UpdatedAt, &inst.CancelReason,
+		&inst.StartedAt, &inst.UpdatedAt, &inst.CancelReason, &inst.ParentInstanceID, &inst.ParentKey,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil

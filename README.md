@@ -182,6 +182,41 @@ The runtime cannot detect non-overlapping foreign commands that finish without a
 
 S7 removes the public `SuspendSignal` family and the unused `OnEvent*` hooks.
 
+## Child workflows
+
+`StartChild[O](ctx, workflowName, input, opts...)` starts a child by name and
+returns a `*Child[O]`. Only the worker that runs the child needs to register
+its workflow. The parent command and child instance commit in one transaction.
+
+`child.ID()` returns the instance ID. The default is `<parentID>/<historyKey>`.
+`WithChildID(id)` supplies an explicit ID, and `child.Key()` returns the history key.
+A duplicate ID returns `ErrWorkflowAlreadyStarted`. The recorded error also
+returns on replay. The parent can catch this error and continue.
+
+`child.Get(ctx)` returns the stored result or yields until an outcome exists.
+It caches its outcome for the execution and consumes no command position or
+delivery batch. Child failures preserve their error envelopes. The parent can
+catch child panic and nondeterminism errors. Invalid result data fails the parent.
+
+`child.IsReady()` reads the delivered view, like activity futures. It becomes
+true after a delivery batch or after Get returns. It is safe inside Await predicates.
+The child methods belong to their issuing execution and require serial use on
+the workflow coroutine.
+
+`child.Cancel(ctx)` records one command and requests cancellation of a running
+child. It resolves an unfinished handle immediately, without waiting for the
+child to close. Further calls on that handle consume no command position.
+A stored result takes precedence over cancellation.
+
+When the parent completes, fails, or cancels, its close transaction requests
+cancellation of every running child. Each child observes the request at its next
+blocking yield. Closing that child applies the same policy to its own children.
+A parent cancellation observed by a blocked Get records the outcome and requests
+child cancellation together.
+
+Child RunTimeout, TaskQueue, and RetryPolicy are not supported. Scope integration
+and detached child handles belong to S12b.
+
 ## Workflow time
 
 Use `Now(ctx)` for time-based decisions in workflow code. It returns a
@@ -221,6 +256,8 @@ SQLite and PostgreSQL are the supported storage backends. PostgreSQL also suppor
 `internal/migrations/sql/` is the schema source of truth. The module embeds one initial schema file for each dialect, and tests apply those same files. Before the first release, edit both schema files in place. Numbered migrations start at S20.
 
 Error envelopes use snake_case JSON fields, including panic and nondeterminism details. Pre-1.0 databases must be recreated after envelope-format changes; no compatibility shim is provided.
+
+Pre-S12 databases must be recreated: child instances now have parent links and constraints.
 
 Pre-S9 databases must be recreated: delivery and consumption positions were added
 to history and signals. The initial schema also includes the S8 durable activity

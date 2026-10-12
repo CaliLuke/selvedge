@@ -263,7 +263,7 @@ func (s *SQLiteStorage) GetInstance(ctx context.Context, instanceID string) (*Wo
 		SELECT instance_id, workflow_name, framework, status, input_data, output_data,
 			   current_activity_id, source_hash, owner_service,
 			   lease_owner, lease_epoch, lease_expires_ms, runnable,
-			   started_at, updated_at, COALESCE(cancel_reason,'')
+			   started_at, updated_at, COALESCE(cancel_reason,''), COALESCE(parent_instance_id,''), COALESCE(parent_key,'')
 		FROM workflow_instances WHERE instance_id = ?
 	`, instanceID)
 
@@ -277,7 +277,7 @@ func (s *SQLiteStorage) GetInstance(ctx context.Context, instanceID string) (*Wo
 		&inst.InstanceID, &inst.WorkflowName, &framework, &inst.Status,
 		&inputData, &outputData, &activityID, &sourceHash, &ownerService,
 		&leaseOwner, &inst.LeaseEpoch, &leaseExpires, &inst.Runnable,
-		&startedAt, &updatedAt, &inst.CancelReason,
+		&startedAt, &updatedAt, &inst.CancelReason, &inst.ParentInstanceID, &inst.ParentKey,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil

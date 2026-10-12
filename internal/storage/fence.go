@@ -23,7 +23,7 @@ type fenceStore struct{ TransactionManager }
 
 // withFence holds the guard row lock until the guarded write commits.
 // A nil fence is used only by explicitly classified worker/poller writes.
-func (s fenceStore) withFence(ctx context.Context, f *Fence, fn func(Executor) error) (err error) {
+func (s fenceStore) withFence(ctx context.Context, f *Fence, fn func(Executor) error, preLock ...string) (err error) {
 	defer func() {
 		if errors.Is(err, ErrFenced) {
 			if reject, ok := ctx.Value(fenceRejectionKey{}).(func(error)); ok {
@@ -48,6 +48,13 @@ func (s fenceStore) withFence(ctx context.Context, f *Fence, fn func(Executor) e
 		defer func() { _ = s.RollbackTransaction(ctx) }()
 	}
 	conn := s.Conn(ctx)
+	for _, id := range preLock {
+		if id != "" {
+			if _, err := conn.ExecContext(ctx, `UPDATE workflow_instances SET lease_epoch=lease_epoch WHERE instance_id=$1`, id); err != nil {
+				return err
+			}
+		}
+	}
 	if f != nil {
 		result, err := conn.ExecContext(ctx, `UPDATE workflow_instances SET lease_epoch=lease_epoch WHERE instance_id=$1 AND lease_owner=$2 AND lease_epoch=$3`, f.InstanceID, f.Owner, f.Epoch)
 		if err != nil {

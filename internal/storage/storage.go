@@ -48,6 +48,7 @@ type Storage interface {
 	DeliveryManager
 
 	ActivityTaskManager
+	ChildManager
 
 	// Timer Subscription Operations
 	TimerSubscriptionManager

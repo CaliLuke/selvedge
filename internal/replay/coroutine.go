@@ -15,6 +15,7 @@ var errExecutionClosed = errors.New("workflow execution closed")
 type WaitKind string
 
 const (
+	WaitChild    WaitKind = "child"
 	WaitAwait    WaitKind = "await"
 	WaitActivity WaitKind = "activity"
 	WaitTimer    WaitKind = "timer"

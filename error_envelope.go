@@ -83,6 +83,8 @@ func envelopeForError(err error) *errorEnvelope {
 			ev.Kind = "canceled"
 		case context.DeadlineExceeded:
 			ev.Kind = "deadline_exceeded"
+		case ErrWorkflowAlreadyStarted:
+			ev.Kind = "workflow_already_started"
 		case ErrHistoryKeyConflict:
 			ev.Kind = "history_key_conflict"
 		case ErrDeterminismViolation:
@@ -168,6 +170,8 @@ func errorFromEnvelope(ev *errorEnvelope) error {
 		return context.DeadlineExceeded
 	case "workflow_cancelled":
 		return &WorkflowCancelledError{InstanceID: ev.InstanceID, Reason: ev.Reason}
+	case "workflow_already_started":
+		return ErrWorkflowAlreadyStarted
 	case "history_key_conflict":
 		return ErrHistoryKeyConflict
 	case "panic":
