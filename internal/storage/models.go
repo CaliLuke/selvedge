@@ -42,7 +42,8 @@ type WorkflowInstance struct {
 type HistoryEventType string
 
 const (
-	HistoryReserved HistoryEventType = "Reserved"
+	HistoryScopeCancelled HistoryEventType = "ScopeCancelled"
+	HistoryReserved       HistoryEventType = "Reserved"
 
 	// Activity events
 	HistoryActivityCancelled HistoryEventType = "ActivityCancelled"

@@ -57,16 +57,12 @@ func Receive[T any](ctx *WorkflowContext, channel string) (T, error) {
 		return signalOutcome[T](ctx, event)
 	}
 	s := ctx.execCtx.Storage()
-	requested, err := s.IsCancelRequested(ctx.Context(), ctx.InstanceID())
+	cancellation, err := scopeCancellation(ctx, ctx.scope)
 	if err != nil {
 		ctx.execCtx.Fail(err)
 		return zero, err
 	}
-	if requested {
-		cancellation, err := cancellationAtYield(ctx)
-		if err != nil {
-			return zero, err
-		}
+	if cancellation != nil {
 		stored, err := commitObservation(ctx, &storage.ObservationCommit{Seq: cmd.Seq, DeliverAll: true, Record: &storage.HistoryEvent{Seq: cmd.Seq, InstanceID: ctx.InstanceID(), ActivityID: key, Command: command, EventType: storage.HistorySignalCancelled, EventData: encodeError(cancellation), DataType: "json"}})
 		if err != nil {
 			ctx.execCtx.Fail(err)

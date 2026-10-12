@@ -41,10 +41,18 @@ func sleep(ctx *WorkflowContext, duration time.Duration, until *time.Time, opts 
 		return err
 	}
 	defer cmd.End()
+	ctx.scope.track(cmd.Key, "sleep", "timer")
 	timerID := cmd.Key
 	event := cmd.Recorded
 	if event != nil && event.EventData != nil {
 		return sleepOutcome(ctx, event)
+	}
+	if ctx.scope.locallyCancelled() && event == nil {
+		row, err := commitObservation(ctx, &storage.ObservationCommit{Seq: cmd.Seq, DeliverAll: true, Record: scopeCancelledEvent(ctx, cmd.Key, "sleep", cmd.Seq, storage.HistoryTimerCancelled)})
+		if err != nil {
+			return err
+		}
+		return sleepOutcome(ctx, row)
 	}
 	base := workflowTime(ctx)
 	if until != nil {
@@ -69,16 +77,12 @@ func sleep(ctx *WorkflowContext, duration time.Duration, until *time.Time, opts 
 	if stored.EventData != nil {
 		return sleepOutcome(ctx, stored)
 	}
-	requested, err := ctx.execCtx.Storage().IsCancelRequested(ctx.Context(), ctx.InstanceID())
+	cancellation, err := scopeCancellation(ctx, ctx.scope)
 	if err != nil {
 		ctx.execCtx.Fail(err)
 		return err
 	}
-	if requested {
-		cancellation, err := cancellationAtYield(ctx)
-		if err != nil {
-			return err
-		}
+	if cancellation != nil {
 		stored, err = commitObservation(ctx, &storage.ObservationCommit{Seq: cmd.Seq, DeliverAll: true, Fill: &storage.HistoryFill{Key: timerID, Command: "sleep", EventType: storage.HistoryTimerCancelled, EventData: encodeError(cancellation)}})
 		if err != nil {
 			ctx.execCtx.Fail(err)

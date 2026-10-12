@@ -62,17 +62,13 @@ func ReceiveWithTimeout[T any](ctx *WorkflowContext, channel string, timeout tim
 		ctx.execCtx.Fail(err)
 		return zero, err
 	}
-	requested, err := s.IsCancelRequested(ctx.Context(), ctx.InstanceID())
+	cancellation, err := scopeCancellation(ctx, ctx.scope)
 	if err != nil {
 		ctx.execCtx.Fail(err)
 		return zero, err
 	}
 	switch {
-	case requested:
-		cancellation, err := cancellationAtYield(ctx)
-		if err != nil {
-			return zero, err
-		}
+	case cancellation != nil:
 		record.EventType = storage.HistorySignalCancelled
 		record.EventData = encodeError(cancellation)
 		commit.Retire = &storage.TimerRetire{Key: timer.Key()}

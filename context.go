@@ -12,7 +12,6 @@ import (
 // It provides command positions, replay state, and recorded history.
 type WorkflowContext struct {
 	ctx        context.Context
-	cancel     context.CancelFunc
 	instanceID string
 	workerID   string
 
@@ -25,6 +24,7 @@ type WorkflowContext struct {
 	// Reference to the App for accessing app-level configuration
 	app *App
 
+	scope     *cancelScope
 	timeFloor *workflowTimeFloor
 }
 
@@ -34,10 +34,9 @@ func NewWorkflowContext(
 	ctx context.Context,
 	instanceID, workerID, workflowName string,
 ) *WorkflowContext {
-	ctx, cancel := context.WithCancel(ctx)
 	return &WorkflowContext{
 		ctx:          ctx,
-		cancel:       cancel,
+		scope:        newCancelScope(nil, true),
 		instanceID:   instanceID,
 		workerID:     workerID,
 		workflowName: workflowName,
@@ -48,10 +47,10 @@ func NewWorkflowContext(
 
 // NewWorkflowContextFromExecution creates a WorkflowContext from a replay ExecutionContext.
 func NewWorkflowContextFromExecution(execCtx *replay.ExecutionContext) *WorkflowContext {
-	ctx, cancel := context.WithCancel(execCtx.Context())
+	ctx := execCtx.Context()
 	return &WorkflowContext{
 		ctx:        ctx,
-		cancel:     cancel,
+		scope:      newCancelScope(nil, true),
 		instanceID: execCtx.InstanceID(),
 		execCtx:    execCtx,
 		timeFloor:  new(workflowTimeFloor),
@@ -67,7 +66,7 @@ func (c *WorkflowContext) Context() context.Context {
 func (c *WorkflowContext) WithContext(ctx context.Context) *WorkflowContext {
 	return &WorkflowContext{
 		ctx:          ctx,
-		cancel:       c.cancel,
+		scope:        c.scope,
 		instanceID:   c.instanceID,
 		workerID:     c.workerID,
 		workflowName: c.workflowName,
@@ -97,17 +96,12 @@ func (c *WorkflowContext) IsReplaying() bool {
 	return c.execCtx.Replaying()
 }
 
-// Cancel cancels the workflow execution.
-func (c *WorkflowContext) Cancel() {
-	c.cancel()
-}
-
-// Err returns any error from the context.
+// Err reports lease or shutdown cancellation, never scope cancellation.
 func (c *WorkflowContext) Err() error {
 	return c.ctx.Err()
 }
 
-// Done returns a channel that's closed when the context is cancelled.
+// Done signals lease or shutdown cancellation, never scope cancellation.
 func (c *WorkflowContext) Done() <-chan struct{} {
 	return c.ctx.Done()
 }

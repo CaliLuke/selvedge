@@ -32,6 +32,7 @@ type SignalConsume struct {
 }
 type TimerRetire struct{ Key string }
 type ObservationCommit struct {
+	Cancel     *ScopeCancel
 	Seq        int64
 	Batch      *DeliveryBatch
 	DeliverAll bool
@@ -161,6 +162,11 @@ func (s signalStore) commitObservation(ctx context.Context, f *Fence, c *Observa
 			if c.Fill != nil {
 				result.Stored, err = writeHistory(ctx, conn, &HistoryEvent{InstanceID: f.InstanceID, ActivityID: key, Command: command, EventType: c.Fill.EventType, EventData: c.Fill.EventData}, true)
 				if err != nil {
+					return err
+				}
+			}
+			if c.Cancel != nil {
+				if err := cancelScopeTargets(ctx, conn, f.InstanceID, c.Seq, c.Cancel); err != nil {
 					return err
 				}
 			}

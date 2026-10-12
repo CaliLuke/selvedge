@@ -41,9 +41,64 @@ return confirmed, nil
 
 Channel names pass through unchanged and contain 1–255 bytes. Every signal wakes its instance, including during an active execution. Unknown instances return `ErrInstanceNotFound`. Closed instances return `*InstanceClosedError`, which also matches `ErrInstanceClosed` through `errors.Is`.
 
-`CancelWorkflow` stores a durable request and wakes the instance. `Sleep` and `Receive` observe cancellation at their next yield. A cancel request alone does not stop activity tasks. `Future.Get` observes cancellation when its activity has no stored outcome, records that cancellation on the activity row, and cancels the task. A result already stored wins over cancellation. Closing the workflow cancels its queued and running tasks. A recorded result takes precedence during replay. At a new receive, cancellation takes precedence over a pending signal.
+### Cancellation
 
-An uncaught `WorkflowCancelledError` closes the instance as cancelled. A workflow that catches cancellation and returns successfully completes normally. Cancellation does not immediately change the instance status.
+`CancelWorkflow` stores a durable request and wakes the instance. Attached scopes
+observe this request at blocking waits: Sleep, Receive, Await, Timer.Get,
+Future.Get, and ReceiveWithTimeout. A stored outcome takes precedence over
+cancellation. At a new Receive, cancellation takes precedence over a pending signal.
+
+`WithCancel(ctx)` returns a child context and a cancel function. `Detached(ctx)`
+returns a parentless context that ignores the durable request and ancestor
+cancellation. These functions issue no commands and write no history.
+`WithContext` retains the same scope.
+
+The first cancel call inserts one `cancel_scope` history row, even for an empty
+scope. One fenced transaction cancels unfinished activities and timers in that
+scope and its attached descendants. It also cancels their queued or running tasks
+and deletes their timer subscriptions. Repeated calls, including after ancestor
+cancellation, write nothing and consume no command position. Replay repeats the
+same cancel calls without new writes.
+
+A scope cancellation matches `context.Canceled` and is not a
+`WorkflowCancelledError`. Commands issued in a locally cancelled scope record
+cancellation without creating tasks or timer subscriptions. A nonpositive
+ReceiveWithTimeout still records an immediate timeout. Await evaluates its
+predicate before cancellation. IsReady, Pending, ReceiveAsync, and Now ignore
+cancellation.
+
+Future.Get and Timer.Get use their issuing scope, regardless of the context
+passed to Get. Newly cancelled outcomes become ready at the cancel command's
+position. A stored outcome remains unchanged, including its delivery position.
+
+Detached cleanup can run after cancellation:
+
+```go
+_, cancelErr := selvedge.Receive[string](ctx, "work")
+if errors.Is(cancelErr, context.Canceled) {
+    if _, err := cleanup.Execute(selvedge.Detached(ctx), input); err != nil {
+        return output, err
+    }
+}
+return output, cancelErr
+```
+
+`WithCancel(Detached(ctx))` supports its own local cancellation. Detached scopes
+retain lease and shutdown cancellation. WorkflowContext.Done and Err report
+those Go context signals, never scope cancellation. WorkflowContext.Cancel was
+removed. The cancel function must run on the workflow coroutine, outside Await
+predicates. Calls during coroutine closure write nothing.
+
+A durable request alone does not stop activity tasks. Future.Get cancels its
+unfinished task when it observes the request. Scope cancellation stops its
+unfinished tasks immediately. Running attempts lose renewal, receive context
+cancellation, and cannot overwrite the recorded cancellation.
+
+An uncaught cancellation error closes the workflow as cancelled only if a durable
+request exists. Without that request, a scope cancellation error closes it as
+failed. A workflow that catches cancellation and returns successfully completes
+normally. Closure cancels every unfinished task, including tasks from detached
+scopes.
 
 Signals have no idempotency key.
 

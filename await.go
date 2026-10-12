@@ -59,16 +59,12 @@ func Await(ctx *WorkflowContext, cond func() bool) error {
 		}
 		return awaitOutcome(ctx, row)
 	}
-	requested, err := ec.Storage().IsCancelRequested(ctx.Context(), ctx.InstanceID())
+	cancellation, err := scopeCancellation(ctx, ctx.scope)
 	if err != nil {
 		ec.Fail(err)
 		return err
 	}
-	if requested {
-		cancellation, err := cancellationAtYield(ctx)
-		if err != nil {
-			return err
-		}
+	if cancellation != nil {
 		row, err := commitObservation(ctx, &storage.ObservationCommit{Seq: cmd.Seq, DeliverAll: true, Record: &storage.HistoryEvent{InstanceID: ctx.InstanceID(), Seq: cmd.Seq, ActivityID: cmd.Key, Command: "await", EventType: storage.HistoryAwaitCancelled, EventData: encodeError(cancellation), DataType: "json"}})
 		if err != nil {
 			return err

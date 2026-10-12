@@ -13,6 +13,7 @@ import (
 // Timer is a durable timer tied to its issuing workflow execution.
 // Use it serially on the workflow coroutine. Get may be called repeatedly.
 type Timer struct {
+	scope    *cancelScope
 	exec     *replay.ExecutionContext
 	key      string
 	row      *storage.HistoryEvent
@@ -40,15 +41,25 @@ func NewTimer(ctx *WorkflowContext, d time.Duration, opts ...SleepOption) (*Time
 		return nil, err
 	}
 	defer cmd.End()
+	ctx.scope.track(cmd.Key, "sleep", "timer")
 	row := cmd.Recorded
-	if row == nil && d <= 0 {
+	switch {
+	case row == nil && ctx.scope.locallyCancelled():
+		row, err = ctx.execCtx.Storage().RecordHistory(ctx.Context(), ctx.execCtx.Fence(), scopeCancelledEvent(ctx, cmd.Key, "sleep", cmd.Seq, storage.HistoryTimerCancelled))
+	case row == nil && d <= 0:
 		row, err = ctx.execCtx.Storage().RecordHistory(ctx.Context(), ctx.execCtx.Fence(), immediateTimerEvent(ctx.InstanceID(), cmd.Key, cmd.Seq, workflowTime(ctx).Add(d)))
-	} else if row == nil || row.EventData == nil {
+	case row == nil || row.EventData == nil:
 		row, err = ctx.execCtx.Storage().ReserveTimer(ctx.Context(), ctx.execCtx.Fence(), cmd.Seq, &storage.TimerSubscription{InstanceID: ctx.InstanceID(), TimerID: cmd.Key, ActivityID: cmd.Key, ExpiresAt: workflowTime(ctx).Add(d)})
 	}
 	if err != nil {
 		ctx.execCtx.Fail(err)
 		return nil, err
+	}
+	if row.EventType == storage.HistoryTimerCancelled && row.ReservationData == nil {
+		if row.DeliveredSeq != 0 {
+			ctx.execCtx.ApplyDelivery(row.DeliveredSeq, storage.DeliveryBatch{HistoryKeys: []string{cmd.Key}})
+		}
+		return &Timer{exec: ctx.execCtx, scope: ctx.scope, key: cmd.Key, row: row}, nil
 	}
 	var expiry storage.SleepReservation
 	if row.ReservationData != nil {
@@ -66,7 +77,7 @@ func NewTimer(ctx *WorkflowContext, d time.Duration, opts ...SleepOption) (*Time
 	if h := ctx.Hooks(); h != nil {
 		h.OnTimerStart(ctx.Context(), hooks.TimerStartInfo{InstanceID: ctx.InstanceID(), WorkflowName: ctx.WorkflowName(), TimerID: cmd.Key, ExpiresAt: expiry.ExpiresAt})
 	}
-	return &Timer{exec: ctx.execCtx, key: cmd.Key, row: row}, nil
+	return &Timer{exec: ctx.execCtx, scope: ctx.scope, key: cmd.Key, row: row}, nil
 }
 
 func immediateTimerEvent(instanceID, key string, seq int64, expiresAt time.Time) *storage.HistoryEvent {
@@ -112,16 +123,12 @@ func (t *Timer) Get(ctx *WorkflowContext) (time.Time, error) {
 		if row != nil && row.EventData != nil {
 			return t.outcome(ctx, row)
 		}
-		requested, err := ctx.execCtx.Storage().IsCancelRequested(ctx.Context(), ctx.InstanceID())
+		cancellation, err := scopeCancellation(ctx, t.scope)
 		if err != nil {
 			ctx.execCtx.Fail(err)
 			return time.Time{}, err
 		}
-		if requested {
-			cancellation, err := cancellationAtYield(ctx)
-			if err != nil {
-				return time.Time{}, err
-			}
+		if cancellation != nil {
 			row, err = ctx.execCtx.Storage().SetHistoryValueIfNull(ctx.Context(), ctx.execCtx.Fence(), ctx.InstanceID(), t.key, "sleep", storage.HistoryTimerCancelled, encodeError(cancellation))
 			if err != nil {
 				ctx.execCtx.Fail(err)

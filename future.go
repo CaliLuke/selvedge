@@ -12,6 +12,7 @@ import (
 // Future is an activity outcome tied to the workflow execution that issued it.
 // Use it serially from that workflow's coroutine. Get may be called repeatedly.
 type Future[O any] struct {
+	scope        *cancelScope
 	exec         *replay.ExecutionContext
 	key, command string
 	ready        bool
@@ -65,16 +66,12 @@ func (f *Future[O]) Get(ctx *WorkflowContext) (O, error) {
 			f.readOutcome(row)
 			return f.outcome(ctx)
 		}
-		requested, err := ctx.execCtx.Storage().IsCancelRequested(ctx.Context(), ctx.InstanceID())
+		cancellation, err := scopeCancellation(ctx, f.scope)
 		if err != nil {
 			ctx.execCtx.Fail(err)
 			return zero, err
 		}
-		if requested {
-			cancellation, err := cancellationAtYield(ctx)
-			if err != nil {
-				return zero, err
-			}
+		if cancellation != nil {
 			row, err = ctx.execCtx.Storage().CancelActivityAtYield(ctx.Context(), ctx.execCtx.Fence(), ctx.InstanceID(), f.key, f.command, encodeError(cancellation))
 			if err != nil {
 				ctx.execCtx.Fail(err)

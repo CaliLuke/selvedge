@@ -114,8 +114,8 @@ func TestWorkflowContext_WithContext(t *testing.T) {
 	})
 }
 
-func TestWorkflowContext_Cancel(t *testing.T) {
-	ctx := context.Background()
+func TestWorkflowContext_ParentCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
 	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow")
 
 	assert.Nil(t, wfCtx.Err())
@@ -126,14 +126,14 @@ func TestWorkflowContext_Cancel(t *testing.T) {
 	default:
 	}
 
-	wfCtx.Cancel()
+	cancel()
 
 	<-wfCtx.Done()
 	assert.Equal(t, context.Canceled, wfCtx.Err())
 }
 
 func TestWorkflowContext_Done(t *testing.T) {
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
 	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow")
 
 	doneChan := wfCtx.Done()
@@ -145,7 +145,7 @@ func TestWorkflowContext_Done(t *testing.T) {
 	default:
 	}
 
-	wfCtx.Cancel()
+	cancel()
 
 	select {
 	case <-doneChan:
@@ -172,9 +172,9 @@ func TestWorkflowContext_Err(t *testing.T) {
 		{
 			name: "context canceled",
 			setupContext: func() (*WorkflowContext, func()) {
-				ctx := context.Background()
+				ctx, cancel := context.WithCancel(context.Background())
 				wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow")
-				return wfCtx, func() { wfCtx.Cancel() }
+				return wfCtx, cancel
 			},
 			wantErr: context.Canceled,
 		},

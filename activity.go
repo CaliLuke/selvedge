@@ -98,6 +98,22 @@ func (a *Activity[I, O]) ExecuteAsync(ctx *WorkflowContext, input I, opts ...Exe
 		return nil, err
 	}
 	defer cmd.End()
+	ctx.scope.track(cmd.Key, "activity:"+a.name, "activity")
+	future := &Future[O]{exec: ctx.execCtx, scope: ctx.scope, key: cmd.Key, command: "activity:" + a.name}
+	if ctx.scope.locallyCancelled() && cmd.Recorded == nil {
+		row, err := ctx.execCtx.Storage().RecordHistory(ctx.Context(), ctx.execCtx.Fence(), scopeCancelledEvent(ctx, cmd.Key, future.command, cmd.Seq, storage.HistoryActivityCancelled))
+		if err != nil {
+			ctx.execCtx.Fail(err)
+			return nil, err
+		}
+		ctx.execCtx.ApplyDelivery(row.DeliveredSeq, storage.DeliveryBatch{HistoryKeys: []string{cmd.Key}})
+		future.readOutcome(row)
+		return future, nil
+	}
+	if cmd.Recorded != nil && cmd.Recorded.EventType == storage.HistoryActivityCancelled && ctx.scope.locallyCancelled() {
+		future.readOutcome(cmd.Recorded)
+		return future, nil
+	}
 	if err := RegisterActivity(ctx.app, a); err != nil {
 		ctx.execCtx.Fail(err)
 		return nil, err
@@ -108,7 +124,6 @@ func (a *Activity[I, O]) ExecuteAsync(ctx *WorkflowContext, input I, opts ...Exe
 			ActivityName: a.name, InputData: input, IsReplay: ctx.IsReplaying(),
 		})
 	}
-	future := &Future[O]{exec: ctx.execCtx, key: cmd.Key, command: "activity:" + a.name}
 	if event := cmd.Recorded; event != nil && event.EventData != nil {
 		future.readOutcome(event)
 		if h := ctx.Hooks(); h != nil {

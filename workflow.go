@@ -212,11 +212,12 @@ func getWorkflowErrorFromHistory(ctx context.Context, s storage.Storage, instanc
 }
 
 // CancelWorkflow durably requests cancellation and wakes a running instance.
-// Sleep and Receive observe the request at their next yield. A cancel request
-// alone does not stop activity tasks. Future.Get records cancellation on the
-// activity row and cancels its task when no outcome is stored. A stored outcome
-// wins over cancellation. Closing the workflow cancels its unfinished tasks.
-// A workflow that catches cancellation can complete.
+// Attached scopes observe it at blocking waits. Detached scopes ignore it.
+// A request alone does not stop activity tasks. Future.Get cancels its unfinished
+// task when it observes the request. A stored outcome wins over cancellation.
+// WithCancel provides local cancellation. Detached supports cleanup after either
+// form of cancellation. Closure cancels all unfinished tasks, including detached
+// tasks. A workflow that catches cancellation can complete normally.
 func CancelWorkflow(ctx context.Context, app *App, instanceID, reason string) error {
 	return app.cancelWorkflow(ctx, instanceID, reason)
 }
