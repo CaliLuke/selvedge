@@ -451,7 +451,7 @@ func runNowCrashScenario(t *testing.T, factory replayAppFactory, crashAt int, af
 	inject := func(_ context.Context, method string) error {
 		// S10a owns this list; S8 can extend its separate activity crash scenario.
 		switch method {
-		case "AcquireLease", "RenewLease", "RecordHistory", "ReserveHistory", "SetHistoryValueIfNull", "ConsumeSignal", "AppendSignal", "ReleaseLease", "CloseInstance":
+		case "AcquireLease", "RenewLease", "RecordHistory", "ReserveHistory", "SetHistoryValueIfNull", "CommitObservation", "AppendSignal", "ReleaseLease", "CloseInstance":
 			writes = append(writes, method)
 		default:
 			return nil
@@ -514,7 +514,7 @@ func runNowCrashScenario(t *testing.T, factory replayAppFactory, crashAt int, af
 	require.Len(t, rows, 3)
 	values := make([]historyValue, 0, len(rows))
 	for _, row := range rows {
-		values = append(values, historyValue{row.Seq, row.ActivityID, row.Command, row.EventType, string(row.EventData)})
+		values = append(values, historyValue{row.Seq, row.DeliveredSeq, row.ActivityID, row.Command, row.EventType, string(row.EventData)})
 	}
 	return values, writes
 }

@@ -69,7 +69,7 @@ func Sleep(ctx *WorkflowContext, duration time.Duration, opts ...SleepOption) er
 		if err != nil {
 			return err
 		}
-		stored, err = ctx.execCtx.Storage().SetHistoryValueIfNull(ctx.Context(), ctx.execCtx.Fence(), ctx.InstanceID(), timerID, "sleep", storage.HistoryTimerCancelled, encodeError(cancellation))
+		stored, err = commitObservation(ctx, &storage.ObservationCommit{Seq: cmd.Seq, DeliverAll: true, Fill: &storage.HistoryFill{Key: timerID, Command: "sleep", EventType: storage.HistoryTimerCancelled, EventData: encodeError(cancellation)}})
 		if err != nil {
 			ctx.execCtx.Fail(err)
 			return err

@@ -55,6 +55,7 @@ type ExecutionContext struct {
 	execution                   *Execution
 	coroutine                   *coroutine
 	running, closing, inCommand atomic.Bool
+	inPredicate                 atomic.Bool
 
 	mu                       sync.Mutex
 	bySeq                    map[int64]*storage.HistoryEvent
@@ -63,12 +64,15 @@ type ExecutionContext struct {
 	seq, maxRecordedSeq      int64
 	replaying                bool
 	fatal                    error
+	deliveries               map[string]int64
+	signals                  map[int64]storage.SignalPosition
+	overlay                  *storage.DeliveryBatch
 	cacheHits, newActivities int
 }
 
 // NewExecutionContext creates standalone execution tracking without storage.
 func NewExecutionContext(ctx context.Context, instanceID string) *ExecutionContext {
-	return &ExecutionContext{ctx: ctx, instanceID: instanceID, bySeq: make(map[int64]*storage.HistoryEvent), byKey: make(map[string]*storage.HistoryEvent), issuedKeys: make(map[string]bool)}
+	return &ExecutionContext{ctx: ctx, instanceID: instanceID, bySeq: make(map[int64]*storage.HistoryEvent), byKey: make(map[string]*storage.HistoryEvent), issuedKeys: make(map[string]bool), deliveries: make(map[string]int64), signals: make(map[int64]storage.SignalPosition)}
 }
 
 // Command identifies one position in the workflow's command history.
@@ -121,7 +125,7 @@ func (ec *ExecutionContext) Issue(cmd, explicitKey string) (*Command, error) {
 	}
 	ec.issuedKeys[key] = true
 	row := ec.bySeq[ec.seq]
-	ec.replaying = row != nil && row.EventData != nil
+	ec.replaying = row != nil && (row.EventData != nil || row.EventType == storage.HistorySignalNone)
 	if row != nil && (row.Command != cmd || row.ActivityID != key) {
 		ec.fatal = &NondeterminismError{Seq: ec.seq, Key: key, Recorded: row.Command, Issued: cmd, Reason: "command or key changed at recorded position"}
 	} else if row == nil && ec.byKey[key] != nil {
@@ -311,6 +315,7 @@ func (e *Engine) executeWorkflow(ctx context.Context, instanceID string, runner 
 			continue
 		}
 		historyCount++
+		execCtx.deliveries[event.ActivityID] = event.DeliveredSeq
 		execCtx.byKey[event.ActivityID] = event
 		execCtx.bySeq[event.Seq] = event
 		if event.Seq > execCtx.maxRecordedSeq {
@@ -319,6 +324,13 @@ func (e *Engine) executeWorkflow(ctx context.Context, instanceID string, runner 
 	}
 	if err := iter.Err(); err != nil {
 		return fmt.Errorf("failed to load history: %w", err)
+	}
+	positions, err := e.storage.DeliveredSignals(ctx, instanceID)
+	if err != nil {
+		return fmt.Errorf("failed to load delivered signals: %w", err)
+	}
+	for _, p := range positions {
+		execCtx.signals[p.ID] = p
 	}
 	isReplaying := historyCount > 0
 

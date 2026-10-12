@@ -21,13 +21,13 @@ func (s historyStore) get(ctx context.Context, instanceID, key string) (*History
 
 func readHistory(ctx context.Context, conn Executor, instanceID, key string) (*HistoryEvent, error) {
 	row := conn.QueryRowContext(ctx, `
-		SELECT id, instance_id, activity_id, COALESCE(seq, 0), command, event_type, event_data, event_data_binary, data_type, reservation_data, created_at
+		SELECT id, instance_id, activity_id, COALESCE(seq, 0), COALESCE(delivered_seq, 0), command, event_type, event_data, event_data_binary, data_type, reservation_data, created_at
 		FROM workflow_history WHERE instance_id = $1 AND activity_id = $2
 	`, instanceID, key)
 	var ev HistoryEvent
 	var data, reservation sql.NullString
 	var created any
-	if err := row.Scan(&ev.ID, &ev.InstanceID, &ev.ActivityID, &ev.Seq, &ev.Command, &ev.EventType, &data, &ev.EventDataBinary, &ev.DataType, &reservation, &created); err != nil {
+	if err := row.Scan(&ev.ID, &ev.InstanceID, &ev.ActivityID, &ev.Seq, &ev.DeliveredSeq, &ev.Command, &ev.EventType, &data, &ev.EventDataBinary, &ev.DataType, &reservation, &created); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
@@ -93,10 +93,10 @@ func writeHistory(ctx context.Context, conn Executor, ev *HistoryEvent, fill boo
 		}
 		var id int64
 		err = conn.QueryRowContext(ctx, `
-		INSERT INTO workflow_history (instance_id, activity_id, command, event_type, event_data, event_data_binary, data_type, reservation_data, seq)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		INSERT INTO workflow_history (instance_id, activity_id, command, event_type, event_data, event_data_binary, data_type, reservation_data, seq, delivered_seq)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		ON CONFLICT DO NOTHING RETURNING id
-	`, ev.InstanceID, ev.ActivityID, ev.Command, ev.EventType, data, ev.EventDataBinary, ev.DataType, nullableJSON(ev.ReservationData), nullableSeq(ev.Seq)).Scan(&id)
+	`, ev.InstanceID, ev.ActivityID, ev.Command, ev.EventType, data, ev.EventDataBinary, ev.DataType, nullableJSON(ev.ReservationData), nullableSeq(ev.Seq), initialDelivery(ev)).Scan(&id)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return nil, err
 		}
@@ -196,4 +196,11 @@ func nullableSeq(seq int64) any {
 		return nil
 	}
 	return seq
+}
+
+func initialDelivery(ev *HistoryEvent) any {
+	if ev.EventData != nil {
+		return nullableSeq(ev.Seq)
+	}
+	return nil
 }

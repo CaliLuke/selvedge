@@ -76,7 +76,7 @@ func testHistorySeqConstraints(t *testing.T, factory historyFactory) {
 	t.Run("occupied_receive", func(t *testing.T) {
 		id, err := s.AppendSignal(ctx, "seq", "messages", []byte(`true`))
 		require.NoError(t, err)
-		_, err = s.ConsumeSignal(ctx, f, id, &HistoryEvent{Seq: 1, InstanceID: "seq", ActivityID: "receive", Command: "receive:messages", EventType: HistorySignalReceived, EventData: []byte(`true`), DataType: "json"})
+		_, err = fixtureConsume(s, ctx, f, id, &HistoryEvent{Seq: 1, InstanceID: "seq", ActivityID: "receive", Command: "receive:messages", EventType: HistorySignalReceived, EventData: []byte(`true`), DataType: "json"})
 		require.ErrorIs(t, err, ErrHistoryKeyConflict)
 		signal, err := s.NextSignal(ctx, "seq", "messages")
 		require.NoError(t, err)

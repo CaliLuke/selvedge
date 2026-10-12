@@ -55,6 +55,10 @@ const (
 	HistorySignalReceived  HistoryEventType = "SignalReceived"
 	HistorySignalCancelled HistoryEventType = "SignalCancelled"
 
+	HistoryAwaitCompleted HistoryEventType = "AwaitCompleted"
+	HistoryAwaitCancelled HistoryEventType = "AwaitCancelled"
+	HistorySignalNone     HistoryEventType = "SignalNone"
+
 	// Workflow lifecycle events
 	HistoryWorkflowFailed    HistoryEventType = "WorkflowFailed"
 	HistoryWorkflowCancelled HistoryEventType = "WorkflowCancelled"
@@ -62,6 +66,7 @@ const (
 
 // HistoryEvent represents a single event in a workflow's execution history.
 type HistoryEvent struct {
+	DeliveredSeq    int64            `json:"delivered_seq"`
 	Seq             int64            `json:"seq"`                        // Zero represents SQL NULL for lifecycle rows.
 	ReservationData []byte           `json:"reservation_data,omitempty"` // Immutable command metadata, separate from its observed value.
 	Command         string           `json:"command"`

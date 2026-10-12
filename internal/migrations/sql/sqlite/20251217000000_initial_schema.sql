@@ -57,12 +57,15 @@ CREATE TABLE IF NOT EXISTS workflow_history (
     command TEXT NOT NULL DEFAULT '',
     data_type TEXT NOT NULL DEFAULT 'json',
     event_data TEXT,
+    delivered_seq INTEGER NULL,
     reservation_data TEXT,
     event_data_binary BLOB,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (instance_id) REFERENCES workflow_instances(instance_id) ON DELETE CASCADE,
     CONSTRAINT unique_instance_activity UNIQUE (instance_id, activity_id),
     CONSTRAINT unique_instance_seq UNIQUE (instance_id, seq),
+    CONSTRAINT history_delivered_has_value CHECK (delivered_seq IS NULL OR event_data IS NOT NULL),
+    CONSTRAINT history_delivered_after_issue CHECK (delivered_seq IS NULL OR seq IS NULL OR delivered_seq >= seq),
     CONSTRAINT history_seq_required CHECK (seq IS NOT NULL OR activity_id LIKE '$%')
 );
 
@@ -92,8 +95,13 @@ CREATE TABLE IF NOT EXISTS workflow_signals (
     payload TEXT NOT NULL,
     sent_at TEXT NOT NULL DEFAULT (datetime('now')),
     consumed_key TEXT NULL,
+    delivered_seq INTEGER NULL,
+    consumed_seq INTEGER NULL,
+    CONSTRAINT signal_consumed_position CHECK ((consumed_key IS NULL) = (consumed_seq IS NULL)),
+    CONSTRAINT signal_consumed_after_delivery CHECK (consumed_seq IS NULL OR (delivered_seq IS NOT NULL AND delivered_seq <= consumed_seq)),
     CONSTRAINT unique_consumed UNIQUE (instance_id, consumed_key)
 );
+CREATE INDEX IF NOT EXISTS idx_signals_delivery ON workflow_signals(instance_id, delivered_seq);
 CREATE INDEX IF NOT EXISTS idx_signals_next ON workflow_signals(instance_id, channel, id);
 
 -- Durable activity inputs and attempt claims

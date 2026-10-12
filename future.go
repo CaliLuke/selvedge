@@ -15,6 +15,7 @@ type Future[O any] struct {
 	exec         *replay.ExecutionContext
 	key, command string
 	ready        bool
+	observed     bool
 	value        O
 	err          error
 }
@@ -28,6 +29,7 @@ func (f *Future[O]) readOutcome(row *storage.HistoryEvent) {
 }
 
 func (f *Future[O]) outcome(ctx *WorkflowContext) (O, error) {
+	f.observed = true
 	failActivityOutcome(ctx, f.err)
 	return f.value, f.err
 }
@@ -102,3 +104,8 @@ func (f *Future[O]) Get(ctx *WorkflowContext) (O, error) {
 		}
 	}
 }
+
+// IsReady reports a delivered or previously observed outcome. It consumes no
+// position and performs no I/O. Use only on the workflow coroutine, including
+// Await predicates; off-coroutine calls are unsupported and not detected.
+func (f *Future[O]) IsReady() bool { return f.observed || f.exec.Delivered(f.key) }

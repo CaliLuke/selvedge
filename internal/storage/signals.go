@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"database/sql/driver"
@@ -29,11 +28,12 @@ func (e *InstanceClosedError) Unwrap() error { return ErrInstanceClosed }
 
 // Signal is one durable inbox entry. An empty ConsumedKey denotes a pending entry.
 type Signal struct {
-	ID                  int64
-	InstanceID, Channel string
-	Payload             []byte
-	SentAt              time.Time
-	ConsumedKey         string
+	ID                        int64
+	InstanceID, Channel       string
+	Payload                   []byte
+	SentAt                    time.Time
+	ConsumedKey               string
+	DeliveredSeq, ConsumedSeq int64
 }
 
 // SignalManager persists and consumes the per-instance signal inbox.
@@ -41,10 +41,6 @@ type SignalManager interface {
 	AppendSignal(ctx context.Context, instanceID, channel string, payload []byte) (int64, error)
 	// NextSignal returns nil, nil when this channel has no unconsumed signal.
 	NextSignal(ctx context.Context, instanceID, channel string) (*Signal, error)
-	// ConsumeSignal atomically marks exactly one signal and inserts its observation.
-	// obs must match the signal's instance, receive command and payload. Its key
-	// must be unused, including by reservations: replay reads history directly.
-	ConsumeSignal(ctx context.Context, f *Fence, signalID int64, obs *HistoryEvent) (*HistoryEvent, error)
 }
 
 // Both dialects support numbered parameters and RETURNING. Only ingress locking
@@ -118,10 +114,10 @@ func (s signalStore) next(ctx context.Context, instanceID, channel string) (*Sig
 	var payload string
 	var sent any
 	err := s.Conn(ctx).QueryRowContext(ctx, `
-		SELECT id, instance_id, channel, payload, sent_at FROM workflow_signals
+		SELECT id, instance_id, channel, payload, sent_at, COALESCE(delivered_seq,0), COALESCE(consumed_seq,0) FROM workflow_signals
 		WHERE instance_id = $1 AND channel = $2 AND consumed_key IS NULL
 		ORDER BY id LIMIT 1
-	`, instanceID, channel).Scan(&signal.ID, &signal.InstanceID, &signal.Channel, &payload, &sent)
+	`, instanceID, channel).Scan(&signal.ID, &signal.InstanceID, &signal.Channel, &payload, &sent, &signal.DeliveredSeq, &signal.ConsumedSeq)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -141,63 +137,6 @@ func (s signalStore) next(ctx context.Context, instanceID, channel string) (*Sig
 		return nil, err
 	}
 	return &signal, nil
-}
-
-func (s signalStore) consume(ctx context.Context, f *Fence, signalID int64, obs *HistoryEvent) (*HistoryEvent, error) {
-	if f == nil {
-		return nil, rejectFence(ctx)
-	}
-	if obs == nil || obs.InstanceID == "" || obs.ActivityID == "" {
-		return nil, errors.New("signal observation requires an instance and a nonempty key")
-	}
-	if f.InstanceID != obs.InstanceID {
-		return nil, rejectFence(ctx)
-	}
-	if err := validateHistorySeq(obs); err != nil {
-		return nil, err
-	}
-	var stored *HistoryEvent
-	err := s.transaction(ctx, func(ctx context.Context, conn Executor) error {
-		return (fenceStore{signalTransaction{s.Storage, conn}}).withFence(ctx, f, func(conn Executor) error {
-			var payload string
-			// The primary key bounds this UPDATE to one row; RETURNING must yield it.
-			err := conn.QueryRowContext(ctx, `
-			UPDATE workflow_signals SET consumed_key = $1
-			WHERE id = $2 AND instance_id = $3 AND consumed_key IS NULL
-			AND 'receive:' || channel = $4 RETURNING payload
-		`, obs.ActivityID, signalID, obs.InstanceID, obs.Command).Scan(&payload)
-			if errors.Is(err, sql.ErrNoRows) {
-				return ErrSignalNotAvailable
-			}
-			if err != nil {
-				return err
-			}
-			if !bytes.Equal(obs.EventData, []byte(payload)) {
-				return errors.New("signal observation payload does not match inbox payload")
-			}
-			// Unlike a standalone first-writer-wins history write, an existing row
-			// cannot count as success here: it would discard a new signal without
-			// recording its observation. Roll back consumption on every key conflict.
-			var id int64
-			err = conn.QueryRowContext(ctx, `
-			INSERT INTO workflow_history (instance_id, activity_id, command, event_type, event_data, event_data_binary, data_type, seq)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-			ON CONFLICT DO NOTHING RETURNING id
-		`, obs.InstanceID, obs.ActivityID, obs.Command, obs.EventType, payload, obs.EventDataBinary, obs.DataType, nullableSeq(obs.Seq)).Scan(&id)
-			if errors.Is(err, sql.ErrNoRows) {
-				return ErrHistoryKeyConflict
-			}
-			if err != nil {
-				return err
-			}
-			stored, err = readHistory(ctx, conn, obs.InstanceID, obs.ActivityID)
-			return err
-		})
-	})
-	if err != nil {
-		return nil, err
-	}
-	return stored, nil
 }
 
 // Savepoints keep failed operations atomic even if the caller owns and later

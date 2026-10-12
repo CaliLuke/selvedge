@@ -398,7 +398,7 @@ func testSwallowedFenceRejectionStopsExecution(t *testing.T, factory replayAppFa
 				close(renewalProcessed)
 			}
 		}
-		if method == "ConsumeSignal" {
+		if method == "CommitObservation" {
 			setStoreClock(t, h, 2001)
 			_, ok, err := fs.Storage.AcquireLease(ctx, id, "other/owner", time.Second)
 			require.NoError(t, err)
@@ -430,6 +430,7 @@ func testReplayDeterministicAfterCrash(t *testing.T, factory replayAppFactory) {
 
 type historyValue struct {
 	Seq          int64
+	DeliveredSeq int64
 	Key, Command string
 	Type         storage.HistoryEventType
 	Data         string
@@ -466,7 +467,7 @@ func runCrashScenario(t *testing.T, factory replayAppFactory, crashAt int, after
 		injectionMu.Lock()
 		defer injectionMu.Unlock()
 		switch method {
-		case "AcquireLease", "ReserveHistory", "ReserveActivity", "ClaimActivityTask", "ClaimActivityTasks", "RenewActivityTask", "CompleteActivityTask", "ReleaseActivityTask", "CancelActivityAtYield", "ConsumeSignal", "SetHistoryValueIfNull", "ReserveTimer", "ReleaseLease", "FireTimer", "CloseInstance":
+		case "AcquireLease", "ReserveHistory", "ReserveActivity", "ClaimActivityTask", "ClaimActivityTasks", "RenewActivityTask", "CompleteActivityTask", "ReleaseActivityTask", "CancelActivityAtYield", "CommitObservation", "SetHistoryValueIfNull", "ReserveTimer", "ReleaseLease", "FireTimer", "CloseInstance":
 			writeIndex++
 		}
 		if !crashed && crashAt > 0 && writeIndex == crashAt {
@@ -522,7 +523,7 @@ func runCrashScenario(t *testing.T, factory replayAppFactory, crashAt int, after
 		var seq int64
 		require.NoError(t, fs.Storage.DB().QueryRow("SELECT seq FROM workflow_history WHERE id=$1", row.ID).Scan(&seq))
 		require.Equal(t, fmt.Sprintf("#%d", seq), row.ActivityID)
-		values = append(values, historyValue{row.Seq, row.ActivityID, row.Command, row.EventType, string(row.EventData)})
+		values = append(values, historyValue{row.Seq, row.DeliveredSeq, row.ActivityID, row.Command, row.EventType, string(row.EventData)})
 	}
 	return values, writeIndex
 }
@@ -624,7 +625,7 @@ func executionWrites(s *faultstore.Store) []string {
 	var writes []string
 	for _, method := range s.Calls() {
 		switch method {
-		case "AcquireLease", "ReleaseLease", "ReserveHistory", "ReserveActivity", "ClaimActivityTask", "ClaimActivityTasks", "RenewActivityTask", "CompleteActivityTask", "ReleaseActivityTask", "ReserveTimer", "RecordHistory", "SetHistoryValueIfNull", "CloseInstance", "UpdateInstanceActivity", "ConsumeSignal":
+		case "AcquireLease", "ReleaseLease", "ReserveHistory", "ReserveActivity", "ClaimActivityTask", "ClaimActivityTasks", "RenewActivityTask", "CompleteActivityTask", "ReleaseActivityTask", "ReserveTimer", "RecordHistory", "SetHistoryValueIfNull", "CloseInstance", "UpdateInstanceActivity", "CommitObservation":
 			writes = append(writes, method)
 		}
 	}

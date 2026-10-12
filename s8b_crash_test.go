@@ -74,7 +74,7 @@ func runAsyncCrashScenario(t *testing.T, factory replayAppFactory, order string,
 		mu.Lock()
 		defer mu.Unlock()
 		switch method {
-		case "AcquireLease", "ReserveHistory", "ReserveActivity", "ClaimActivityTask", "ClaimActivityTasks", "RenewActivityTask", "CompleteActivityTask", "ReleaseActivityTask", "CancelActivityAtYield", "ConsumeSignal", "SetHistoryValueIfNull", "ReserveTimer", "ReleaseLease", "FireTimer", "CloseInstance":
+		case "AcquireLease", "ReserveHistory", "ReserveActivity", "ClaimActivityTask", "ClaimActivityTasks", "RenewActivityTask", "CompleteActivityTask", "ReleaseActivityTask", "CancelActivityAtYield", "CommitObservation", "SetHistoryValueIfNull", "ReserveTimer", "ReleaseLease", "FireTimer", "CloseInstance":
 			writes++
 		default:
 			return nil
@@ -138,7 +138,7 @@ func runAsyncCrashScenario(t *testing.T, factory replayAppFactory, order string,
 	require.NoError(t, err)
 	values := make([]historyValue, 0, len(rows))
 	for _, row := range rows {
-		values = append(values, historyValue{row.Seq, row.ActivityID, row.Command, row.EventType, string(row.EventData)})
+		values = append(values, historyValue{row.Seq, row.DeliveredSeq, row.ActivityID, row.Command, row.EventType, string(row.EventData)})
 	}
 	return values, writes
 }

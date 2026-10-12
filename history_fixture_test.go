@@ -57,3 +57,16 @@ func fixtureTimer(ctx context.Context, s storage.Storage, timer *storage.TimerSu
 	_, err := s.Conn(ctx).ExecContext(ctx, `INSERT INTO workflow_timer_subscriptions(instance_id,timer_id,expires_at,activity_id) VALUES($1,$2,$3,$4)`, timer.InstanceID, timer.TimerID, timer.ExpiresAt.UTC().Format("2006-01-02 15:04:05"), timer.ActivityID)
 	return err
 }
+
+func fixtureConsume(s storage.Storage, ctx context.Context, f *storage.Fence, id int64, obs *storage.HistoryEvent) (*storage.HistoryEvent, error) {
+	c := &storage.ObservationCommit{Seq: 1, DeliverAll: true, Record: obs}
+	if obs != nil {
+		c.Seq = obs.Seq
+		c.Consume = &storage.SignalConsume{ID: id, Channel: strings.TrimPrefix(obs.Command, "receive:")}
+	}
+	r, err := s.CommitObservation(ctx, f, c)
+	if err != nil {
+		return nil, err
+	}
+	return r.Stored, nil
+}

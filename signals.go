@@ -67,7 +67,7 @@ func Receive[T any](ctx *WorkflowContext, channel string) (T, error) {
 		if err != nil {
 			return zero, err
 		}
-		stored, err := s.RecordHistory(ctx.Context(), ctx.execCtx.Fence(), &storage.HistoryEvent{Seq: cmd.Seq, InstanceID: ctx.InstanceID(), ActivityID: key, Command: command, EventType: storage.HistorySignalCancelled, EventData: encodeError(cancellation), DataType: "json"})
+		stored, err := commitObservation(ctx, &storage.ObservationCommit{Seq: cmd.Seq, DeliverAll: true, Record: &storage.HistoryEvent{Seq: cmd.Seq, InstanceID: ctx.InstanceID(), ActivityID: key, Command: command, EventType: storage.HistorySignalCancelled, EventData: encodeError(cancellation), DataType: "json"}})
 		if err != nil {
 			ctx.execCtx.Fail(err)
 			return zero, err
@@ -82,7 +82,7 @@ func Receive[T any](ctx *WorkflowContext, channel string) (T, error) {
 	if signal == nil {
 		return zero, ctx.execCtx.Yield(replay.Wait{Seq: cmd.Seq, Kind: replay.WaitSignal, Key: key})
 	}
-	stored, err := s.ConsumeSignal(ctx.Context(), ctx.execCtx.Fence(), signal.ID, &storage.HistoryEvent{Seq: cmd.Seq, InstanceID: ctx.InstanceID(), ActivityID: key, Command: command, EventType: storage.HistorySignalReceived, EventData: signal.Payload, DataType: "json"})
+	stored, err := commitObservation(ctx, &storage.ObservationCommit{Seq: cmd.Seq, DeliverAll: true, Consume: &storage.SignalConsume{ID: signal.ID, Channel: channel}, Record: &storage.HistoryEvent{Seq: cmd.Seq, InstanceID: ctx.InstanceID(), ActivityID: key, Command: command, EventType: storage.HistorySignalReceived, EventData: signal.Payload, DataType: "json"}})
 	if err != nil {
 		ctx.execCtx.Fail(err)
 		return zero, err

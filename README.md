@@ -45,7 +45,35 @@ Channel names pass through unchanged and contain 1–255 bytes. Every signal wak
 
 An uncaught `WorkflowCancelledError` closes the instance as cancelled. A workflow that catches cancellation and returns successfully completes normally. Cancellation does not immediately change the instance status.
 
-Signals have no idempotency key. Receive timeouts, asynchronous receive, and pending-signal inspection are not available.
+Signals have no idempotency key. Receive timeouts are not available.
+
+`Await(ctx, cond)` waits until a predicate is true in the delivered view.
+`future.IsReady()` reports whether the future has been delivered or a Get has
+already returned its outcome in this execution. `Pending(ctx, channel)` counts
+that channel's delivered, unconsumed signals. `ReceiveAsync[T](ctx, channel)`
+records either the next such signal or that none was available, without waiting
+or observing cancellation.
+
+Arrival and delivery are separate. Activity workers, timer fires, and signal
+senders record arrivals. A completing Await or Receive, or Sleep's cancellation
+path, commits a delivery batch under the workflow lease. Await delivers exactly
+the arrivals its predicate evaluated. Other batching waits deliver all arrivals
+at commit time. Get never delivers a batch; passing a recorded timer fire also
+leaves arrivals undelivered until a later batching wait. Replay reconstructs the
+view from durable delivery and consumption positions, so later arrivals cannot
+change earlier readiness or pending counts.
+
+Await predicates must be deterministic and side-effect free. They may read
+IsReady, Pending, and local values. Workflow commands inside a predicate fail
+the run, and a predicate panic fails the run. An immediately true pre-check
+returns without issuing a command or writing history. Replay runs that same
+pre-check, then uses the recorded observation instead of reevaluating a recorded
+Await's candidate batch. A never-true predicate parks the instance and costs one
+replay per input. Nil predicates and invalid Pending channels fail the run.
+
+Use IsReady and Pending only on the workflow coroutine, including inside Await
+predicates. Off-coroutine calls to these pure reads are unsupported and are not
+detected.
 
 ## Install
 
@@ -174,7 +202,10 @@ SQLite and PostgreSQL are the supported storage backends. PostgreSQL also suppor
 
 Error envelopes use snake_case JSON fields, including panic and nondeterminism details. Pre-1.0 databases must be recreated after envelope-format changes; no compatibility shim is provided.
 
-Pre-S8 databases must be recreated: the initial schema now includes durable activity tasks and command positions. Histories without command positions fail on first history access.
+Pre-S9 databases must be recreated: delivery and consumption positions were added
+to history and signals. The initial schema also includes the S8 durable activity
+tasks and command positions. Histories without command positions fail on first
+history access.
 
 Schema application is transactional: SQLite uses `BEGIN IMMEDIATE`; PostgreSQL takes a transaction-scoped advisory lock before checking `schema_migrations`. SQL errors abort and roll back the schema application.
 

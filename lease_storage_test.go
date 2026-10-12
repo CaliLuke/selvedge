@@ -152,7 +152,7 @@ func testStalledExecutionCommitRejected(t *testing.T, factory replayAppFactory) 
 			require.ErrorIs(t, err, storage.ErrFenced)
 			require.ErrorIs(t, h.app.storage.UpdateInstanceActivity(stale, "lease", "next"), storage.ErrFenced)
 			require.ErrorIs(t, h.app.storage.RemoveTimerSubscription(stale, "lease", "timer"), storage.ErrFenced)
-			_, err = h.app.storage.ConsumeSignal(stale, &f, 1, &storage.HistoryEvent{Seq: 1, InstanceID: "lease", ActivityID: "recv", Command: "receive:messages", EventType: storage.HistorySignalReceived, EventData: []byte(`1`), DataType: "json"})
+			_, err = fixtureConsume(h.app.storage, stale, &f, 1, &storage.HistoryEvent{Seq: 1, InstanceID: "lease", ActivityID: "recv", Command: "receive:messages", EventType: storage.HistorySignalReceived, EventData: []byte(`1`), DataType: "json"})
 			require.ErrorIs(t, err, storage.ErrFenced)
 
 			n, err := h.app.storage.GetHistoryCount(h.app.ctx, "lease")

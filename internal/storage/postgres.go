@@ -381,7 +381,7 @@ func (s *PostgresStorage) GetHistoryPaginated(ctx context.Context, instanceID st
 	conn := s.getConn(ctx)
 	// Fetch one extra to check if there are more events
 	rows, err := conn.QueryContext(ctx, `
-		SELECT id, instance_id, activity_id, COALESCE(seq, 0), command, event_type, event_data, event_data_binary, data_type, reservation_data, created_at
+		SELECT id, instance_id, activity_id, COALESCE(seq, 0), COALESCE(delivered_seq, 0), command, event_type, event_data, event_data_binary, data_type, reservation_data, created_at
 		FROM workflow_history
 		WHERE instance_id = $1 AND id > $2
 		ORDER BY id ASC
@@ -398,7 +398,7 @@ func (s *PostgresStorage) GetHistoryPaginated(ctx context.Context, instanceID st
 		var eventData, reservation sql.NullString
 		var eventDataBinary []byte
 
-		if err := rows.Scan(&h.ID, &h.InstanceID, &h.ActivityID, &h.Seq, &h.Command, &h.EventType, &eventData, &eventDataBinary, &h.DataType, &reservation, &h.CreatedAt); err != nil {
+		if err := rows.Scan(&h.ID, &h.InstanceID, &h.ActivityID, &h.Seq, &h.DeliveredSeq, &h.Command, &h.EventType, &eventData, &eventDataBinary, &h.DataType, &reservation, &h.CreatedAt); err != nil {
 			return nil, false, err
 		}
 		if eventData.Valid {

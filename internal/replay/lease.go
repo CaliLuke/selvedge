@@ -121,6 +121,13 @@ func (ec *ExecutionContext) Check() error {
 	if err := ec.Fatal(); err != nil {
 		return err
 	}
+	// Commands validate arguments before Issue. Predicate rejection must happen
+	// before that validation too, so every attempted command gets B6's error.
+	if ec.inPredicate.Load() {
+		err := &NondeterminismError{Seq: ec.Position(), Reason: "command issued off the workflow coroutine"}
+		ec.Fail(err)
+		return err
+	}
 	if ec.execution == nil {
 		return nil
 	}

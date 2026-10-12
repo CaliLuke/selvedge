@@ -177,7 +177,7 @@ func testReplayCommandMismatchFailsFast(t *testing.T, factory replayAppFactory) 
 			require.Zero(t, calls)
 			if tc.name == "receive" {
 				require.NotContains(t, fs.Calls(), "NextSignal")
-				require.NotContains(t, fs.Calls(), "ConsumeSignal")
+				require.NotContains(t, fs.Calls(), "CommitObservation")
 				pending, readErr := h.app.storage.NextSignal(h.app.ctx, id, "messages")
 				require.NoError(t, readErr)
 				require.NotNil(t, pending)

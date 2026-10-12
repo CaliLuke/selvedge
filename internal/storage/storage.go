@@ -45,6 +45,8 @@ type Storage interface {
 	// History Operations
 	HistoryManager
 
+	DeliveryManager
+
 	ActivityTaskManager
 
 	// Timer Subscription Operations

@@ -101,7 +101,7 @@ func testSignalReplayReadsHistory(t *testing.T, factory replayAppFactory) {
 	require.NoError(t, h.app.Signal(h.app.ctx, id, "inbox", "second"))
 	crash := fmt.Errorf("lost consume acknowledgement: %w", replay.ErrLeaseLost)
 	fs.After = func(_ context.Context, method string) error {
-		if method == "ConsumeSignal" {
+		if method == "CommitObservation" {
 			return crash
 		}
 		return nil
@@ -109,7 +109,7 @@ func testSignalReplayReadsHistory(t *testing.T, factory replayAppFactory) {
 	require.ErrorIs(t, h.RunOnce(id), crash)
 	fs.After = nil
 	fs.Before = func(_ context.Context, method string) error {
-		if method == "NextSignal" || method == "ConsumeSignal" {
+		if method == "NextSignal" || method == "CommitObservation" {
 			return errors.New("replay touched inbox")
 		}
 		return nil
@@ -134,7 +134,7 @@ func testConsumeAtomicWithRecord(t *testing.T, factory replayAppFactory) {
 			require.NoError(t, h.app.Signal(h.app.ctx, id, "inbox", "value"))
 			crash := fmt.Errorf("crash at consume boundary: %w", replay.ErrLeaseLost)
 			hook := func(_ context.Context, method string) error {
-				if method == "ConsumeSignal" {
+				if method == "CommitObservation" {
 					return crash
 				}
 				return nil
@@ -174,7 +174,7 @@ func testConsumeAtomicWithRecord(t *testing.T, factory replayAppFactory) {
 		_, ok, err = s.AcquireLease(h.app.ctx, "lease", "new", time.Second)
 		require.NoError(t, err)
 		require.True(t, ok)
-		_, err = h.app.storage.ConsumeSignal(h.app.ctx, &f, id, &storage.HistoryEvent{Seq: 1, InstanceID: "lease", ActivityID: "#1", Command: "receive:inbox", EventType: storage.HistorySignalReceived, EventData: []byte(`1`), DataType: "json"})
+		_, err = fixtureConsume(h.app.storage, h.app.ctx, &f, id, &storage.HistoryEvent{Seq: 1, InstanceID: "lease", ActivityID: "#1", Command: "receive:inbox", EventType: storage.HistorySignalReceived, EventData: []byte(`1`), DataType: "json"})
 		require.ErrorIs(t, err, ErrFenced)
 		row, err := h.app.storage.GetHistoryEvent(h.app.ctx, "lease", "#1")
 		require.NoError(t, err)
@@ -299,7 +299,7 @@ func testSignalsNotLostRandomized(t *testing.T, factory replayAppFactory) {
 		require.NoError(t, h.app.Signal(h.app.ctx, id, fmt.Sprint(ch), sent[ch]))
 		point := rng.Intn(3)
 		hook := func(_ context.Context, method string) error {
-			if method == "ConsumeSignal" {
+			if method == "CommitObservation" {
 				return crash
 			}
 			return nil

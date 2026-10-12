@@ -80,7 +80,7 @@ func testWakeCancelRacesTimerFire(t *testing.T, factory replayAppFactory) {
 			require.NoError(t, CancelWorkflow(h.app.ctx, h.app, id, "stop"))
 			var once sync.Once
 			inject := func(ctx context.Context, method string) error {
-				if method == "SetHistoryValueIfNull" {
+				if method == "CommitObservation" {
 					once.Do(func() {
 						require.NoError(t, fs.Storage.FireTimer(ctx, &storage.TimerSubscription{InstanceID: id, TimerID: "pause"}))
 					})

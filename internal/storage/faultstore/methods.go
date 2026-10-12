@@ -290,10 +290,3 @@ func (s *Store) NextSignal(ctx context.Context, id, channel string) (*storage.Si
 	v, err := s.Storage.NextSignal(ctx, id, channel)
 	return v, s.after(ctx, "NextSignal", err)
 }
-func (s *Store) ConsumeSignal(ctx context.Context, f *storage.Fence, id int64, obs *storage.HistoryEvent) (*storage.HistoryEvent, error) {
-	if err := s.before(ctx, "ConsumeSignal"); err != nil {
-		return nil, err
-	}
-	v, err := s.Storage.ConsumeSignal(ctx, f, id, obs)
-	return v, s.after(ctx, "ConsumeSignal", err)
-}
