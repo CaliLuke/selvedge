@@ -112,7 +112,7 @@ func scanTask(row interface{ Scan(...any) error }) (*ActivityTask, error) {
 	return task, err
 }
 
-func (s taskStore) claim(ctx context.Context, owner string, ttl time.Duration, limit int, filter string, args []any) ([]*ActivityTask, error) {
+func (s taskStore) claim(ctx context.Context, owner string, ttl time.Duration, limit int, filter string, args []any) (tasks []*ActivityTask, err error) {
 	if owner == "" || leaseMillis(ttl) <= 0 {
 		return nil, fmt.Errorf("activity claim requires owner and positive TTL")
 	}
@@ -135,6 +135,29 @@ func (s taskStore) claim(ctx context.Context, owner string, ttl time.Duration, l
 	params := make([]any, 0, 3+len(args))
 	params = append(params, owner, leaseMillis(ttl), limit)
 	params = append(params, args...)
+	// Ownership becomes durable only after every returned claim can be handed off.
+	// A caller-owned transaction keeps its ownership; isolate this operation so a
+	// failed result scan cannot leave claims behind in a later caller commit.
+	own := !s.InTransaction(ctx)
+	if own {
+		ctx, err = s.BeginTransaction(ctx)
+	} else {
+		_, err = s.Conn(ctx).ExecContext(ctx, "SAVEPOINT selvedge_activity_claim")
+	}
+	if err != nil {
+		return nil, err
+	}
+	finished := false
+	defer func() {
+		if own && !finished {
+			rollbackErr := s.RollbackTransaction(ctx)
+			if rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+				err = errors.Join(err, rollbackErr)
+			}
+		} else if err != nil {
+			err = errors.Join(err, s.rollbackClaim(ctx))
+		}
+	}()
 	rows, err := s.Conn(ctx).QueryContext(ctx, query, params...)
 	if err != nil {
 		return nil, err
@@ -143,7 +166,6 @@ func (s taskStore) claim(ctx context.Context, owner string, ttl time.Duration, l
 	// consumes the local timeout. The store deadline still fences all durable writes.
 	started := time.Now()
 	defer func() { _ = rows.Close() }()
-	var tasks []*ActivityTask
 	for rows.Next() {
 		task, e := scanTask(rows)
 		if e != nil {
@@ -152,7 +174,46 @@ func (s taskStore) claim(ctx context.Context, owner string, ttl time.Duration, l
 		task.ClaimStarted = started
 		tasks = append(tasks, task)
 	}
-	return tasks, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if own {
+		err = s.CommitTransaction(ctx)
+	} else {
+		_, err = s.Conn(ctx).ExecContext(ctx, "RELEASE SAVEPOINT selvedge_activity_claim")
+	}
+	if err != nil {
+		return nil, err
+	}
+	finished = true
+	// Do not discard committed claims if cancellation arrives after this point:
+	// the recipient must execute or release them, even during shutdown.
+	return tasks, nil
+}
+
+func (s taskStore) rollbackClaim(ctx context.Context) error {
+	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	_, err := s.Conn(cleanup).ExecContext(cleanup, "ROLLBACK TO SAVEPOINT selvedge_activity_claim")
+	if err == nil {
+		_, err = s.Conn(cleanup).ExecContext(cleanup, "RELEASE SAVEPOINT selvedge_activity_claim")
+	}
+	if err == nil {
+		return nil
+	}
+	// If savepoint cleanup is uncertain, prevent a later caller commit from
+	// making undisclosed claims durable.
+	rollbackErr := s.RollbackTransaction(ctx)
+	if errors.Is(rollbackErr, sql.ErrTxDone) {
+		rollbackErr = nil
+	}
+	return errors.Join(err, rollbackErr)
 }
 
 // taskFilterSQL appends parameterized name and queue restrictions.

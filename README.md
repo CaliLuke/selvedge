@@ -273,6 +273,10 @@ recorded options after code changes, including replay and another worker's
 retries. Definition-level `NonRetryableErrors` are matched by the worker running
 the attempt and are not recorded; per-call `NonRetryableErrors` are rejected.
 
+Claim acquisition commits only after its full result has been read. Interrupted
+acquisition rolls back ownership and does not consume an attempt or retry budget.
+Once acquisition succeeds, shutdown releases the claim through its activity runner.
+
 A claim runs one attempt. A retryable failure returns the task to the durable
 queue with a failure count and a not-before time. Backoff survives a restart and
 does not hold a workflow coroutine or worker slot. A lapsed claim counts as a
