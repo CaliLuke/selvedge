@@ -159,7 +159,7 @@ func s14RunQueryCrash(t *testing.T, factory replayAppFactory, scenario string, c
 	queryCount := 0
 	isWrite := func(method string) bool {
 		switch method {
-		case "AcquireLease", "ReserveActivity", "ReserveTimer", "CommitObservation", "ClaimActivityTask", "ClaimActivityTasks", "CompleteActivityTask", "ReleaseActivityTask", "ReleaseLease", "CloseInstance":
+		case "AcquireLease", "ReserveActivity", "ReserveTimer", "CommitObservation", "ClaimActivityTask", "ClaimActivityTasks", "CompleteActivityTask", "RetryActivityTask", "ReleaseActivityTask", "ReleaseLease", "CloseInstance":
 			return true
 		}
 		return false
@@ -201,7 +201,7 @@ func s14RunQueryCrash(t *testing.T, factory replayAppFactory, scenario string, c
 		if row.EventData != nil {
 			return nil
 		}
-		task, err := fs.ClaimActivityTask(ctx, id, "#1", "race", time.Second)
+		task, err := fs.ClaimActivityTask(ctx, id, "#1", "race", time.Second, nil)
 		if err != nil {
 			return err
 		}
@@ -214,7 +214,7 @@ func s14RunQueryCrash(t *testing.T, factory replayAppFactory, scenario string, c
 	for attempt := 0; attempt < 20; attempt++ {
 		if scenario == "late_B" {
 			// Hold B until the Await has delivered A; Get must first block on B.
-			_, err := fs.Storage.ClaimActivityTasks(context.Background(), "hold-B", 24*time.Hour, 1, "B")
+			_, err := fs.Storage.ClaimActivityTasks(context.Background(), "hold-B", 24*time.Hour, 1, storage.TaskFilter{Names: []string{"B"}})
 			require.NoError(t, err)
 		}
 		err := h.RunOnce(id)

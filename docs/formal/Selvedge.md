@@ -377,6 +377,14 @@ There are three write classes:
 ### Queries
 29. A query runs the workflow's handler against the delivered view at a position q that an acquire replay reaches. The engine takes one consistent snapshot of `hist`, `dpos` and `tpos`. It re-runs the workflow code as `FastForward` in `Acquire` does, and stops at the first unrecorded command, the first blocking yield without a recorded value, or the first other write. q is the position there. The handler sees the handlers registered up to q and the view at q: `IsReady`, `Pending()` and child readiness exactly as rule 19 and rule 22 define them. Events that have arrived but are not delivered are not visible, even when the replay passed a yield whose value a worker wrote. A query issues no commands, takes no lease, sets no runnable flag, fires no hooks and writes nothing; a command in a handler fails the query, not the run. The answer is not recorded, and a later query can see a later q. Not gated: queries are stuttering steps. Go tests `TestQueryReadsDeliveredView` and `TestQueryWritesNothing` must check it.
 
+### Activity attempts, retries and timeouts
+
+30. An attempt holds its task through a claim: a store-clock lease with its own owner and epoch that the worker renews. A heartbeat is a renewal. `HeartbeatTimeout` is the claim's TTL, and `StartToCloseTimeout` caps every renewal at the attempt's deadline. A claim that is not renewed lapses strictly on the store clock, as rule 4 requires for leases. The attempt may still be running, so the next claim starts a second, concurrent attempt (`ActStart` with `DupAttempts`). The lapsed attempt's writes are rejected by its epoch. This removes behaviours from `ActFinish` and keeps `ResultRecordedOnce`. A retryable failure writes no history: it returns the task to the queue with a durable not-before time and an incremented failure count. This is an `ActCrash` that re-queues, and the retry starts only from the re-queued task row (rule 18). Only the final outcome is a history write, under the class-3 rules: a success, a non-retryable failure, the failure that exhausts the retry policy, or a timeout. The activity sweeper records a `ScheduleToStartTimeout` or an exhausted lapsed claim. It is an environment writer like the timer poller. It sets the value only if it is still unset, only while the task is still in the state that timed out (queued past its deadline, or running with the same lapsed epoch), and in the same transaction as the task update. It sets the runnable flag (rule 9) and never writes the status (as rule 24). Retry and timeout decisions read the options recorded on the task row at reservation, never the options of the worker that runs the attempt. The attempt number is the task's claim count. Only the attempt itself sees it; workflow code and replay never do. A cancelled task is final: no retry claims it, and a running attempt learns of the cancel at its next renewal and its result is dropped. The model bounds retries with the crash budget (`MaxTries`). With an unbounded retry policy, `Termination` depends on the activity eventually succeeding, which `EnvFair` assumes. Not gated: each behaviour is an existing action or removes behaviours. Go tests `TestRetryIsDurable`, `TestHeartbeatTimeoutStartsNewAttempt`, `TestActivityTimeoutRecordedOnce` and `TestRecordedOptionsDriveRetries` must check it.
+
+| Selvedge API | In the model |
+|--------------|--------------|
+| `ActivityOptions` (StartToCloseTimeout, ScheduleToStartTimeout, HeartbeatTimeout, RetryPolicy, Queue), `RecordHeartbeat`, `GetActivityInfo` | No new action; rule 30 |
+
 ## How it maps to loom-mcp's engine interface
 
 | Interface | In the model |
@@ -420,7 +428,8 @@ There are three write classes:
   duplicate-ID rejection. The Go test `TestStartWorkflowDuplicateIDRejected`
   must cover it.
 - **The child's internals**, clock jumps and unbounded drift, real-time
-  timer accuracy, activity heartbeats, retry exhaustion and failure values,
+  timer accuracy, failure values (rule 30 maps heartbeats, retries and timeouts
+  onto `ActStart`, `ActCrash` and `ActFinish`),
   continue-as-new, run timeouts, compensation and the outbox.
 - **Delivery of events other than B and signals.** Every other readiness
   decision in the script is a recorded observation.

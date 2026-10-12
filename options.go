@@ -19,6 +19,7 @@ type appConfig struct {
 	waitPollInterval        time.Duration
 	maxConcurrentActivities int
 	activityPollInterval    time.Duration
+	activityQueues          []string
 	// Database
 	databaseURL string
 
@@ -296,4 +297,10 @@ func WithMaxPollInterval(d time.Duration) Option {
 			c.maxPollInterval = d
 		}
 	}
+}
+
+// WithActivityQueues restricts workers and inline attempts to these queues.
+// Without this option an App serves every queue; an empty list serves none.
+func WithActivityQueues(queues ...string) Option {
+	return func(c *appConfig) { c.activityQueues = append([]string{}, queues...) }
 }

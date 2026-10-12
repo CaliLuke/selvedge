@@ -17,29 +17,29 @@ func (s *Store) ReserveActivity(ctx context.Context, f *storage.Fence, seq int64
 }
 
 // ClaimActivityTasks delegates with fault hooks.
-func (s *Store) ClaimActivityTasks(ctx context.Context, owner string, ttl time.Duration, limit int, names ...string) ([]*storage.ActivityTask, error) {
+func (s *Store) ClaimActivityTasks(ctx context.Context, owner string, ttl time.Duration, limit int, filter storage.TaskFilter) ([]*storage.ActivityTask, error) {
 	if err := s.before(ctx, "ClaimActivityTasks"); err != nil {
 		return nil, err
 	}
-	value, err := s.Storage.ClaimActivityTasks(ctx, owner, ttl, limit, names...)
+	value, err := s.Storage.ClaimActivityTasks(ctx, owner, ttl, limit, filter)
 	return value, s.after(ctx, "ClaimActivityTasks", err)
 }
 
 // ClaimActivityTask delegates with fault hooks.
-func (s *Store) ClaimActivityTask(ctx context.Context, id, key, owner string, ttl time.Duration) (*storage.ActivityTask, error) {
+func (s *Store) ClaimActivityTask(ctx context.Context, id, key, owner string, ttl time.Duration, queues []string) (*storage.ActivityTask, error) {
 	if err := s.before(ctx, "ClaimActivityTask"); err != nil {
 		return nil, err
 	}
-	value, err := s.Storage.ClaimActivityTask(ctx, id, key, owner, ttl)
+	value, err := s.Storage.ClaimActivityTask(ctx, id, key, owner, ttl, queues)
 	return value, s.after(ctx, "ClaimActivityTask", err)
 }
 
 // RenewActivityTask delegates with fault hooks.
-func (s *Store) RenewActivityTask(ctx context.Context, claim storage.TaskClaim, ttl time.Duration) error {
+func (s *Store) RenewActivityTask(ctx context.Context, claim storage.TaskClaim, ttl time.Duration, extend bool) error {
 	if err := s.before(ctx, "RenewActivityTask"); err != nil {
 		return err
 	}
-	err := s.Storage.RenewActivityTask(ctx, claim, ttl)
+	err := s.Storage.RenewActivityTask(ctx, claim, ttl, extend)
 	return s.after(ctx, "RenewActivityTask", err)
 }
 
@@ -68,4 +68,30 @@ func (s *Store) CancelActivityAtYield(ctx context.Context, f *storage.Fence, id,
 	}
 	value, err := s.Storage.CancelActivityAtYield(ctx, f, id, key, cmd, data)
 	return value, s.after(ctx, "CancelActivityAtYield", err)
+}
+
+// RetryActivityTask delegates with fault hooks.
+func (s *Store) RetryActivityTask(ctx context.Context, c storage.TaskClaim, data []byte, d time.Duration) error {
+	if err := s.before(ctx, "RetryActivityTask"); err != nil {
+		return err
+	}
+	return s.after(ctx, "RetryActivityTask", s.Storage.RetryActivityTask(ctx, c, data, d))
+}
+
+// NextActivityDue delegates with fault hooks.
+func (s *Store) NextActivityDue(ctx context.Context, f storage.TaskFilter) (time.Duration, bool, error) {
+	if err := s.before(ctx, "NextActivityDue"); err != nil {
+		return 0, false, err
+	}
+	d, ok, err := s.Storage.NextActivityDue(ctx, f)
+	return d, ok, s.after(ctx, "NextActivityDue", err)
+}
+
+// ListActivityTasks delegates with fault hooks.
+func (s *Store) ListActivityTasks(ctx context.Context, id string) ([]*storage.ActivityTask, error) {
+	if err := s.before(ctx, "ListActivityTasks"); err != nil {
+		return nil, err
+	}
+	rows, err := s.Storage.ListActivityTasks(ctx, id)
+	return rows, s.after(ctx, "ListActivityTasks", err)
 }

@@ -469,7 +469,7 @@ func runCrashScenario(t *testing.T, factory replayAppFactory, crashAt int, after
 		injectionMu.Lock()
 		defer injectionMu.Unlock()
 		switch method {
-		case "AcquireLease", "ReserveHistory", "ReserveActivity", "ClaimActivityTask", "ClaimActivityTasks", "RenewActivityTask", "CompleteActivityTask", "ReleaseActivityTask", "CancelActivityAtYield", "CommitObservation", "SetHistoryValueIfNull", "ReserveTimer", "ReleaseLease", "FireTimer", "CloseInstance":
+		case "AcquireLease", "ReserveHistory", "ReserveActivity", "ClaimActivityTask", "ClaimActivityTasks", "RenewActivityTask", "CompleteActivityTask", "RetryActivityTask", "ReleaseActivityTask", "CancelActivityAtYield", "CommitObservation", "SetHistoryValueIfNull", "ReserveTimer", "ReleaseLease", "FireTimer", "CloseInstance":
 			writeIndex++
 		}
 		if !crashed && crashAt > 0 && writeIndex == crashAt {
@@ -502,7 +502,7 @@ func runCrashScenario(t *testing.T, factory replayAppFactory, crashAt int, after
 			}
 		}
 		setStoreClock(t, h, int64(4000+attempt*3000))
-		tasks, claimErr := fs.ClaimActivityTasks(h.app.ctx, "crash-pool", h.app.config.lease.TTL, 10, h.app.registeredActivityNames()...)
+		tasks, claimErr := fs.ClaimActivityTasks(h.app.ctx, "crash-pool", h.app.config.lease.TTL, 10, storage.TaskFilter{Names: h.app.registeredActivityNames()})
 		if claimErr != nil {
 			require.ErrorIs(t, claimErr, storage.ErrFenced)
 		} else {
@@ -627,7 +627,7 @@ func executionWrites(s *faultstore.Store) []string {
 	var writes []string
 	for _, method := range s.Calls() {
 		switch method {
-		case "AcquireLease", "ReleaseLease", "ReserveHistory", "ReserveActivity", "ClaimActivityTask", "ClaimActivityTasks", "RenewActivityTask", "CompleteActivityTask", "ReleaseActivityTask", "ReserveTimer", "RecordHistory", "SetHistoryValueIfNull", "CloseInstance", "UpdateInstanceActivity", "CommitObservation":
+		case "AcquireLease", "ReleaseLease", "ReserveHistory", "ReserveActivity", "ClaimActivityTask", "ClaimActivityTasks", "RenewActivityTask", "CompleteActivityTask", "RetryActivityTask", "ReleaseActivityTask", "ReserveTimer", "RecordHistory", "SetHistoryValueIfNull", "CloseInstance", "UpdateInstanceActivity", "CommitObservation":
 			writes = append(writes, method)
 		}
 	}

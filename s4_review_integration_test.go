@@ -40,7 +40,7 @@ func TestRunnableNotificationsAfterCommitPostgres(t *testing.T) {
 		InstanceID: "lease", TimerID: "pause", ActivityID: "pause", ExpiresAt: time.Now(),
 	})
 	require.NoError(t, err)
-	task, err := pg.ClaimActivityTask(h.app.ctx, "lease", "activity", "worker/task", time.Minute)
+	task, err := pg.ClaimActivityTask(h.app.ctx, "lease", "activity", "worker/task", time.Minute, nil)
 	require.NoError(t, err)
 	require.NotNil(t, task)
 	writes := map[string]func(context.Context) error{

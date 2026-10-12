@@ -12,6 +12,7 @@ import (
 
 	"github.com/CaliLuke/selvedge/internal/replay"
 	"github.com/CaliLuke/selvedge/internal/storage"
+	"github.com/CaliLuke/selvedge/retry"
 )
 
 func TestPendingAndReceiveAsyncAgree(t *testing.T) { testPendingAndReceiveAsyncAgree(t, createTestApp) }
@@ -273,8 +274,8 @@ func runDeliveryCrash(t *testing.T, factory replayAppFactory, scenario string, c
 	// Keep reservation-sourced fire values identical across crash runs.
 	WithClock(func() time.Time { return time.Unix(123, 0).UTC() })(h.app.config)
 	h.app.storage = fs
-	a := DefineActivity("A", func(context.Context, string) (string, error) { return "A", nil })
-	b := DefineActivity("B", func(context.Context, string) (string, error) { return "B", nil })
+	a := DefineActivity("A", func(context.Context, string) (string, error) { return "A", nil }, WithRetryPolicy[string, string](&retry.Policy{}))
+	b := DefineActivity("B", func(context.Context, string) (string, error) { return "B", nil }, WithRetryPolicy[string, string](&retry.Policy{}))
 	var observations []bool
 	var waits []replay.Wait
 	h.app.ctx = replay.WithTestYieldObserver(h.app.ctx, func(w replay.Wait) { waits = append(waits, w) })
@@ -288,7 +289,7 @@ func runDeliveryCrash(t *testing.T, factory replayAppFactory, scenario string, c
 			if err != nil {
 				return "", err
 			}
-			if _, err := fs.ClaimActivityTasks(ctx.Context(), "controlled-pool", time.Second, 10, "B"); err != nil {
+			if _, err := fs.ClaimActivityTasks(ctx.Context(), "controlled-pool", time.Second, 10, storage.TaskFilter{Names: []string{"B"}}); err != nil {
 				ctx.execCtx.Fail(err)
 				return "", err
 			}
@@ -331,7 +332,7 @@ func runDeliveryCrash(t *testing.T, factory replayAppFactory, scenario string, c
 	injected := false
 	inject := func(_ context.Context, method string) error {
 		switch method {
-		case "AcquireLease", "ReserveActivity", "ClaimActivityTasks", "ClaimActivityTask", "CompleteActivityTask", "ReleaseActivityTask", "ReleaseLease", "ReserveTimer", "FireTimer", "CommitObservation", "CloseInstance":
+		case "AcquireLease", "ReserveActivity", "ClaimActivityTasks", "ClaimActivityTask", "CompleteActivityTask", "RetryActivityTask", "ReleaseActivityTask", "ReleaseLease", "ReserveTimer", "FireTimer", "CommitObservation", "CloseInstance":
 			writes++
 		default:
 			return nil

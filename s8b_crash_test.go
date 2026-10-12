@@ -12,6 +12,7 @@ import (
 
 	"github.com/CaliLuke/selvedge/internal/replay"
 	"github.com/CaliLuke/selvedge/internal/storage"
+	"github.com/CaliLuke/selvedge/retry"
 )
 
 func TestReplayDeterministicAfterCrashAsync(t *testing.T) {
@@ -39,8 +40,8 @@ func runAsyncCrashScenario(t *testing.T, factory replayAppFactory, order string,
 	h.app.storage = fs
 	var waits []string
 	h.app.ctx = replay.WithTestYieldObserver(h.app.ctx, func(w replay.Wait) { waits = append(waits, w.Key) })
-	a := DefineActivity("A", func(context.Context, string) (string, error) { return "A", nil })
-	b := DefineActivity("B", func(context.Context, string) (string, error) { return "B", nil })
+	a := DefineActivity("A", func(context.Context, string) (string, error) { return "A", nil }, WithRetryPolicy[string, string](&retry.Policy{}))
+	b := DefineActivity("B", func(context.Context, string) (string, error) { return "B", nil }, WithRetryPolicy[string, string](&retry.Policy{}))
 	w := DefineWorkflow("async_crash", func(ctx *WorkflowContext, in string) (string, error) {
 		fa, err := a.ExecuteAsync(ctx, in)
 		if err != nil {
@@ -51,7 +52,7 @@ func runAsyncCrashScenario(t *testing.T, factory replayAppFactory, order string,
 			return "", err
 		}
 		if order != "cancel" {
-			_, e := fs.ClaimActivityTasks(ctx.Context(), "controlled-pool", time.Second, 10, "A", "B")
+			_, e := fs.ClaimActivityTasks(ctx.Context(), "controlled-pool", time.Second, 10, storage.TaskFilter{Names: []string{"A", "B"}})
 			if e != nil {
 				return "", e
 			}
@@ -74,7 +75,7 @@ func runAsyncCrashScenario(t *testing.T, factory replayAppFactory, order string,
 		mu.Lock()
 		defer mu.Unlock()
 		switch method {
-		case "AcquireLease", "ReserveHistory", "ReserveActivity", "ClaimActivityTask", "ClaimActivityTasks", "RenewActivityTask", "CompleteActivityTask", "ReleaseActivityTask", "CancelActivityAtYield", "CommitObservation", "SetHistoryValueIfNull", "ReserveTimer", "ReleaseLease", "FireTimer", "CloseInstance":
+		case "AcquireLease", "ReserveHistory", "ReserveActivity", "ClaimActivityTask", "ClaimActivityTasks", "RenewActivityTask", "CompleteActivityTask", "RetryActivityTask", "ReleaseActivityTask", "CancelActivityAtYield", "CommitObservation", "SetHistoryValueIfNull", "ReserveTimer", "ReleaseLease", "FireTimer", "CloseInstance":
 			writes++
 		default:
 			return nil

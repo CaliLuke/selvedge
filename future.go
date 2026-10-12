@@ -81,7 +81,7 @@ func (f *Future[O]) Get(ctx *WorkflowContext) (O, error) {
 			return f.outcome(ctx)
 		}
 		if !attempted {
-			task, err := ctx.execCtx.Storage().ClaimActivityTask(ctx.Context(), ctx.InstanceID(), f.key, ctx.app.config.workerID+"/"+uuid.NewString(), ctx.app.config.lease.TTL)
+			task, err := ctx.execCtx.Storage().ClaimActivityTask(ctx.Context(), ctx.InstanceID(), f.key, ctx.app.config.workerID+"/"+uuid.NewString(), ctx.app.config.lease.TTL, ctx.app.config.activityQueues)
 			if err != nil {
 				ctx.execCtx.Fail(err)
 				return zero, err

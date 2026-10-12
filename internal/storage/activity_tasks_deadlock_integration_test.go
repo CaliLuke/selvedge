@@ -19,7 +19,7 @@ func TestPostgresActivityCompleteConcurrentClose(t *testing.T) {
 	defer cancel()
 	_, err := s.ReserveActivity(ctx, f, 1, "#1", "activity:A", task)
 	require.NoError(t, err)
-	claimed, err := s.ClaimActivityTask(ctx, "tasks", "#1", "worker", time.Minute)
+	claimed, err := s.ClaimActivityTask(ctx, "tasks", "#1", "worker", time.Minute, nil)
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
 

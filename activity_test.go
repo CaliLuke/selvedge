@@ -3,7 +3,6 @@ package selvedge
 import (
 	"context"
 	"errors"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -68,8 +67,8 @@ func TestDefineActivity(t *testing.T) {
 			)
 
 			assert.Equal(t, tt.activityName, activity.Name())
-			assert.Equal(t, tt.wantHasRetry, activity.retryPolicy != nil)
-			assert.Equal(t, tt.wantHasTimeout, activity.timeout > 0)
+			assert.Equal(t, tt.wantHasRetry, activity.options.RetryPolicy != nil)
+			assert.Equal(t, tt.wantHasTimeout, activity.options.StartToCloseTimeout > 0)
 		})
 	}
 }
@@ -202,139 +201,6 @@ func TestActivity_Execute_WithActivityID(t *testing.T) {
 			})
 		})
 	}
-}
-
-func TestActivity_executeWithRetry_SuccessOnFirstTry(t *testing.T) {
-	var attempts int32
-	activity := DefineActivity("test",
-		func(ctx context.Context, input string) (string, error) {
-			atomic.AddInt32(&attempts, 1)
-			return "success", nil
-		},
-		WithRetryPolicy[string, string](retry.Fixed(3, time.Millisecond)),
-	)
-
-	ctx := context.Background()
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow")
-
-	result, err := activity.executeWithRetry(wfCtx.Context(), ActivityInfo{}, nil, "input")
-
-	require.NoError(t, err)
-	assert.Equal(t, "success", result)
-	assert.Equal(t, int32(1), atomic.LoadInt32(&attempts))
-}
-
-func TestActivity_executeWithRetry_SuccessAfterRetries(t *testing.T) {
-	var attempts int32
-	activity := DefineActivity("test",
-		func(ctx context.Context, input string) (string, error) {
-			count := atomic.AddInt32(&attempts, 1)
-			if count < 3 {
-				return "", errors.New("transient error")
-			}
-			return "success", nil
-		},
-		WithRetryPolicy[string, string](retry.Fixed(5, time.Millisecond)),
-	)
-
-	ctx := context.Background()
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow")
-
-	result, err := activity.executeWithRetry(wfCtx.Context(), ActivityInfo{}, nil, "input")
-
-	require.NoError(t, err)
-	assert.Equal(t, "success", result)
-	assert.Equal(t, int32(3), atomic.LoadInt32(&attempts))
-}
-
-func TestActivity_executeWithRetry_ExhaustedRetries(t *testing.T) {
-	var attempts int32
-	activity := DefineActivity("test",
-		func(ctx context.Context, input string) (string, error) {
-			atomic.AddInt32(&attempts, 1)
-			return "", errors.New("persistent error")
-		},
-		WithRetryPolicy[string, string](retry.Fixed(3, time.Millisecond)),
-	)
-
-	ctx := context.Background()
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow")
-
-	result, err := activity.executeWithRetry(wfCtx.Context(), ActivityInfo{}, nil, "input")
-
-	require.Error(t, err)
-	assert.Empty(t, result)
-	assert.Equal(t, int32(3), atomic.LoadInt32(&attempts))
-
-	var retryErr *RetryExhaustedError
-	require.True(t, errors.As(err, &retryErr))
-	assert.Equal(t, "test", retryErr.ActivityName)
-	assert.Equal(t, 3, retryErr.Attempts)
-}
-
-func TestActivity_executeWithRetry_TerminalErrorNoRetry(t *testing.T) {
-	var attempts int32
-	activity := DefineActivity("test",
-		func(ctx context.Context, input string) (string, error) {
-			atomic.AddInt32(&attempts, 1)
-			return "", NewTerminalError(errors.New("terminal"))
-		},
-		WithRetryPolicy[string, string](retry.Fixed(5, time.Millisecond)),
-	)
-
-	ctx := context.Background()
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow")
-
-	result, err := activity.executeWithRetry(wfCtx.Context(), ActivityInfo{}, nil, "input")
-
-	require.Error(t, err)
-	assert.Empty(t, result)
-	assert.Equal(t, int32(1), atomic.LoadInt32(&attempts), "should not retry terminal error")
-	assert.True(t, IsTerminalError(err))
-}
-
-func TestActivity_executeWithRetry_ContextCancellation(t *testing.T) {
-	activity := DefineActivity("test",
-		func(ctx context.Context, input string) (string, error) {
-			return "", errors.New("error")
-		},
-		WithRetryPolicy[string, string](retry.Fixed(100, 100*time.Millisecond)),
-	)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow")
-
-	go func() {
-		time.Sleep(50 * time.Millisecond)
-		cancel()
-	}()
-
-	_, err := activity.executeWithRetry(wfCtx.Context(), ActivityInfo{}, nil, "input")
-
-	require.Error(t, err)
-	assert.Equal(t, context.Canceled, err)
-}
-
-func TestActivity_executeWithRetry_Timeout(t *testing.T) {
-	activity := DefineActivity("test",
-		func(ctx context.Context, input string) (string, error) {
-			select {
-			case <-time.After(1 * time.Second):
-				return "done", nil
-			case <-ctx.Done():
-				return "", ctx.Err()
-			}
-		},
-		WithTimeout[string, string](10*time.Millisecond),
-		WithRetryPolicy[string, string](retry.Fixed(1, time.Millisecond)),
-	)
-
-	ctx := context.Background()
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow")
-
-	_, err := activity.executeWithRetry(wfCtx.Context(), ActivityInfo{}, nil, "input")
-
-	require.Error(t, err)
 }
 
 func TestWithActivityID_Option(t *testing.T) {

@@ -261,11 +261,47 @@ Activities start from durable task rows and run without a database transaction a
 
 Every App runs activity workers. Register each activity with `RegisterActivity(app, activity)` before `App.Start` so workers can recover pending tasks after a restart. Execute also registers its definition with the issuing App. A different definition with the same name returns `ErrActivityNameConflict`. Reusing the same definition pointer is allowed. Tasks remain queued if no worker registers their activity name.
 
-`WithMaxConcurrentActivities` limits background attempts (default 10). `WithActivityPollInterval` sets the base polling interval (default one second), with adaptive backoff during idle periods. New tasks wake local workers and PostgreSQL listeners. Activity claims use the workflow lease configuration for expiry and renewal. A lost claim cancels the attempt context. Shutdown releases interrupted claims for another worker. Activities must honor context cancellation for prompt shutdown. Retries remain in memory within one claim until S15.
+`WithMaxConcurrentActivities` limits background attempts (default 10). `WithActivityPollInterval` sets the base polling interval (default one second), with adaptive backoff during idle periods. New tasks wake local workers and PostgreSQL listeners. Activity claims use the workflow lease configuration for expiry and renewal. A lost claim cancels the attempt context. Shutdown releases interrupted claims for another worker. Activities must honor context cancellation for prompt shutdown.
+
+## Activity retries, timeouts and heartbeats
+
+Each task records its resolved `ActivityOptions` when it is reserved. Use
+`WithActivityDefaults` on the definition and `WithActivityOptions` on an
+invocation. Non-zero invocation fields override the defaults field by field.
+`WithRetryPolicy` and `WithTimeout` remain shorthands. Existing tasks keep their
+recorded options after code changes, including replay and another worker's
+retries. Definition-level `NonRetryableErrors` are matched by the worker running
+the attempt and are not recorded; per-call `NonRetryableErrors` are rejected.
+
+A claim runs one attempt. A retryable failure returns the task to the durable
+queue with a failure count and a not-before time. Backoff survives a restart and
+does not hold a workflow coroutine or worker slot. A lapsed claim counts as a
+failure and can be reclaimed immediately, without backoff. Success, non-retryable
+failure, or retry exhaustion records the single final history value. Cancellation
+and workflow closure stop tasks even during backoff.
+
+`GetActivityInfo(ctx)` includes a copy of the recorded options. Its `Attempt`
+counts claims, starting at one. Graceful release consumes an attempt number but
+not the retry budget, so the number can exceed `MaxAttempts`. Retry and failure
+hooks report that same claim number and fire only after their durable write.
+`ListActivityTasks(ctx, app, instanceID)` returns tasks in issue order, including
+recorded options, claim and failure counts, and the last retry error.
+
+`WithActivityQueues(queues...)` restricts both background workers and inline Get
+attempts to those queues. Omitting it serves every queue; an empty list serves
+none. An empty task queue name denotes the default queue. Workflow and child task
+queues are not supported.
+
+`StartToCloseTimeout` currently cancels the local attempt context, as `WithTimeout`
+did. `ScheduleToStartTimeout` and `HeartbeatTimeout` are recorded but not yet
+enforced. A crashed claim that exhausts its retry budget is no longer claimable;
+its final failure recording follows with the timeout sweeper. Store-enforced
+deadlines and the heartbeat API follow separately.
+Pre-S15 databases must be recreated because the activity task schema changed.
 
 Workflow code runs on one coroutine per execution. A pending `Sleep` or `Receive` yields to the dispatcher without returning. The dispatcher closes that coroutine, runs its defers, and releases the lease. A later dispatch replays from the beginning.
 
-Workflow defers must not block: the dispatcher waits for them without a time limit. During coroutine closure, the runtime rejects commands from defers without hooks or writes. Workflow panics and unexpected `runtime.Goexit` calls fail the instance with `*WorkflowPanicError`, including the value and stack. An activity function panic also fails the instance with `*WorkflowPanicError` and is not retried. S15 owns activity retries and can revisit this behavior.
+Workflow defers must not block: the dispatcher waits for them without a time limit. During coroutine closure, the runtime rejects commands from defers without hooks or writes. Workflow panics and unexpected `runtime.Goexit` calls fail the instance with `*WorkflowPanicError`, including the value and stack. An activity function panic also fails the instance with `*WorkflowPanicError` and is not retried.
 
 Workflow code must issue workflow commands serially. Commands inside activity functions and overlapping commands from user goroutines fail the run with nondeterminism. The runtime also rejects commands while the workflow coroutine is not running. If a command reaches a blocking yield on a foreign goroutine, Yield returns a sticky nondeterminism error without a dispatcher handoff.
 

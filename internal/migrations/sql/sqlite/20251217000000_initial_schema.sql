@@ -120,16 +120,24 @@ CREATE TABLE IF NOT EXISTS workflow_activity_tasks (
     input_data TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'queued',
     attempts INTEGER NOT NULL DEFAULT 0,
+    queue TEXT NOT NULL DEFAULT '',
+    options TEXT NOT NULL DEFAULT '{}',
+    max_attempts INTEGER NOT NULL DEFAULT 0,
+    failures INTEGER NOT NULL DEFAULT 0,
+    not_before_ms BIGINT NOT NULL DEFAULT 0,
+    last_error TEXT NULL,
     claim_owner TEXT NULL,
     claim_epoch BIGINT NOT NULL DEFAULT 0,
     claim_expires_ms BIGINT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     CONSTRAINT unique_activity_task UNIQUE (instance_id, activity_id),
+    CONSTRAINT task_counts_valid CHECK (attempts >= 0 AND failures >= 0 AND max_attempts >= 0 AND failures <= attempts),
     CONSTRAINT valid_task_status CHECK (status IN ('queued','running','completed','cancelled')),
     FOREIGN KEY (instance_id, activity_id) REFERENCES workflow_history(instance_id, activity_id) ON DELETE CASCADE
 );
-CREATE INDEX IF NOT EXISTS idx_activity_tasks_claim ON workflow_activity_tasks(status, claim_expires_ms, activity_name);
+CREATE INDEX IF NOT EXISTS idx_activity_tasks_claim ON workflow_activity_tasks(status, queue, activity_name, not_before_ms);
+CREATE INDEX IF NOT EXISTS idx_activity_tasks_expiry ON workflow_activity_tasks(status, claim_expires_ms);
 
 -- System locks (for coordinating background tasks across pods)
 CREATE TABLE IF NOT EXISTS system_locks (

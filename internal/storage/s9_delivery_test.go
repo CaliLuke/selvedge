@@ -14,7 +14,7 @@ func deliveryFixture(t *testing.T, factory historyFactory) (Storage, *Fence, int
 	ctx := context.Background()
 	_, err := s.ReserveActivity(ctx, f, 1, "#1", "activity:A", task)
 	require.NoError(t, err)
-	claim, err := s.ClaimActivityTask(ctx, "tasks", "#1", "worker", time.Hour)
+	claim, err := s.ClaimActivityTask(ctx, "tasks", "#1", "worker", time.Hour, nil)
 	require.NoError(t, err)
 	require.NoError(t, s.CompleteActivityTask(ctx, claim.Claim(), HistoryActivityCompleted, []byte(`1`)))
 	id, err := s.AppendSignal(ctx, "tasks", "c", []byte(`2`))

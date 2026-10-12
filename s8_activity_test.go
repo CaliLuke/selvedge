@@ -17,7 +17,7 @@ func (h *typedReplayHarness) RunTasks(id string, names ...string) error {
 	if len(names) == 0 {
 		names = h.app.registeredActivityNames()
 	}
-	tasks, err := h.app.storage.ClaimActivityTasks(h.app.ctx, "harness-pool", h.app.config.lease.TTL, 100, names...)
+	tasks, err := h.app.storage.ClaimActivityTasks(h.app.ctx, "harness-pool", h.app.config.lease.TTL, 100, storage.TaskFilter{Names: names})
 	if err != nil {
 		return err
 	}
@@ -41,7 +41,7 @@ type harnessTaskClaim struct {
 }
 
 func (h *typedReplayHarness) ClaimTask(id, key string) (*harnessTaskClaim, error) {
-	task, err := h.app.storage.ClaimActivityTask(h.app.ctx, id, key, "harness", time.Second)
+	task, err := h.app.storage.ClaimActivityTask(h.app.ctx, id, key, "harness", time.Second, nil)
 	if err != nil || task == nil {
 		return nil, err
 	}
@@ -325,7 +325,7 @@ func testActivityShutdownReleasesClaim(t *testing.T, factory replayAppFactory) {
 		return "recovered", nil
 	})
 	require.NoError(t, RegisterActivity(second, b))
-	reclaimed, err := second.storage.ClaimActivityTask(second.ctx, id, "#1", "second", time.Second)
+	reclaimed, err := second.storage.ClaimActivityTask(second.ctx, id, "#1", "second", time.Second, nil)
 	require.NoError(t, err)
 	require.NotNil(t, reclaimed)
 	require.NoError(t, second.runActivityTask(second.ctx, second.storage, reclaimed, nil))

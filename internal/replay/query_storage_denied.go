@@ -117,15 +117,15 @@ func (s *queryStorage) CancelActivityAtYield(context.Context, *storage.Fence, st
 	return nil, s.stop()
 }
 
-func (s *queryStorage) ClaimActivityTasks(context.Context, string, time.Duration, int, ...string) ([]*storage.ActivityTask, error) {
+func (s *queryStorage) ClaimActivityTasks(context.Context, string, time.Duration, int, storage.TaskFilter) ([]*storage.ActivityTask, error) {
 	return nil, s.stop()
 }
 
-func (s *queryStorage) ClaimActivityTask(context.Context, string, string, string, time.Duration) (*storage.ActivityTask, error) {
+func (s *queryStorage) ClaimActivityTask(context.Context, string, string, string, time.Duration, []string) (*storage.ActivityTask, error) {
 	return nil, s.stop()
 }
 
-func (s *queryStorage) RenewActivityTask(context.Context, storage.TaskClaim, time.Duration) error {
+func (s *queryStorage) RenewActivityTask(context.Context, storage.TaskClaim, time.Duration, bool) error {
 	return s.stop()
 }
 
@@ -179,4 +179,14 @@ func (s *queryStorage) ReleaseSystemLock(ctx context.Context, lockName, workerID
 
 func (s *queryStorage) CleanupExpiredSystemLocks(ctx context.Context) error {
 	return s.stop()
+}
+
+func (s *queryStorage) RetryActivityTask(context.Context, storage.TaskClaim, []byte, time.Duration) error {
+	return s.stop()
+}
+func (s *queryStorage) NextActivityDue(context.Context, storage.TaskFilter) (time.Duration, bool, error) {
+	return 0, false, s.stop()
+}
+func (s *queryStorage) ListActivityTasks(context.Context, string) ([]*storage.ActivityTask, error) {
+	return nil, s.stop()
 }

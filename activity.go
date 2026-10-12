@@ -22,8 +22,7 @@ type Activity[I, O any] struct {
 	fn   func(ctx context.Context, input I) (O, error)
 
 	// Configuration
-	retryPolicy *retry.Policy
-	timeout     time.Duration
+	options ActivityOptions
 }
 
 // ActivityOption configures an activity.
@@ -53,14 +52,14 @@ func (a *Activity[I, O]) Name() string {
 // WithRetryPolicy sets the retry policy for the activity.
 func WithRetryPolicy[I, O any](policy *retry.Policy) ActivityOption[I, O] {
 	return func(a *Activity[I, O]) {
-		a.retryPolicy = policy
+		a.options.RetryPolicy = policy
 	}
 }
 
 // WithTimeout sets the timeout for each activity execution attempt.
 func WithTimeout[I, O any](d time.Duration) ActivityOption[I, O] {
 	return func(a *Activity[I, O]) {
-		a.timeout = d
+		a.options.StartToCloseTimeout = d
 	}
 }
 
@@ -87,6 +86,16 @@ func (a *Activity[I, O]) ExecuteAsync(ctx *WorkflowContext, input I, opts ...Exe
 	if options.err != nil {
 		ctx.execCtx.Fail(options.err)
 		return nil, options.err
+	}
+	resolved, err := resolveActivityOptions(a.options, options.activity)
+	if err != nil {
+		ctx.execCtx.Fail(err)
+		return nil, err
+	}
+	recordedOptions, err := json.Marshal(resolved)
+	if err != nil {
+		ctx.execCtx.Fail(err)
+		return nil, err
 	}
 	payload, err := json.Marshal(input)
 	if err != nil {
@@ -135,130 +144,12 @@ func (a *Activity[I, O]) ExecuteAsync(ctx *WorkflowContext, input I, opts ...Exe
 			})
 		}
 	} else if event == nil {
-		if err := cmd.ReserveActivity(ctx.Context(), &storage.ActivityTask{InstanceID: ctx.InstanceID(), ActivityName: a.name, InputData: payload}); err != nil {
+		if err := cmd.ReserveActivity(ctx.Context(), &storage.ActivityTask{InstanceID: ctx.InstanceID(), ActivityName: a.name, InputData: payload, Queue: resolved.Queue, Options: recordedOptions, MaxAttempts: resolved.RetryPolicy.MaxAttempts}); err != nil {
 			return nil, err
 		}
 		ctx.app.wakeActivityWorkers()
 	}
 	return future, nil
-}
-
-// executeWithRetry executes the activity with retry logic.
-func (a *Activity[I, O]) executeWithRetry(ctx context.Context, info ActivityInfo, h hooks.WorkflowHooks, input I) (O, error) {
-	policy := a.retryPolicy
-	if policy == nil {
-		policy = retry.DefaultPolicy()
-	}
-
-	var lastErr error
-	attempts := 0
-	startTime := time.Now()
-
-	for {
-		if err := ctx.Err(); err != nil {
-			var zero O
-			return zero, err
-		}
-		attempts++
-
-		// Create execution context with timeout
-		execCtx := ctx
-		var cancel context.CancelFunc
-		if a.timeout > 0 {
-			execCtx, cancel = context.WithTimeout(execCtx, a.timeout)
-		}
-
-		// Execute the activity
-		result, err := a.invoke(execCtx, input)
-
-		if cancel != nil {
-			cancel()
-		}
-
-		if err == nil {
-			// Call OnActivityComplete hook
-			if h != nil {
-				h.OnActivityComplete(ctx, hooks.ActivityCompleteInfo{
-					InstanceID:   info.InstanceID,
-					WorkflowName: info.WorkflowName,
-					ActivityID:   info.ActivityID,
-					ActivityName: a.name,
-					OutputData:   result,
-					Duration:     time.Since(startTime),
-					IsReplay:     false,
-				})
-			}
-			return result, nil
-		}
-
-		lastErr = err
-
-		// Check if error is terminal (should not retry)
-		if IsTerminalError(err) || nonRetryableApplication(err) || isActivityPanic(err) {
-			// Call OnActivityFailed hook
-			if h != nil {
-				h.OnActivityFailed(ctx, hooks.ActivityFailedInfo{
-					InstanceID:   info.InstanceID,
-					WorkflowName: info.WorkflowName,
-					ActivityID:   info.ActivityID,
-					ActivityName: a.name,
-					Error:        err,
-					Duration:     time.Since(startTime),
-					Attempt:      attempts,
-				})
-			}
-			var zero O
-			return zero, err
-		}
-
-		// Check if we should retry
-		if !policy.ShouldRetry(attempts, err) {
-			retryErr := &RetryExhaustedError{
-				ActivityName: a.name,
-				Attempts:     attempts,
-				LastErr:      lastErr,
-			}
-			// Call OnActivityFailed hook
-			if h != nil {
-				h.OnActivityFailed(ctx, hooks.ActivityFailedInfo{
-					InstanceID:   info.InstanceID,
-					WorkflowName: info.WorkflowName,
-					ActivityID:   info.ActivityID,
-					ActivityName: a.name,
-					Error:        retryErr,
-					Duration:     time.Since(startTime),
-					Attempt:      attempts,
-				})
-			}
-			var zero O
-			return zero, retryErr
-		}
-
-		// Wait before retrying
-		delay := policy.GetDelay(attempts)
-
-		// Call OnActivityRetry hook
-		if h != nil {
-			h.OnActivityRetry(ctx, hooks.ActivityRetryInfo{
-				InstanceID:   info.InstanceID,
-				WorkflowName: info.WorkflowName,
-				ActivityID:   info.ActivityID,
-				ActivityName: a.name,
-				Attempt:      attempts,
-				MaxAttempts:  policy.MaxAttempts,
-				NextDelay:    delay,
-				Error:        lastErr,
-			})
-		}
-
-		select {
-		case <-time.After(delay):
-			// Continue to next attempt
-		case <-ctx.Done():
-			var zero O
-			return zero, ctx.Err()
-		}
-	}
 }
 
 // ExecuteOption configures activity execution.
@@ -267,6 +158,7 @@ type ExecuteOption func(*executeOptions)
 type executeOptions struct {
 	err        error
 	activityID string
+	activity   ActivityOptions
 }
 
 // WithActivityID specifies a manual activity ID.

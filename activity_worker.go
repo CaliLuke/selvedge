@@ -12,12 +12,14 @@ import (
 
 	"github.com/CaliLuke/selvedge/hooks"
 	"github.com/CaliLuke/selvedge/internal/storage"
+	"github.com/CaliLuke/selvedge/retry"
 )
 
 // ActivityInfo is immutable metadata for the current durable activity claim.
 type ActivityInfo struct {
 	InstanceID, WorkflowName, ActivityID, ActivityName string
 	Attempt                                            int
+	Options                                            ActivityOptions
 }
 type activityInfoKey struct{}
 
@@ -27,6 +29,7 @@ func GetActivityInfo(ctx context.Context) *ActivityInfo {
 	if !ok {
 		return nil
 	}
+	info.Options = cloneActivityOptions(info.Options)
 	return &info
 }
 
@@ -35,15 +38,29 @@ var ErrActivityNameConflict = errors.New("activity name already registered with 
 var errClaimLost = errors.New("activity claim lost")
 
 type activityDefinition interface {
-	run(context.Context, ActivityInfo, hooks.WorkflowHooks, []byte) (any, error)
+	run(context.Context, []byte) (any, error)
+	nonRetryable(error) bool
 }
 
-func (a *Activity[I, O]) run(ctx context.Context, info ActivityInfo, h hooks.WorkflowHooks, data []byte) (any, error) {
+func (a *Activity[I, O]) run(ctx context.Context, data []byte) (any, error) {
 	var input I
 	if err := json.Unmarshal(data, &input); err != nil {
-		return nil, fmt.Errorf("decode activity input: %w", err)
+		return nil, NewTerminalError(fmt.Errorf("decode activity input: %w", err))
 	}
-	return a.executeWithRetry(ctx, info, h, input)
+	return a.invoke(ctx, input)
+}
+func (a *Activity[I, O]) nonRetryable(err error) bool {
+	if IsTerminalError(err) || nonRetryableApplication(err) || isActivityPanic(err) {
+		return true
+	}
+	if a.options.RetryPolicy != nil {
+		for _, target := range a.options.RetryPolicy.NonRetryableErrors {
+			if errors.Is(err, target) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // RegisterActivity makes an activity available for recovered tasks on this App.
@@ -101,7 +118,16 @@ func (a *App) runActivityTask(parent context.Context, s storage.Storage, task *s
 	if inst == nil {
 		return storage.ErrInstanceNotFound
 	}
-	info := ActivityInfo{InstanceID: task.InstanceID, WorkflowName: inst.WorkflowName, ActivityID: task.ActivityID, ActivityName: task.ActivityName, Attempt: task.Attempts}
+	var options ActivityOptions
+	if err := json.Unmarshal(task.Options, &options); err != nil {
+		return fmt.Errorf("decode recorded activity options: %w", err)
+	}
+	// Storage-level callers may reserve an empty policy. Its budget remains the row's budget.
+	if options.RetryPolicy == nil {
+		options.RetryPolicy = &retry.Policy{InitialInterval: 100 * time.Millisecond, MaxInterval: 10 * time.Second, Multiplier: 1}
+	}
+	options.RetryPolicy.MaxAttempts = task.MaxAttempts
+	info := ActivityInfo{InstanceID: task.InstanceID, WorkflowName: inst.WorkflowName, ActivityID: task.ActivityID, ActivityName: task.ActivityName, Attempt: task.Attempts, Options: cloneActivityOptions(options)}
 	ctx, cancel := context.WithCancelCause(context.WithValue(parent, activityInfoKey{}, info))
 	done := make(chan struct{})
 	renewCtx, stopRenew := context.WithCancel(ctx)
@@ -117,7 +143,14 @@ func (a *App) runActivityTask(parent context.Context, s storage.Storage, task *s
 	}
 	defer stop()
 
-	result, runErr := definition.run(ctx, info, a.hooks, task.InputData)
+	started := time.Now()
+	attemptCtx := ctx
+	timeoutCancel := func() {}
+	if options.StartToCloseTimeout > 0 {
+		attemptCtx, timeoutCancel = context.WithTimeout(ctx, options.StartToCloseTimeout)
+	}
+	result, runErr := definition.run(attemptCtx, task.InputData)
+	timeoutCancel()
 	if check != nil {
 		if err := check(); err != nil {
 			cancel(err)
@@ -128,29 +161,60 @@ func (a *App) runActivityTask(parent context.Context, s storage.Storage, task *s
 	}
 	var data []byte
 	event := storage.HistoryActivityCompleted
-	if runErr != nil {
-		event = storage.HistoryActivityFailed
-		data = encodeError(runErr)
-	} else {
+	terminal := definition.nonRetryable(runErr)
+	if runErr == nil {
 		data, err = json.Marshal(result)
 		if err != nil {
-			event = storage.HistoryActivityFailed
-			data = encodeError(fmt.Errorf("serialize activity result: %w", err))
+			runErr = fmt.Errorf("serialize activity result: %w", err)
+			terminal = true
 		}
 	}
-	// Join renewal before completion so it cannot mistake our completed row for claim loss.
+	shouldRetry := false
+	delay := time.Duration(0)
+	if runErr != nil {
+		event = storage.HistoryActivityFailed
+		if !terminal {
+			if task.MaxAttempts > 0 && task.Failures+1 >= task.MaxAttempts {
+				runErr = &RetryExhaustedError{ActivityName: task.ActivityName, Attempts: task.Failures + 1, LastErr: runErr}
+			} else {
+				shouldRetry = true
+				delay = options.RetryPolicy.GetDelay(task.Failures + 1)
+			}
+		}
+		data = encodeError(runErr)
+	}
+	// Join renewal before the terminal write or requeue so our own commit is not mistaken for claim loss.
 	stop()
 	if cause := context.Cause(ctx); cause != nil {
 		return cause
 	}
-	err = s.CompleteActivityTask(parent, task.Claim(), event, data)
+	if shouldRetry {
+		err = s.RetryActivityTask(parent, task.Claim(), data, delay)
+	} else {
+		err = s.CompleteActivityTask(parent, task.Claim(), event, data)
+	}
 	if errors.Is(err, storage.ErrFenced) {
-		slog.Debug("activity completion fenced", "instance_id", task.InstanceID, "activity_id", task.ActivityID)
+		cancel(errClaimLost)
 	}
 	if err == nil {
 		completed = true
-		a.wakeDispatcher()
+		if shouldRetry {
+			a.wakeActivityWorkers()
+			if a.hooks != nil {
+				a.hooks.OnActivityRetry(ctx, hooks.ActivityRetryInfo{InstanceID: info.InstanceID, WorkflowName: info.WorkflowName, ActivityID: info.ActivityID, ActivityName: info.ActivityName, Attempt: info.Attempt, MaxAttempts: task.MaxAttempts, NextDelay: delay, Error: runErr})
+			}
+		} else {
+			a.wakeDispatcher()
+			if a.hooks != nil {
+				if runErr != nil {
+					a.hooks.OnActivityFailed(ctx, hooks.ActivityFailedInfo{InstanceID: info.InstanceID, WorkflowName: info.WorkflowName, ActivityID: info.ActivityID, ActivityName: info.ActivityName, Attempt: info.Attempt, Duration: time.Since(started), Error: runErr})
+				} else {
+					a.hooks.OnActivityComplete(ctx, hooks.ActivityCompleteInfo{InstanceID: info.InstanceID, WorkflowName: info.WorkflowName, ActivityID: info.ActivityID, ActivityName: info.ActivityName, OutputData: result, Duration: time.Since(started)})
+				}
+			}
+		}
 	}
+
 	return err
 }
 func (a *App) renewActivityClaim(ctx context.Context, cancel context.CancelCauseFunc, s storage.Storage, claim storage.TaskClaim, check func() error, done chan<- struct{}) {
@@ -168,7 +232,7 @@ func (a *App) renewActivityClaim(ctx context.Context, cancel context.CancelCause
 					return
 				}
 			}
-			if err := s.RenewActivityTask(ctx, claim, a.config.lease.TTL); err != nil {
+			if err := s.RenewActivityTask(ctx, claim, a.config.lease.TTL, true); err != nil {
 				if ctx.Err() != nil {
 					return
 				}
@@ -193,6 +257,19 @@ func (a *App) runActivityWorkers() {
 			empty = 0
 		}
 		delay := cappedPollDelay(a.config.activityPollInterval, empty, a.config.maxPollInterval)
+		if count == 0 {
+			due, ok, err := a.storage.NextActivityDue(a.ctx, storage.TaskFilter{Names: a.registeredActivityNames(), Queues: a.config.activityQueues})
+			if err == nil && ok && due < delay {
+				if due > 0 {
+					delay = due
+				} else if a.activitySem.TryAcquire(1) {
+					// Recheck immediately if the task became due after the empty claim.
+					// A full pool instead waits for an attempt's completion wake.
+					a.activitySem.Release(1)
+					delay = 0
+				}
+			}
+		}
 		timer := time.NewTimer(delay)
 		select {
 		case <-a.ctx.Done():
@@ -210,7 +287,7 @@ func (a *App) dispatchActivityTasks() (int, error) {
 	names := a.registeredActivityNames()
 	count := 0
 	for a.ctx.Err() == nil && a.activitySem.TryAcquire(1) {
-		tasks, err := a.storage.ClaimActivityTasks(a.ctx, a.config.workerID+"/"+uuid.NewString(), a.config.lease.TTL, 1, names...)
+		tasks, err := a.storage.ClaimActivityTasks(a.ctx, a.config.workerID+"/"+uuid.NewString(), a.config.lease.TTL, 1, storage.TaskFilter{Names: names, Queues: a.config.activityQueues})
 		if err != nil || len(tasks) == 0 {
 			a.activitySem.Release(1)
 			return count, err

@@ -20,7 +20,7 @@ func testCommitObservationScopeCancelAtomic(t *testing.T, factory historyFactory
 	require.NoError(t, err)
 	_, err = s.ReserveActivity(ctx, f, 3, "#3", "activity:A", task)
 	require.NoError(t, err)
-	claim, err := s.ClaimActivityTask(ctx, "tasks", "#3", "worker", time.Hour)
+	claim, err := s.ClaimActivityTask(ctx, "tasks", "#3", "worker", time.Hour, nil)
 	require.NoError(t, err)
 	require.NoError(t, s.CompleteActivityTask(ctx, claim.Claim(), HistoryActivityCompleted, []byte(`42`)))
 	_, err = s.ReserveTimer(ctx, f, 4, &TimerSubscription{InstanceID: "tasks", TimerID: "#4", ActivityID: "#4", ExpiresAt: time.Now().Add(time.Hour)})
