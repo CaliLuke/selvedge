@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/CaliLuke/selvedge/internal/storage"
 )
 
@@ -24,13 +26,7 @@ func TestLeaderElection_SingleWorker(t *testing.T) {
 	}
 	defer func() { _ = app.Shutdown(ctx) }()
 
-	// Wait for leader election to run
-	time.Sleep(100 * time.Millisecond)
-
-	// Single worker should become leader
-	if !app.isLeader.Load() {
-		t.Error("expected single worker to become leader")
-	}
+	require.Eventually(t, app.isLeader.Load, 5*time.Second, 10*time.Millisecond, "expected single worker to become leader")
 }
 
 func TestLeaderElection_MultipleWorkers(t *testing.T) {
@@ -43,6 +39,11 @@ func TestLeaderElection_MultipleWorkers(t *testing.T) {
 	)
 	defer cleanup()
 
+	ctx := context.Background()
+	if err := app1.Start(ctx); err != nil {
+		t.Fatalf("failed to start app1: %v", err)
+	}
+
 	// Get the database path from app1's storage
 	sqliteStorage, ok := app1.storage.(*storage.SQLiteStorage)
 	if !ok {
@@ -51,17 +52,7 @@ func TestLeaderElection_MultipleWorkers(t *testing.T) {
 	// We can't easily get the path, so let's use a different approach
 	// Create second app with same database by using the test helper properly
 
-	ctx := context.Background()
-	if err := app1.Start(ctx); err != nil {
-		t.Fatalf("failed to start app1: %v", err)
-	}
-
-	// Wait for app1 to become leader
-	time.Sleep(100 * time.Millisecond)
-
-	if !app1.isLeader.Load() {
-		t.Error("expected app1 to become leader")
-	}
+	require.Eventually(t, app1.isLeader.Load, 5*time.Second, 10*time.Millisecond, "expected app1 to become leader")
 
 	// Clean up - need to reference sqliteStorage to avoid unused variable error
 	_ = sqliteStorage
@@ -85,13 +76,7 @@ func TestLeaderElection_LeadershipState(t *testing.T) {
 		t.Fatalf("failed to start app: %v", err)
 	}
 
-	// Wait for leader election
-	time.Sleep(100 * time.Millisecond)
-
-	// Should be leader now
-	if !app.isLeader.Load() {
-		t.Error("expected isLeader=true after leader election")
-	}
+	require.Eventually(t, app.isLeader.Load, 5*time.Second, 10*time.Millisecond, "expected isLeader=true after leader election")
 
 	// Shutdown
 	if err := app.Shutdown(ctx); err != nil {
@@ -118,17 +103,11 @@ func TestLeaderElection_LeaderTasksRunning(t *testing.T) {
 	}
 	defer func() { _ = app.Shutdown(ctx) }()
 
-	// Wait for leader election
-	time.Sleep(100 * time.Millisecond)
-
-	// Check that leader tasks are running
-	app.leaderMu.Lock()
-	tasksRunning := app.leaderTasksRunning
-	app.leaderMu.Unlock()
-
-	if !tasksRunning {
-		t.Error("expected leaderTasksRunning=true after becoming leader")
-	}
+	require.Eventually(t, func() bool {
+		app.leaderMu.Lock()
+		defer app.leaderMu.Unlock()
+		return app.leaderTasksRunning
+	}, 5*time.Second, 10*time.Millisecond, "expected leader tasks to start")
 }
 
 // TestLeaderElection_PostShutdownTakeover verifies that after a clean
@@ -176,11 +155,8 @@ func TestLeaderElection_PostShutdownTakeover(t *testing.T) {
 	if err := app1.Start(ctx); err != nil {
 		t.Fatalf("start app1: %v", err)
 	}
-	time.Sleep(100 * time.Millisecond)
-	if !app1.isLeader.Load() {
-		_ = app1.Shutdown(ctx)
-		t.Fatal("app1 did not become leader")
-	}
+	t.Cleanup(func() { _ = app1.Shutdown(ctx) })
+	require.Eventually(t, app1.isLeader.Load, 5*time.Second, 10*time.Millisecond, "app1 did not become leader")
 	if err := app1.Shutdown(ctx); err != nil {
 		t.Fatalf("shutdown app1: %v", err)
 	}
@@ -219,13 +195,7 @@ func TestLeaderElection_GracefulShutdown(t *testing.T) {
 		t.Fatalf("failed to start app: %v", err)
 	}
 
-	// Wait for leader election
-	time.Sleep(100 * time.Millisecond)
-
-	// Verify we became leader
-	if !app.isLeader.Load() {
-		t.Error("expected to become leader")
-	}
+	require.Eventually(t, app.isLeader.Load, 5*time.Second, 10*time.Millisecond, "expected to become leader")
 
 	// Shutdown should complete without hanging
 	shutdownCtx, cancel := context.WithTimeout(ctx, 2*time.Second)

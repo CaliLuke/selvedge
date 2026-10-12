@@ -32,6 +32,13 @@ func TestDispatcherBacksOffUnregisteredWorkflow(t *testing.T) {
 	}
 	h.app.wg.Add(1)
 	go h.app.runWorkflowResumption()
+	t.Cleanup(func() {
+		h.app.cancel()
+		h.app.wg.Wait()
+	})
+	require.Eventually(t, func() bool { return queries.Load() > 0 }, 5*time.Second, 10*time.Millisecond,
+		"dispatcher must start before measuring backoff")
+	// Keep a fixed observation window to detect excessive polling.
 	time.Sleep(350 * time.Millisecond)
 	h.app.cancel()
 	h.app.wg.Wait()

@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // SimpleInput is a test input type.
@@ -62,8 +64,11 @@ func TestWorkflowExecution(t *testing.T) {
 		t.Fatal("expected non-empty instance ID")
 	}
 
-	// Wait for workflow to complete
-	time.Sleep(500 * time.Millisecond)
+	// Wait for the durable result before checking its contents.
+	require.Eventually(t, func() bool {
+		result, err := GetWorkflowResult[SimpleOutput](ctx, app, instanceID)
+		return err == nil && result.Status == "completed"
+	}, 5*time.Second, 10*time.Millisecond, "expected workflow to complete")
 
 	// Get result
 	result, err := GetWorkflowResult[SimpleOutput](ctx, app, instanceID)
@@ -136,8 +141,11 @@ func TestWorkflowWithMultipleActivities(t *testing.T) {
 		t.Fatalf("failed to start workflow: %v", err)
 	}
 
-	// Wait for workflow to complete
-	time.Sleep(500 * time.Millisecond)
+	// Wait for the durable result before checking its contents.
+	require.Eventually(t, func() bool {
+		result, err := GetWorkflowResult[int](ctx, app, instanceID)
+		return err == nil && result.Status == "completed"
+	}, 5*time.Second, 10*time.Millisecond, "expected workflow to complete")
 
 	// Get result
 	result, err := GetWorkflowResult[int](ctx, app, instanceID)
@@ -192,8 +200,11 @@ func TestWorkflowWithActivityFailure(t *testing.T) {
 		t.Fatalf("failed to start workflow: %v", err)
 	}
 
-	// Wait for workflow to fail
-	time.Sleep(500 * time.Millisecond)
+	// Wait for the durable result before checking its contents.
+	require.Eventually(t, func() bool {
+		result, err := GetWorkflowResult[string](ctx, app, instanceID)
+		return err == nil && result.Status == "failed"
+	}, 5*time.Second, 10*time.Millisecond, "expected workflow to fail")
 
 	// Get result
 	result, err := GetWorkflowResult[string](ctx, app, instanceID)

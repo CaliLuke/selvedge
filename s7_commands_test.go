@@ -84,7 +84,9 @@ func testSleepUntilPastDeadlineKeepsCommandOrder(t *testing.T, factory replayApp
 	})
 
 	h := newTypedReplayHarness(t, factory)
-	deadline := time.Now().Add(200 * time.Millisecond)
+	// Leave time for seeding and the first dispatch under race-enabled load.
+	// Replay below waits for this same deadline to pass.
+	deadline := time.Now().Add(5 * time.Second)
 	w := DefineWorkflow("deadline", func(ctx *WorkflowContext, input string) (string, error) {
 		d, err := time.Parse(time.RFC3339Nano, input)
 		if err != nil {
