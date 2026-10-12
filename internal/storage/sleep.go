@@ -11,7 +11,7 @@ type SleepReservation struct {
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
-func reserveTimer(ctx context.Context, s Storage, f *Fence, timer *TimerSubscription) (stored *HistoryEvent, err error) {
+func reserveTimer(ctx context.Context, s Storage, f *Fence, seq int64, timer *TimerSubscription) (stored *HistoryEvent, err error) {
 	if f == nil || f.InstanceID != timer.InstanceID {
 		return nil, rejectFence(ctx)
 	}
@@ -21,7 +21,7 @@ func reserveTimer(ctx context.Context, s Storage, f *Fence, timer *TimerSubscrip
 	}
 	err = (fenceStore{s}).withFence(ctx, f, func(conn Executor) error {
 		var e error
-		stored, e = writeHistory(ctx, conn, &HistoryEvent{InstanceID: timer.InstanceID, ActivityID: timer.TimerID, Command: "sleep", EventType: HistoryReserved, ReservationData: payload, DataType: "json"}, false)
+		stored, e = writeHistory(ctx, conn, &HistoryEvent{Seq: seq, InstanceID: timer.InstanceID, ActivityID: timer.TimerID, Command: "sleep", EventType: HistoryReserved, ReservationData: payload, DataType: "json"}, false)
 		if e != nil {
 			return e
 		}
@@ -40,11 +40,11 @@ func reserveTimer(ctx context.Context, s Storage, f *Fence, timer *TimerSubscrip
 }
 
 // ReserveTimer reserves a sleep and arms its timer atomically under the execution fence.
-func (s *SQLiteStorage) ReserveTimer(ctx context.Context, f *Fence, timer *TimerSubscription) (*HistoryEvent, error) {
-	return reserveTimer(ctx, s, f, timer)
+func (s *SQLiteStorage) ReserveTimer(ctx context.Context, f *Fence, seq int64, timer *TimerSubscription) (*HistoryEvent, error) {
+	return reserveTimer(ctx, s, f, seq, timer)
 }
 
 // ReserveTimer reserves a sleep and arms its timer atomically under the execution fence.
-func (s *PostgresStorage) ReserveTimer(ctx context.Context, f *Fence, timer *TimerSubscription) (*HistoryEvent, error) {
-	return reserveTimer(ctx, s, f, timer)
+func (s *PostgresStorage) ReserveTimer(ctx context.Context, f *Fence, seq int64, timer *TimerSubscription) (*HistoryEvent, error) {
+	return reserveTimer(ctx, s, f, seq, timer)
 }

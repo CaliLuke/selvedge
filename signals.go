@@ -46,12 +46,13 @@ func Receive[T any](ctx *WorkflowContext, channel string) (T, error) {
 		return zero, ErrInvalidSignalChannel
 	}
 	command := "receive:" + channel
-	key := ctx.GenerateActivityID(command)
-	event, found, err := ctx.execCtx.Claim(key, command)
+	cmd, err := ctx.execCtx.Issue(command, "")
 	if err != nil {
 		return zero, err
 	}
-	if found && event.EventData != nil {
+	defer cmd.End()
+	key, event := cmd.Key, cmd.Recorded
+	if event != nil && event.EventData != nil {
 		return signalOutcome[T](ctx, event)
 	}
 	s := ctx.Storage()
@@ -65,7 +66,7 @@ func Receive[T any](ctx *WorkflowContext, channel string) (T, error) {
 		if err != nil {
 			return zero, err
 		}
-		stored, err := s.RecordHistory(ctx.Context(), ctx.execCtx.Fence(), &storage.HistoryEvent{InstanceID: ctx.InstanceID(), ActivityID: key, Command: command, EventType: storage.HistorySignalCancelled, EventData: encodeError(cancellation), DataType: "json"})
+		stored, err := s.RecordHistory(ctx.Context(), ctx.execCtx.Fence(), &storage.HistoryEvent{Seq: cmd.Seq, InstanceID: ctx.InstanceID(), ActivityID: key, Command: command, EventType: storage.HistorySignalCancelled, EventData: encodeError(cancellation), DataType: "json"})
 		if err != nil {
 			ctx.execCtx.Fail(err)
 			return zero, err
@@ -80,7 +81,7 @@ func Receive[T any](ctx *WorkflowContext, channel string) (T, error) {
 	if signal == nil {
 		return zero, NewSignalSuspend(ctx.InstanceID(), channel, key)
 	}
-	stored, err := s.ConsumeSignal(ctx.Context(), ctx.execCtx.Fence(), signal.ID, &storage.HistoryEvent{InstanceID: ctx.InstanceID(), ActivityID: key, Command: command, EventType: storage.HistorySignalReceived, EventData: signal.Payload, DataType: "json"})
+	stored, err := s.ConsumeSignal(ctx.Context(), ctx.execCtx.Fence(), signal.ID, &storage.HistoryEvent{Seq: cmd.Seq, InstanceID: ctx.InstanceID(), ActivityID: key, Command: command, EventType: storage.HistorySignalReceived, EventData: signal.Payload, DataType: "json"})
 	if err != nil {
 		ctx.execCtx.Fail(err)
 		return zero, err

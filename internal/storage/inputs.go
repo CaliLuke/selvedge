@@ -9,6 +9,21 @@ import (
 // fireTimer records the poller result, wake, and subscription deletion atomically.
 func fireTimer(ctx context.Context, s Storage, timer *TimerSubscription) error {
 	err := (fenceStore{s}).withFence(ctx, nil, func(conn Executor) error {
+		row, err := readHistory(ctx, conn, timer.InstanceID, timer.TimerID)
+		if err != nil {
+			return err
+		}
+		if row == nil || row.Command != "sleep" {
+			var running bool
+			err = conn.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM workflow_instances WHERE instance_id=$1 AND status='running')`, timer.InstanceID).Scan(&running)
+			if err != nil {
+				return err
+			}
+			if running {
+				return ErrHistoryKeyConflict
+			}
+		}
+
 		result, err := conn.ExecContext(ctx, `UPDATE workflow_instances SET runnable=TRUE WHERE instance_id=$1 AND status='running'`, timer.InstanceID)
 		if err != nil {
 			return err

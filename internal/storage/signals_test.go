@@ -30,6 +30,7 @@ func signalInstance(t *testing.T, s Storage, suffix string, status WorkflowStatu
 
 func signalObservation(instance, key, channel, payload string) *HistoryEvent {
 	return &HistoryEvent{
+		Seq:        1,
 		InstanceID: instance, ActivityID: key, Command: "receive:" + channel,
 		EventType: HistorySignalReceived, EventData: []byte(payload), DataType: "json",
 	}
@@ -55,7 +56,7 @@ func testSignalInbox(t *testing.T, s signalTestStorage) {
 		require.NoError(t, err)
 		require.Nil(t, none)
 
-		for _, want := range []struct {
+		for i, want := range []struct {
 			id                    int64
 			channel, payload, key string
 		}{{second, "c2", `"second"`, "r2"}, {first, "c1", `{"n":9007199254740993}`, "r1"}, {third, "c1", `"third"`, "r3"}} {
@@ -69,6 +70,7 @@ func testSignalInbox(t *testing.T, s signalTestStorage) {
 			require.False(t, next.SentAt.IsZero())
 			require.Empty(t, next.ConsumedKey)
 			obs := signalObservation(instance, want.key, want.channel, want.payload)
+			obs.Seq = int64(i + 1)
 			stored, err := s.ConsumeSignal(ctx, signalTestFence(t, s, instance), next.ID, obs)
 			require.NoError(t, err)
 			require.Equal(t, obs.EventData, stored.EventData)
@@ -146,7 +148,7 @@ func testSignalInbox(t *testing.T, s signalTestStorage) {
 				instance := signalInstance(t, s, "", StatusRunning)
 				id, err := s.AppendSignal(ctx, instance, "c", []byte(`1`))
 				require.NoError(t, err)
-				original, err := s.RecordHistory(ctx, signalTestFence(t, s, instance), &HistoryEvent{InstanceID: instance, ActivityID: "r", Command: command, EventType: HistoryTimerExpired, EventData: []byte(`"original"`), DataType: "json"})
+				original, err := s.RecordHistory(ctx, signalTestFence(t, s, instance), &HistoryEvent{Seq: 1, InstanceID: instance, ActivityID: "r", Command: command, EventType: HistoryTimerExpired, EventData: []byte(`"original"`), DataType: "json"})
 				require.NoError(t, err)
 				_, err = s.ConsumeSignal(ctx, signalTestFence(t, s, instance), id, signalObservation(instance, "r", "c", `1`))
 				require.ErrorIs(t, err, ErrHistoryKeyConflict)
@@ -245,7 +247,7 @@ func testSignalInbox(t *testing.T, s signalTestStorage) {
 		instance := signalInstance(t, s, "", StatusRunning)
 		id, err := s.AppendSignal(ctx, instance, "c", []byte(`1`))
 		require.NoError(t, err)
-		_, err = s.ReserveHistory(ctx, signalTestFence(t, s, instance), instance, "r", "sleep")
+		_, err = s.ReserveHistory(ctx, signalTestFence(t, s, instance), instance, "r", "sleep", 1)
 		require.NoError(t, err)
 		txCtx, err := s.BeginTransaction(ContextWithFence(ctx, *signalTestFence(t, s, instance)))
 		require.NoError(t, err)

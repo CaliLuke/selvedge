@@ -30,21 +30,25 @@ func Sleep(ctx *WorkflowContext, duration time.Duration, opts ...SleepOption) er
 		return options.err
 	}
 
-	// Generate timer ID
-	timerID := options.timerID
-	if timerID == "" {
-		timerID = ctx.GenerateActivityID("sleep")
-	}
-
-	// Check if result is cached (replay)
-	event, found, err := ctx.execCtx.Claim(timerID, "sleep")
+	cmd, err := ctx.execCtx.Issue("sleep", options.timerID)
 	if err != nil {
 		return err
 	}
-	if found && event.EventData != nil {
+	defer cmd.End()
+	timerID := cmd.Key
+	event := cmd.Recorded
+	if event != nil && event.EventData != nil {
 		return sleepOutcome(ctx, event)
 	}
-	stored, err := ctx.Storage().ReserveTimer(ctx.Context(), ctx.execCtx.Fence(), &storage.TimerSubscription{
+	if duration <= 0 && event == nil {
+		stored, err := ctx.Storage().RecordHistory(ctx.Context(), ctx.execCtx.Fence(), &storage.HistoryEvent{Seq: cmd.Seq, InstanceID: ctx.InstanceID(), ActivityID: timerID, Command: "sleep", EventType: storage.HistoryTimerExpired, EventData: []byte(`true`), DataType: "json"})
+		if err != nil {
+			ctx.execCtx.Fail(err)
+			return err
+		}
+		return sleepOutcome(ctx, stored)
+	}
+	stored, err := ctx.Storage().ReserveTimer(ctx.Context(), ctx.execCtx.Fence(), cmd.Seq, &storage.TimerSubscription{
 		InstanceID: ctx.InstanceID(), TimerID: timerID, ActivityID: timerID, ExpiresAt: time.Now().Add(duration),
 	})
 	if err != nil {
@@ -87,9 +91,6 @@ func Sleep(ctx *WorkflowContext, duration time.Duration, opts ...SleepOption) er
 			ExpiresAt:    expiresAt,
 		})
 	}
-
-	// Record the timer ID for tracking
-	ctx.RecordActivityID(timerID)
 
 	// Return SuspendSignal that the replay engine will handle
 	return NewTimerSuspend(ctx.InstanceID(), timerID, timerID, expiresAt)
@@ -136,10 +137,5 @@ func WithSleepID(id string) SleepOption {
 
 // SleepUntil suspends the workflow until a specific time.
 func SleepUntil(ctx *WorkflowContext, t time.Time, opts ...SleepOption) error {
-	duration := time.Until(t)
-	if duration <= 0 {
-		// Already past the target time
-		return nil
-	}
-	return Sleep(ctx, duration, opts...)
+	return Sleep(ctx, time.Until(t), opts...)
 }

@@ -31,7 +31,7 @@ func GetWorkflowContext(ctx context.Context) *WorkflowContext {
 }
 
 // WorkflowContext provides context for workflow execution.
-// It manages activity ID generation, replay state, and recorded history.
+// It provides command positions, replay state, and recorded history.
 type WorkflowContext struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
@@ -41,9 +41,6 @@ type WorkflowContext struct {
 	// Workflow metadata
 	workflowName string
 
-	// Replay state
-	isReplaying bool
-
 	// Reference to the replay execution context (when using replay engine)
 	execCtx *replay.ExecutionContext
 
@@ -51,11 +48,11 @@ type WorkflowContext struct {
 	app *App
 }
 
-// NewWorkflowContext creates a new WorkflowContext.
+// NewWorkflowContext creates a standalone context without recorded history.
+// Replay state is determined by the commands issued through the context.
 func NewWorkflowContext(
 	ctx context.Context,
 	instanceID, workerID, workflowName string,
-	isReplaying bool,
 ) *WorkflowContext {
 	ctx, cancel := context.WithCancel(ctx)
 	return &WorkflowContext{
@@ -64,7 +61,6 @@ func NewWorkflowContext(
 		instanceID:   instanceID,
 		workerID:     workerID,
 		workflowName: workflowName,
-		isReplaying:  isReplaying,
 		execCtx:      replay.NewExecutionContext(ctx, instanceID),
 	}
 }
@@ -73,11 +69,10 @@ func NewWorkflowContext(
 func NewWorkflowContextFromExecution(execCtx *replay.ExecutionContext) *WorkflowContext {
 	ctx, cancel := context.WithCancel(execCtx.Context())
 	return &WorkflowContext{
-		ctx:         ctx,
-		cancel:      cancel,
-		instanceID:  execCtx.InstanceID(),
-		isReplaying: execCtx.IsReplaying(),
-		execCtx:     execCtx,
+		ctx:        ctx,
+		cancel:     cancel,
+		instanceID: execCtx.InstanceID(),
+		execCtx:    execCtx,
 	}
 }
 
@@ -94,7 +89,6 @@ func (c *WorkflowContext) WithContext(ctx context.Context) *WorkflowContext {
 		instanceID:   c.instanceID,
 		workerID:     c.workerID,
 		workflowName: c.workflowName,
-		isReplaying:  c.isReplaying,
 		execCtx:      c.execCtx,
 		app:          c.app,
 	}
@@ -117,33 +111,11 @@ func (c *WorkflowContext) WorkerID() string {
 
 // IsReplaying returns true if the workflow is being replayed.
 func (c *WorkflowContext) IsReplaying() bool {
-	return c.isReplaying
+	return c.execCtx.Replaying()
 }
 
-// GenerateActivityID generates a unique activity ID for the given function name.
-// Format: {function_name}:{counter}
-// This is used for deterministic replay - the same sequence of calls
-// will always generate the same IDs.
-func (c *WorkflowContext) GenerateActivityID(functionName string) string {
-	return c.execCtx.GenerateActivityID(functionName)
-}
-
-// lookupRecorded retrieves a raw row from the replay execution.
-func (c *WorkflowContext) lookupRecorded(key string) (*storage.HistoryEvent, bool) {
-	if c.execCtx != nil {
-		return c.execCtx.Lookup(key)
-	}
-	return nil, false
-}
-
-// RecordActivityResult records an activity result to storage.
-func (c *WorkflowContext) RecordActivityResult(activityID string, result any, activityErr error) error {
-	_, err := c.recordActivityResult(activityID, result, activityErr)
-	return err
-}
-
-func (c *WorkflowContext) recordActivityResult(activityID string, result any, activityErr error) (*storage.HistoryEvent, error) {
-	event := &storage.HistoryEvent{InstanceID: c.instanceID, ActivityID: activityID, DataType: "json", EventType: storage.HistoryActivityCompleted}
+func (c *WorkflowContext) recordActivityResult(cmd *replay.Command, result any, activityErr error) (*storage.HistoryEvent, error) {
+	event := &storage.HistoryEvent{InstanceID: c.instanceID, Seq: cmd.Seq, ActivityID: cmd.Key, DataType: "json", EventType: storage.HistoryActivityCompleted}
 	if activityErr != nil {
 		event.EventType = storage.HistoryActivityFailed
 		event.EventData = encodeError(activityErr)
@@ -155,19 +127,10 @@ func (c *WorkflowContext) recordActivityResult(activityID string, result any, ac
 		event.EventData = data
 	}
 	if c.execCtx != nil {
-		return c.execCtx.RecordActivityResultWithContext(c.ctx, activityID, event.EventType, event.EventData)
+		return cmd.StoreActivityOutcome(c.ctx, event.EventType, event.EventData)
 	}
 	// Standalone contexts use the same JSON representation as engine runs.
 	return event, nil
-}
-
-// RecordActivityID records that an activity ID has been used.
-// This is used for tracking the current activity during execution.
-func (c *WorkflowContext) RecordActivityID(activityID string) {
-	// Record the current activity in execution context
-	if c.execCtx != nil {
-		c.execCtx.RecordActivityID(activityID)
-	}
 }
 
 // Cancel cancels the workflow execution.

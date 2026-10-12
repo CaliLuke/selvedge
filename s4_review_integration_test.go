@@ -34,6 +34,10 @@ func TestRunnableNotificationsAfterCommitPostgres(t *testing.T) {
 	f, ok, err := s.AcquireLease(h.app.ctx, "lease", "worker", time.Minute)
 	require.NoError(t, err)
 	require.True(t, ok)
+	_, err = pg.ReserveHistory(h.app.ctx, &f, "lease", "activity", "activity:A", 1)
+	require.NoError(t, err)
+	_, err = pg.ReserveHistory(h.app.ctx, &f, "lease", "pause", "sleep", 2)
+	require.NoError(t, err)
 	writes := map[string]func(context.Context) error{
 		"mark": func(ctx context.Context) error { return pg.MarkRunnable(ctx, "lease") },
 		"timer": func(ctx context.Context) error {

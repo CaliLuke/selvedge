@@ -162,7 +162,13 @@ func TestWorkflowResultErrorTyped(t *testing.T) { testWorkflowResultErrorTyped(t
 func testWorkflowResultErrorTyped(t *testing.T, factory replayAppFactory) {
 	t.Helper()
 	h := newTypedReplayHarness(t, factory)
-	w := DefineWorkflow("long_failure", func(*WorkflowContext, string) (string, error) {
+	w := DefineWorkflow("long_failure", func(ctx *WorkflowContext, _ string) (string, error) {
+		filler := DefineActivity("filler", func(context.Context, string) (bool, error) { t.Fatal("recorded filler executed"); return false, nil })
+		for i := 0; i < 1001; i++ {
+			if _, err := filler.Execute(ctx, "", WithActivityID(fmt.Sprintf("filler:%d", i))); err != nil {
+				return "", err
+			}
+		}
 		return "", NewApplicationError("workflow failed", "Validation", map[string]any{"count": 3}, context.Canceled)
 	})
 	id := seedErrorWorkflow(t, h, w)

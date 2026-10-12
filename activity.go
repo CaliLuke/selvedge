@@ -85,17 +85,14 @@ func (a *Activity[I, O]) Execute(
 		return zero, options.err
 	}
 
-	// Generate or use provided activity ID
-	activityID := options.activityID
-	if activityID == "" {
-		activityID = ctx.GenerateActivityID(a.name)
-	}
-
-	event, found, claimErr := ctx.execCtx.Claim(activityID, "activity:"+a.name)
+	cmd, claimErr := ctx.execCtx.Issue("activity:"+a.name, options.activityID)
 	if claimErr != nil {
 		var zero O
 		return zero, claimErr
 	}
+	defer cmd.End()
+	activityID := cmd.Key
+	event := cmd.Recorded
 
 	// Call OnActivityStart hook
 	if h := ctx.Hooks(); h != nil {
@@ -110,7 +107,7 @@ func (a *Activity[I, O]) Execute(
 	}
 
 	// Replay uses recorded bytes decoded directly into the activity's output type.
-	if found {
+	if event != nil && event.EventData != nil {
 		if event.EventType == storage.HistoryActivityFailed {
 			var zero O
 			return zero, replayRecordedError(ctx, event)
@@ -131,18 +128,20 @@ func (a *Activity[I, O]) Execute(
 		return result, nil
 	}
 
+	if err := cmd.Reserve(ctx.Context()); err != nil {
+		var zero O
+		return zero, err
+	}
+
 	// Execute the activity
 	result, err := a.executeWithRetry(ctx, input, activityID)
 
 	// Return the serialized representation on first execution, too.
-	stored, recordErr := ctx.recordActivityResult(activityID, result, err)
+	stored, recordErr := ctx.recordActivityResult(cmd, result, err)
 	if recordErr != nil {
 		var zero O
 		return zero, fmt.Errorf("failed to record activity result: %w", recordErr)
 	}
-
-	// Record activity ID for tracking
-	ctx.RecordActivityID(activityID)
 
 	return decodeActivityRecorded[O](ctx, stored)
 }
@@ -275,7 +274,7 @@ type executeOptions struct {
 
 // WithActivityID specifies a manual activity ID.
 // Required for concurrent activity execution to maintain determinism.
-// IDs starting with $, sleep:, or receive: are reserved.
+// IDs starting with $ or # are reserved.
 // Execute rejects these IDs with ErrHistoryKeyConflict before running the activity.
 func WithActivityID(id string) ExecuteOption {
 	return func(o *executeOptions) {
@@ -288,7 +287,7 @@ func WithActivityID(id string) ExecuteOption {
 
 // Runtime-generated keys and the lifecycle namespace cannot be explicit history IDs.
 func reservedHistoryIDError(kind, id string) error {
-	for _, prefix := range []string{"$", "sleep:", "receive:"} {
+	for _, prefix := range []string{"$", "#"} {
 		if strings.HasPrefix(id, prefix) {
 			return fmt.Errorf("%s ID %q uses reserved prefix %q: %w", kind, id, prefix, ErrHistoryKeyConflict)
 		}

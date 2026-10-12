@@ -401,6 +401,7 @@ func testReplayDeterministicAfterCrash(t *testing.T, factory replayAppFactory) {
 }
 
 type historyValue struct {
+	Seq          int64
 	Key, Command string
 	Type         storage.HistoryEventType
 	Data         string
@@ -414,9 +415,7 @@ func runCrashScenario(t *testing.T, factory replayAppFactory, crashAt int, after
 	crashed := false
 	a := DefineActivity("A", func(context.Context, string) (string, error) {
 		calls++
-		if crashAt == 2 && !after && calls == 1 {
-			return "unrecorded first attempt", nil
-		}
+
 		return "durable", nil
 	})
 	w := DefineWorkflow("crash_replay", func(ctx *WorkflowContext, input string) (string, error) {
@@ -424,12 +423,19 @@ func runCrashScenario(t *testing.T, factory replayAppFactory, crashAt int, after
 		if err != nil {
 			return "", err
 		}
-		return v, Sleep(ctx, time.Hour, WithSleepID("pause"))
+		if err := Sleep(ctx, time.Hour); err != nil {
+			return "", err
+		}
+		if _, err := Receive[string](ctx, "messages"); err != nil {
+			return "", err
+		}
+		return a.Execute(ctx, v)
 	})
 	id := seedErrorWorkflow(t, h, w)
+	require.NoError(t, h.app.Signal(h.app.ctx, id, "messages", "signal"))
 	inject := func(_ context.Context, method string) error {
 		switch method {
-		case "AcquireLease", "SetHistoryValueIfNull", "ReserveTimer", "ReleaseLease", "FireTimer", "CloseInstance":
+		case "AcquireLease", "ReserveHistory", "ConsumeSignal", "SetHistoryValueIfNull", "ReserveTimer", "ReleaseLease", "FireTimer", "CloseInstance":
 			writeIndex++
 		}
 		if !crashed && crashAt > 0 && writeIndex == crashAt {
@@ -443,7 +449,7 @@ func runCrashScenario(t *testing.T, factory replayAppFactory, crashAt int, after
 	} else {
 		fs.Before = inject
 	}
-	for attempt := 0; attempt < 5; attempt++ {
+	for attempt := 0; attempt < 10; attempt++ {
 		err := h.RunOnce(id)
 		if err != nil {
 			require.ErrorIs(t, err, storage.ErrFenced)
@@ -456,7 +462,7 @@ func runCrashScenario(t *testing.T, factory replayAppFactory, crashAt int, after
 		var armed int
 		require.NoError(t, fs.Storage.DB().QueryRow("SELECT COUNT(*) FROM workflow_timer_subscriptions WHERE instance_id=$1", id).Scan(&armed))
 		if armed > 0 {
-			err = fs.FireTimer(h.app.ctx, &storage.TimerSubscription{InstanceID: id, TimerID: "pause"})
+			err = fs.FireTimer(h.app.ctx, &storage.TimerSubscription{InstanceID: id, TimerID: "#2"})
 			if err != nil {
 				require.ErrorIs(t, err, storage.ErrFenced)
 			}
@@ -467,14 +473,15 @@ func runCrashScenario(t *testing.T, factory replayAppFactory, crashAt int, after
 	if crashAt > 0 {
 		require.True(t, crashed, "write index must be reached")
 	}
-	if crashAt == 2 && !after {
-		require.Equal(t, 2, calls)
-	}
+
 	rows, _, err := fs.GetHistoryPaginated(h.app.ctx, id, 0, 100)
 	require.NoError(t, err)
 	values := make([]historyValue, 0, len(rows))
 	for _, row := range rows {
-		values = append(values, historyValue{row.ActivityID, row.Command, row.EventType, string(row.EventData)})
+		var seq int64
+		require.NoError(t, fs.Storage.DB().QueryRow("SELECT seq FROM workflow_history WHERE id=$1", row.ID).Scan(&seq))
+		require.Equal(t, fmt.Sprintf("#%d", seq), row.ActivityID)
+		values = append(values, historyValue{row.Seq, row.ActivityID, row.Command, row.EventType, string(row.EventData)})
 	}
 	return values, writeIndex
 }

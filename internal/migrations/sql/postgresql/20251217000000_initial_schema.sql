@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS workflow_history (
     id SERIAL PRIMARY KEY,
     instance_id TEXT NOT NULL,
     activity_id TEXT NOT NULL,
+    seq BIGINT NULL,
     event_type TEXT NOT NULL,
     command TEXT NOT NULL DEFAULT '',
     data_type TEXT NOT NULL DEFAULT 'json',
@@ -60,7 +61,9 @@ CREATE TABLE IF NOT EXISTS workflow_history (
     event_data_binary BYTEA,
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     FOREIGN KEY (instance_id) REFERENCES workflow_instances(instance_id) ON DELETE CASCADE,
-    CONSTRAINT unique_instance_activity UNIQUE (instance_id, activity_id)
+    CONSTRAINT unique_instance_activity UNIQUE (instance_id, activity_id),
+    CONSTRAINT unique_instance_seq UNIQUE (instance_id, seq),
+    CONSTRAINT history_seq_required CHECK (seq IS NOT NULL OR activity_id LIKE '$%')
 );
 
 CREATE INDEX IF NOT EXISTS idx_history_instance ON workflow_history(instance_id, activity_id);

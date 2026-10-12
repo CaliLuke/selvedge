@@ -460,7 +460,7 @@ func (s *SQLiteStorage) GetHistoryPaginated(ctx context.Context, instanceID stri
 	conn := s.getConn(ctx)
 	// Fetch one extra to check if there are more events
 	rows, err := conn.QueryContext(ctx, `
-		SELECT id, instance_id, activity_id, command, event_type, event_data, event_data_binary, data_type, reservation_data, created_at
+		SELECT id, instance_id, activity_id, COALESCE(seq, 0), command, event_type, event_data, event_data_binary, data_type, reservation_data, created_at
 		FROM workflow_history
 		WHERE instance_id = ? AND id > ?
 		ORDER BY id ASC
@@ -478,7 +478,7 @@ func (s *SQLiteStorage) GetHistoryPaginated(ctx context.Context, instanceID stri
 		var eventDataBinary []byte
 		var createdAtStr string
 
-		if err := rows.Scan(&h.ID, &h.InstanceID, &h.ActivityID, &h.Command, &h.EventType, &eventData, &eventDataBinary, &h.DataType, &reservation, &createdAtStr); err != nil {
+		if err := rows.Scan(&h.ID, &h.InstanceID, &h.ActivityID, &h.Seq, &h.Command, &h.EventType, &eventData, &eventDataBinary, &h.DataType, &reservation, &createdAtStr); err != nil {
 			return nil, false, err
 		}
 		h.CreatedAt, _ = parseSQLiteTime(createdAtStr)

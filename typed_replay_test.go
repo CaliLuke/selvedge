@@ -3,6 +3,8 @@ package selvedge
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -183,7 +185,12 @@ func testRecordedActivityNotRescheduledOnReplay(t *testing.T, factory replayAppF
 	observed := &typedReplayHooks{}
 	h := newTypedReplayHarness(t, factory, WithHooks(observed))
 	calls := 0
-	activity := DefineActivity("once", func(context.Context, string) (string, error) {
+	activity := DefineActivity("once", func(ctx context.Context, _ string) (string, error) {
+		wc := GetWorkflowContext(ctx)
+		row, err := h.app.storage.GetHistoryEvent(ctx, wc.InstanceID(), "result")
+		require.NoError(t, err)
+		require.NotNil(t, row, "activity must be reserved before its side effect")
+		require.Nil(t, row.EventData)
 		calls++
 		return "recorded", nil
 	})
@@ -198,26 +205,32 @@ func testRecordedActivityNotRescheduledOnReplay(t *testing.T, factory replayAppF
 }
 
 // Old cache fixtures now seed real history rows and load them through the engine.
-func workflowContextWithRecordedHistory(t *testing.T, history map[string]any) *WorkflowContext {
+func workflowContextWithRecordedHistory(t *testing.T, history map[string]any, run func(*WorkflowContext)) {
 	t.Helper()
 	h := newTypedReplayHarness(t, createTestApp)
 	const instanceID = "inst-1"
 	require.NoError(t, h.app.storage.CreateInstance(h.app.ctx, &storage.WorkflowInstance{InstanceID: instanceID, WorkflowName: "fixture", Status: storage.StatusRunning}))
-	for key, value := range history {
-		var activityErr error
-		if err, ok := value.(error); ok {
-			activityErr = err
-			value = nil
+	keys := make([]string, 0, len(history))
+	for key := range history {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for i, key := range keys {
+		value := history[key]
+		eventType := storage.HistoryActivityCompleted
+		payload, err := json.Marshal(value)
+		require.NoError(t, err)
+		if failure, ok := value.(error); ok {
+			eventType = storage.HistoryActivityFailed
+			payload = encodeError(failure)
 		}
-		_, err := h.app.engine.RecordActivityResult(h.app.ctx, instanceID, key, fixtureCommand(key), value, activityErr)
+		_, err = fixtureRecord(h.app.ctx, h.app.storage, &storage.HistoryEvent{Seq: int64(i + 1), InstanceID: instanceID, ActivityID: fmt.Sprintf("#%d", i+1), Command: fixtureCommand(key), EventType: eventType, EventData: payload, DataType: "json"})
 		require.NoError(t, err)
 	}
-	var wfCtx *WorkflowContext
 	require.NoError(t, h.app.engine.Run(h.app.ctx, instanceID, func(ec *replay.ExecutionContext) (any, error) {
-		wfCtx = NewWorkflowContextFromExecution(ec)
+		run(NewWorkflowContextFromExecution(ec))
 		return nil, nil
 	}))
-	return wfCtx
 }
 
 type undecodableReplayValue struct{ Value string }

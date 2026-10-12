@@ -194,3 +194,6 @@ var ErrLeaseLost = replay.ErrLeaseLost
 
 // ErrFenced means another execution owns the instance.
 var ErrFenced = storage.ErrFenced
+
+// NondeterminismError reports a replay command divergence.
+type NondeterminismError = replay.NondeterminismError

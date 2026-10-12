@@ -153,6 +153,9 @@ func (s signalStore) consume(ctx context.Context, f *Fence, signalID int64, obs 
 	if f.InstanceID != obs.InstanceID {
 		return nil, rejectFence(ctx)
 	}
+	if err := validateHistorySeq(obs); err != nil {
+		return nil, err
+	}
 	var stored *HistoryEvent
 	err := s.transaction(ctx, func(ctx context.Context, conn Executor) error {
 		return (fenceStore{signalTransaction{s.Storage, conn}}).withFence(ctx, f, func(conn Executor) error {
@@ -177,10 +180,10 @@ func (s signalStore) consume(ctx context.Context, f *Fence, signalID int64, obs 
 			// recording its observation. Roll back consumption on every key conflict.
 			var id int64
 			err = conn.QueryRowContext(ctx, `
-			INSERT INTO workflow_history (instance_id, activity_id, command, event_type, event_data, event_data_binary, data_type)
-			VALUES ($1, $2, $3, $4, $5, $6, $7)
-			ON CONFLICT (instance_id, activity_id) DO NOTHING RETURNING id
-		`, obs.InstanceID, obs.ActivityID, obs.Command, obs.EventType, payload, obs.EventDataBinary, obs.DataType).Scan(&id)
+			INSERT INTO workflow_history (instance_id, activity_id, command, event_type, event_data, event_data_binary, data_type, seq)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			ON CONFLICT DO NOTHING RETURNING id
+		`, obs.InstanceID, obs.ActivityID, obs.Command, obs.EventType, payload, obs.EventDataBinary, obs.DataType, nullableSeq(obs.Seq)).Scan(&id)
 			if errors.Is(err, sql.ErrNoRows) {
 				return ErrHistoryKeyConflict
 			}

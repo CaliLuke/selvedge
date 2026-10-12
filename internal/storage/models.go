@@ -61,6 +61,7 @@ const (
 
 // HistoryEvent represents a single event in a workflow's execution history.
 type HistoryEvent struct {
+	Seq             int64            `json:"seq"`                        // Zero represents SQL NULL for lifecycle rows.
 	ReservationData []byte           `json:"reservation_data,omitempty"` // Immutable command metadata, separate from its observed value.
 	Command         string           `json:"command"`
 	ID              int64            `json:"id"`

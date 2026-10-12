@@ -282,7 +282,7 @@ func TestPostgresIntegration_TimerSubscription(t *testing.T) {
 		ActivityID: "activity:1",
 	}
 
-	if err := fixtureTimer(ctx, store, sub); err != nil {
+	if _, err := store.ReserveTimer(ctx, fixtureFence(t, store, sub.InstanceID), 1, sub); err != nil {
 		t.Fatalf("timer fixture failed: %v", err)
 	}
 

@@ -20,8 +20,8 @@ func testHistoryKeyWrittenOnce(t *testing.T, factory replayAppFactory) {
 	t.Helper()
 	for _, tc := range []struct{ name, firstID, secondID, secondName string }{
 		{"different_activities", "k", "k", "B"},
-		{"automatic_then_explicit", "", "A:1", "B"},
-		{"explicit_then_automatic", "A:1", "", "A"},
+		{"automatic_then_explicit", "", "#1", "B"},
+
 		{"same_activity", "k", "k", "A"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -39,7 +39,11 @@ func testHistoryKeyWrittenOnce(t *testing.T, factory replayAppFactory) {
 			id := seedErrorWorkflow(t, h, w)
 			require.ErrorIs(t, h.RunOnce(id), ErrHistoryKeyConflict)
 			require.Equal(t, 1, calls)
-			assertHistoryFailure(t, h, id, ErrHistoryKeyConflict, "history_key_conflict")
+			kind := "history_key_conflict"
+			if tc.name == "automatic_then_explicit" {
+				kind = "generic"
+			}
+			assertHistoryFailure(t, h, id, ErrHistoryKeyConflict, kind)
 		})
 	}
 	t.Run("stored_first_value", func(t *testing.T) {
@@ -52,6 +56,8 @@ func testHistoryKeyWrittenOnce(t *testing.T, factory replayAppFactory) {
 		second, err := fixtureRecord(ctx, s, &storage.HistoryEvent{InstanceID: "writes", ActivityID: "k", Command: "activity:A", EventType: storage.HistoryActivityFailed, EventData: []byte(`"second"`), DataType: "json"})
 		require.NoError(t, err)
 		require.Equal(t, first, second)
+		_, err = s.ReserveHistory(ctx, fixtureFence(t, s, "writes"), "writes", "timer", "sleep", 2)
+		require.NoError(t, err)
 		first, err = s.SetHistoryValueIfNull(ctx, nil, "writes", "timer", "sleep", storage.HistoryTimerExpired, []byte(`true`))
 		require.NoError(t, err)
 		second, err = s.SetHistoryValueIfNull(ctx, nil, "writes", "timer", "sleep", storage.HistoryActivityFailed, []byte(`false`))
@@ -69,6 +75,10 @@ func testHistoryKeyWrittenOnce(t *testing.T, factory replayAppFactory) {
 			h := newTypedReplayHarness(t, factory)
 			a := DefineActivity("A", func(ctx context.Context, _ string) (string, error) {
 				_, err := fixtureRecord(ctx, h.app.storage, &storage.HistoryEvent{InstanceID: GetWorkflowContext(ctx).InstanceID(), ActivityID: "k", Command: tc.command, EventType: storage.HistoryActivityCompleted, EventData: []byte(`"other writer"`), DataType: "json"})
+				if tc.want != nil {
+					require.ErrorIs(t, err, tc.want)
+					return "", NewTerminalError(err)
+				}
 				require.NoError(t, err)
 				return "live", nil
 			})
@@ -80,19 +90,23 @@ func testHistoryKeyWrittenOnce(t *testing.T, factory replayAppFactory) {
 					require.NoError(t, err)
 					require.Equal(t, "other writer", value)
 				}
-				return value, nil
+				return value, err
 			})
 			id := seedErrorWorkflow(t, h, w)
 			err := h.RunOnce(id)
 			if tc.want != nil {
 				require.ErrorIs(t, err, tc.want)
-				assertHistoryFailure(t, h, id, tc.want, "history_key_conflict")
+				assertHistoryFailure(t, h, id, tc.want, "terminal")
 			} else {
 				require.NoError(t, err)
 			}
 			row, err := h.app.storage.GetHistoryEvent(h.app.ctx, id, "k")
 			require.NoError(t, err)
-			require.JSONEq(t, `"other writer"`, string(row.EventData))
+			if tc.want == nil {
+				require.JSONEq(t, `"other writer"`, string(row.EventData))
+			} else {
+				require.Equal(t, "activity:A", row.Command)
+			}
 		})
 	}
 }
@@ -116,9 +130,10 @@ func TestReplayCommandMismatchFailsFast(t *testing.T) {
 	testReplayCommandMismatchFailsFast(t, createTestApp)
 }
 func testReplayCommandMismatchFailsFast(t *testing.T, factory replayAppFactory) {
+	t.Run("S7", func(t *testing.T) { testS7ReplayMismatches(t, factory) })
 	t.Helper()
 	for _, tc := range []struct{ name, key, command string }{
-		{"activity", "x", "activity:A"}, {"empty_command", "x", ""}, {"sleep", "x", "activity:A"}, {"receive", "receive:messages:1", "activity:A"},
+		{"activity", "#1", "activity:A"}, {"empty_command", "#1", ""}, {"sleep", "#1", "activity:A"}, {"receive", "#1", "activity:A"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			observed := &historyMismatchHooks{}
@@ -128,12 +143,12 @@ func testReplayCommandMismatchFailsFast(t *testing.T, factory replayAppFactory) 
 			w := DefineWorkflow("mismatch", func(ctx *WorkflowContext, input string) (string, error) {
 				switch tc.name {
 				case "sleep":
-					require.ErrorIs(t, Sleep(ctx, time.Hour, WithSleepID(tc.key)), ErrDeterminismViolation)
+					require.ErrorIs(t, Sleep(ctx, time.Hour), ErrDeterminismViolation)
 				case "receive":
 					_, err := Receive[string](ctx, "messages")
 					require.ErrorIs(t, err, ErrDeterminismViolation)
 				default:
-					_, err := b.Execute(ctx, input, WithActivityID(tc.key))
+					_, err := b.Execute(ctx, input)
 					require.ErrorIs(t, err, ErrDeterminismViolation)
 				}
 				_, err := b.Execute(ctx, input, WithActivityID("after-fatal"))
@@ -143,7 +158,15 @@ func testReplayCommandMismatchFailsFast(t *testing.T, factory replayAppFactory) 
 			id := seedErrorWorkflow(t, h, w)
 			original, err := fixtureRecord(h.app.ctx, h.app.storage, &storage.HistoryEvent{InstanceID: id, ActivityID: tc.key, Command: tc.command, EventType: storage.HistoryActivityCompleted, EventData: []byte(`"recorded"`), DataType: "json"})
 			require.NoError(t, err)
-			require.ErrorIs(t, h.RunOnce(id), ErrDeterminismViolation)
+			runErr := h.RunOnce(id)
+			issued := "activity:B"
+			if tc.name == "sleep" {
+				issued = "sleep"
+			}
+			if tc.name == "receive" {
+				issued = "receive:messages"
+			}
+			assertNondeterminism(t, h, id, runErr, 1, tc.command, issued)
 			require.Zero(t, calls)
 			require.Zero(t, observed.starts, "command validation must precede user hooks")
 			assertHistoryFailure(t, h, id, ErrDeterminismViolation, "nondeterminism")
@@ -169,16 +192,16 @@ func testHistoryWriteClassesStorageConformance(t *testing.T, factory replayAppFa
 	require.NoError(t, err)
 	require.Nil(t, missing)
 	f := fixtureFence(t, s, "classes")
-	first, err := s.ReserveHistory(ctx, f, "classes", "k", "sleep")
+	first, err := s.ReserveHistory(ctx, f, "classes", "k", "sleep", 1)
 	require.NoError(t, err)
 	require.Equal(t, storage.HistoryReserved, first.EventType)
 	require.Nil(t, first.EventData)
 	require.Positive(t, first.ID)
 	require.False(t, first.CreatedAt.IsZero())
-	again, err := s.ReserveHistory(ctx, f, "classes", "k", "sleep")
+	again, err := s.ReserveHistory(ctx, f, "classes", "k", "sleep", 1)
 	require.NoError(t, err)
 	require.Equal(t, first, again)
-	_, err = s.ReserveHistory(ctx, f, "classes", "k", "receive:x")
+	_, err = s.ReserveHistory(ctx, f, "classes", "k", "receive:x", 1)
 	require.ErrorIs(t, err, ErrHistoryKeyConflict)
 	_, err = fixtureRecord(ctx, s, &storage.HistoryEvent{InstanceID: "classes", ActivityID: "k", Command: "activity:A", EventType: storage.HistoryActivityCompleted, EventData: []byte(`1`), DataType: "json"})
 	require.ErrorIs(t, err, ErrHistoryKeyConflict)
@@ -230,8 +253,8 @@ func testReservedActivityIDsRejected(t *testing.T, factory replayAppFactory) {
 	t.Helper()
 	for _, command := range []string{"activity", "sleep"} {
 		for _, tc := range []struct{ key, prefix string }{
-			{"$workflow_failed", "$"}, {"$future_runtime", "$"}, {"sleep:1", "sleep:"},
-			{"receive:messages:1", "receive:"},
+			{"$workflow_failed", "$"}, {"$future_runtime", "$"}, {"#1", "#"},
+			{"#future", "#"},
 		} {
 			t.Run(command+"/"+tc.key, func(t *testing.T) {
 				h := newTypedReplayHarness(t, factory)
@@ -334,8 +357,9 @@ func testHistoryConcurrentFirstWriterWins(t *testing.T, factory replayAppFactory
 			s := h.app.storage
 			ctx := h.app.ctx
 			require.NoError(t, s.CreateInstance(ctx, &storage.WorkflowInstance{InstanceID: "race", WorkflowName: "race", Status: storage.StatusRunning}))
+			f := fixtureFence(t, s, "race")
 			if fill {
-				_, err := s.ReserveHistory(ctx, fixtureFence(t, s, "race"), "race", "k", "sleep")
+				_, err := s.ReserveHistory(ctx, f, "race", "k", "sleep", 1)
 				require.NoError(t, err)
 			}
 			type outcome struct {
@@ -381,7 +405,7 @@ func testDuplicateClaimPreservesOriginalCommand(t *testing.T, factory replayAppF
 	h := newTypedReplayHarness(t, factory)
 	a := DefineActivity("A", func(ctx context.Context, _ string) (string, error) {
 		wc := GetWorkflowContext(ctx)
-		_, _, err := wc.execCtx.Claim("k", "activity:B")
+		_, err := wc.execCtx.Issue("activity:B", "k")
 		require.ErrorIs(t, err, ErrHistoryKeyConflict)
 		return "first", nil
 	})

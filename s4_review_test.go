@@ -93,7 +93,8 @@ func testTimerHookAfterCommit(t *testing.T, factory replayAppFactory) {
 	require.NoError(t, err)
 	require.True(t, ok)
 	timer := &storage.TimerSubscription{InstanceID: "lease", TimerID: "pause", ExpiresAt: time.Now().Add(-time.Hour)}
-	require.NoError(t, fixtureTimer(h.app.ctx, h.app.storage, timer))
+	_, err = h.app.storage.ReserveTimer(h.app.ctx, &f, 1, timer)
+	require.NoError(t, err)
 	require.NoError(t, s.ReleaseLease(h.app.ctx, f, false))
 	calls := 0
 	h.app.config.hooks = &timerCommitHooks{fired: func(info hooks.TimerFiredInfo) {

@@ -145,7 +145,7 @@ func testConsumeAtomicWithRecord(t *testing.T, factory replayAppFactory) {
 				fs.Before = hook
 			}
 			require.ErrorIs(t, h.RunOnce(id), crash)
-			row, err := h.app.storage.GetHistoryEvent(h.app.ctx, id, "receive:inbox:1")
+			row, err := h.app.storage.GetHistoryEvent(h.app.ctx, id, "#1")
 			require.NoError(t, err)
 			next, err := h.app.storage.NextSignal(h.app.ctx, id, "inbox")
 			require.NoError(t, err)
@@ -174,9 +174,9 @@ func testConsumeAtomicWithRecord(t *testing.T, factory replayAppFactory) {
 		_, ok, err = s.AcquireLease(h.app.ctx, "lease", "new", time.Second)
 		require.NoError(t, err)
 		require.True(t, ok)
-		_, err = h.app.storage.ConsumeSignal(h.app.ctx, &f, id, &storage.HistoryEvent{InstanceID: "lease", ActivityID: "receive:inbox:1", Command: "receive:inbox", EventType: storage.HistorySignalReceived, EventData: []byte(`1`), DataType: "json"})
+		_, err = h.app.storage.ConsumeSignal(h.app.ctx, &f, id, &storage.HistoryEvent{Seq: 1, InstanceID: "lease", ActivityID: "#1", Command: "receive:inbox", EventType: storage.HistorySignalReceived, EventData: []byte(`1`), DataType: "json"})
 		require.ErrorIs(t, err, ErrFenced)
-		row, err := h.app.storage.GetHistoryEvent(h.app.ctx, "lease", "receive:inbox:1")
+		row, err := h.app.storage.GetHistoryEvent(h.app.ctx, "lease", "#1")
 		require.NoError(t, err)
 		require.Nil(t, row)
 		next, err := h.app.storage.NextSignal(h.app.ctx, "lease", "inbox")
@@ -214,7 +214,7 @@ func testCancelWhileReceivingStaysCancelled(t *testing.T, factory replayAppFacto
 	require.NoError(t, CancelWorkflow(h.app.ctx, h.app, id, "stop"))
 	require.ErrorIs(t, h.RunOnce(id), context.Canceled)
 	assertCancelledRun(t, h, id)
-	row, err := h.app.storage.GetHistoryEvent(h.app.ctx, id, "receive:inbox:1")
+	row, err := h.app.storage.GetHistoryEvent(h.app.ctx, id, "#1")
 	require.NoError(t, err)
 	require.Equal(t, storage.HistorySignalCancelled, row.EventType)
 	next, err := h.app.storage.NextSignal(h.app.ctx, id, "inbox")
@@ -332,7 +332,7 @@ func testSignalsNotLostRandomized(t *testing.T, factory replayAppFactory) {
 	assertCompletedLeaseRun(t, h, id)
 	for c := range 6 {
 		for i := 1; i <= 5; i++ {
-			row, err := h.app.storage.GetHistoryEvent(h.app.ctx, id, fmt.Sprintf("receive:%d:%d", c, i))
+			row, err := h.app.storage.GetHistoryEvent(h.app.ctx, id, fmt.Sprintf("#%d", c*5+i))
 			require.NoError(t, err)
 			require.Equal(t, fmt.Sprint(i), string(row.EventData))
 		}

@@ -137,10 +137,10 @@ var ErrWorkflowAlreadyStarted = errors.New("workflow already started")
 // HistoryManager handles workflow execution history.
 type HistoryManager interface {
 	// ReserveHistory inserts a command with a SQL NULL value; matching repeats return the stored row.
-	ReserveHistory(ctx context.Context, f *Fence, instanceID, key, cmd string) (*HistoryEvent, error)
+	ReserveHistory(ctx context.Context, f *Fence, instanceID, key, cmd string, seq int64) (*HistoryEvent, error)
 	// RecordHistory inserts a command and value. Matching repeats preserve the entire first row.
 	RecordHistory(ctx context.Context, f *Fence, event *HistoryEvent) (*HistoryEvent, error)
-	// SetHistoryValueIfNull fills a reservation or inserts a result; the first value wins.
+	// SetHistoryValueIfNull only fills an existing reservation; the first value wins.
 	SetHistoryValueIfNull(ctx context.Context, f *Fence, instanceID, key, cmd string, t HistoryEventType, data []byte) (*HistoryEvent, error)
 	// GetHistoryEvent returns nil, nil when the key does not exist.
 	GetHistoryEvent(ctx context.Context, instanceID, key string) (*HistoryEvent, error)
@@ -157,7 +157,7 @@ type HistoryManager interface {
 // TimerSubscriptionManager handles timer subscriptions.
 type TimerSubscriptionManager interface {
 	// ReserveTimer atomically reserves a sleep and arms its timer with the first expiry.
-	ReserveTimer(context.Context, *Fence, *TimerSubscription) (*HistoryEvent, error)
+	ReserveTimer(context.Context, *Fence, int64, *TimerSubscription) (*HistoryEvent, error)
 	// FireTimer atomically records a timer result, wakes its instance, and removes the subscription.
 	FireTimer(context.Context, *TimerSubscription) error
 

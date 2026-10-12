@@ -53,11 +53,11 @@ func (s *Store) CreateInstance(ctx context.Context, inst *storage.WorkflowInstan
 }
 
 // ReserveHistory delegates to storage with before/after fault hooks and call recording.
-func (s *Store) ReserveHistory(ctx context.Context, f *storage.Fence, id, key, cmd string) (*storage.HistoryEvent, error) {
+func (s *Store) ReserveHistory(ctx context.Context, f *storage.Fence, id, key, cmd string, seq int64) (*storage.HistoryEvent, error) {
 	if err := s.before(ctx, "ReserveHistory"); err != nil {
 		return nil, err
 	}
-	v0, err := s.Storage.ReserveHistory(ctx, f, id, key, cmd)
+	v0, err := s.Storage.ReserveHistory(ctx, f, id, key, cmd, seq)
 	return v0, s.after(ctx, "ReserveHistory", err)
 }
 
@@ -268,11 +268,11 @@ func (s *Store) CloseInstance(ctx context.Context, f storage.Fence, status stora
 }
 
 // ReserveTimer delegates with fault injection.
-func (s *Store) ReserveTimer(ctx context.Context, f *storage.Fence, timer *storage.TimerSubscription) (*storage.HistoryEvent, error) {
+func (s *Store) ReserveTimer(ctx context.Context, f *storage.Fence, seq int64, timer *storage.TimerSubscription) (*storage.HistoryEvent, error) {
 	if err := s.before(ctx, "ReserveTimer"); err != nil {
 		return nil, err
 	}
-	v, err := s.Storage.ReserveTimer(ctx, f, timer)
+	v, err := s.Storage.ReserveTimer(ctx, f, seq, timer)
 	return v, s.after(ctx, "ReserveTimer", err)
 }
 

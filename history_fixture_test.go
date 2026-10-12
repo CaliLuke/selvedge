@@ -2,6 +2,7 @@ package selvedge
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,14 +12,36 @@ import (
 )
 
 func fixtureRecord(ctx context.Context, s storage.Storage, ev *storage.HistoryEvent) (*storage.HistoryEvent, error) {
-	if ev.EventType == storage.HistoryActivityCompleted || ev.EventType == storage.HistoryActivityFailed || ev.EventType == storage.HistoryTimerExpired {
-		return s.SetHistoryValueIfNull(ctx, nil, ev.InstanceID, ev.ActivityID, ev.Command, ev.EventType, ev.EventData)
+	if ev.Seq == 0 && !strings.HasPrefix(ev.ActivityID, "$") {
+		err := s.Conn(ctx).QueryRowContext(ctx, `SELECT COALESCE((SELECT seq FROM workflow_history WHERE instance_id=$1 AND activity_id=$2),(SELECT COALESCE(MAX(seq),0)+1 FROM workflow_history WHERE instance_id=$1))`, ev.InstanceID, ev.ActivityID).Scan(&ev.Seq)
+		if err != nil {
+			return nil, err
+		}
 	}
-	_, err := s.Conn(ctx).ExecContext(ctx, `INSERT INTO workflow_history (instance_id,activity_id,command,event_type,event_data,data_type) VALUES ($1,$2,$3,$4,$5,$6)`, ev.InstanceID, ev.ActivityID, ev.Command, ev.EventType, string(ev.EventData), ev.DataType)
+	instance, err := s.GetInstance(ctx, ev.InstanceID)
 	if err != nil {
 		return nil, err
 	}
-	return s.GetHistoryEvent(ctx, ev.InstanceID, ev.ActivityID)
+	f := storage.Fence{InstanceID: ev.InstanceID, Owner: instance.LeaseOwner, Epoch: instance.LeaseEpoch}
+	if f.Owner == "" {
+		var ok bool
+		f, ok, err = s.AcquireLease(ctx, ev.InstanceID, "fixture", time.Hour)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, storage.ErrFenced
+		}
+		defer func() { _ = s.ReleaseLease(ctx, f, true) }()
+	}
+	if ev.EventType == storage.HistoryActivityCompleted || ev.EventType == storage.HistoryActivityFailed || ev.EventType == storage.HistoryTimerExpired {
+		_, err := s.ReserveHistory(ctx, &f, ev.InstanceID, ev.ActivityID, ev.Command, ev.Seq)
+		if err != nil {
+			return nil, err
+		}
+		return s.SetHistoryValueIfNull(ctx, nil, ev.InstanceID, ev.ActivityID, ev.Command, ev.EventType, ev.EventData)
+	}
+	return s.RecordHistory(ctx, &f, ev)
 }
 
 func fixtureFence(t *testing.T, s storage.Storage, id string) *storage.Fence {

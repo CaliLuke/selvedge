@@ -53,59 +53,138 @@ type ExecutionContext struct {
 	fence      storage.Fence
 	execution  *Execution
 
-	// Activity tracking
-	activityCounter map[string]int
-	counterMu       sync.Mutex
-
-	// Replay state
-	history      []*storage.HistoryEvent
-	historyIndex int
-	isReplaying  bool
-
-	// Raw recorded rows; values are decoded by their typed caller.
-	claimed  map[string]string
-	recorded map[string]*storage.HistoryEvent
-	fatal    error
-
-	// Replay statistics
-	cacheHits     int
-	newActivities int
+	mu                       sync.Mutex
+	bySeq                    map[int64]*storage.HistoryEvent
+	byKey                    map[string]*storage.HistoryEvent
+	issuedKeys               map[string]bool
+	seq, maxRecordedSeq      int64
+	replaying                bool
+	fatal                    error
+	cacheHits, newActivities int
 }
 
 // NewExecutionContext creates standalone execution tracking without storage.
 func NewExecutionContext(ctx context.Context, instanceID string) *ExecutionContext {
-	return &ExecutionContext{ctx: ctx, instanceID: instanceID, activityCounter: make(map[string]int), claimed: make(map[string]string), recorded: make(map[string]*storage.HistoryEvent)}
+	return &ExecutionContext{ctx: ctx, instanceID: instanceID, bySeq: make(map[int64]*storage.HistoryEvent), byKey: make(map[string]*storage.HistoryEvent), issuedKeys: make(map[string]bool)}
 }
 
-// Claim checks issue uniqueness and the recorded command before any side effect.
-func (ec *ExecutionContext) Claim(key, cmd string) (*storage.HistoryEvent, bool, error) {
+// Command identifies one position in the workflow's command history.
+type Command struct {
+	Seq       int64
+	Key       string
+	Recorded  *storage.HistoryEvent
+	name      string
+	execution *ExecutionContext
+}
+
+// End ends the caller's command scope. S7b adds coroutine ownership here.
+func (c *Command) End() {}
+
+// Issue validates issue order and identity before hooks, user code, or writes.
+func (ec *ExecutionContext) Issue(cmd, explicitKey string) (*Command, error) {
 	if err := ec.Check(); err != nil {
-		return nil, false, err
+		return nil, err
 	}
-	ec.counterMu.Lock()
-	_, duplicate := ec.claimed[key]
-	if ec.claimed == nil {
-		ec.claimed = make(map[string]string)
+	ec.mu.Lock()
+	defer ec.mu.Unlock()
+	if ec.fatal != nil {
+		return nil, ec.fatal
 	}
-	if !duplicate {
-		ec.claimed[key] = cmd
+	ec.seq++
+	key := explicitKey
+	if key == "" {
+		key = fmt.Sprintf("#%d", ec.seq)
 	}
-	event, found := ec.recorded[key]
-	ec.counterMu.Unlock()
-	if duplicate {
-		ec.Fail(storage.ErrHistoryKeyConflict)
-		return nil, false, ec.Fatal()
+	if ec.issuedKeys[key] {
+		ec.fatal = storage.ErrHistoryKeyConflict
+		return nil, ec.fatal
 	}
-	if found && event.Command != cmd {
-		ec.Fail(ErrDeterminismViolation)
-		return nil, false, ec.Fatal()
+	if ec.issuedKeys == nil {
+		ec.issuedKeys = make(map[string]bool)
 	}
-	if found {
-		ec.counterMu.Lock()
+	ec.issuedKeys[key] = true
+	row := ec.bySeq[ec.seq]
+	ec.replaying = row != nil && row.EventData != nil
+	if row != nil && (row.Command != cmd || row.ActivityID != key) {
+		ec.fatal = &NondeterminismError{Seq: ec.seq, Key: key, Recorded: row.Command, Issued: cmd, Reason: "command or key changed at recorded position"}
+	} else if row == nil && ec.byKey[key] != nil {
+		ec.fatal = &NondeterminismError{Seq: ec.seq, Key: key, Recorded: ec.byKey[key].Command, Issued: cmd, Reason: "key moved from recorded position"}
+	}
+	if ec.fatal != nil {
+		return nil, ec.fatal
+	}
+	if ec.replaying {
 		ec.cacheHits++
-		ec.counterMu.Unlock()
 	}
-	return event, found, nil
+	return &Command{Seq: ec.seq, Key: key, Recorded: row, name: cmd, execution: ec}, nil
+}
+
+// Position is the most recently issued command position.
+func (ec *ExecutionContext) Position() int64 { ec.mu.Lock(); defer ec.mu.Unlock(); return ec.seq }
+
+// Replaying reports whether the current command has a recorded observation.
+func (ec *ExecutionContext) Replaying() bool { ec.mu.Lock(); defer ec.mu.Unlock(); return ec.replaying }
+
+func (ec *ExecutionContext) checkLeftover() error {
+	ec.mu.Lock()
+	defer ec.mu.Unlock()
+	if ec.fatal != nil {
+		return ec.fatal
+	}
+	if ec.seq < ec.maxRecordedSeq {
+		row := ec.bySeq[ec.seq+1]
+		if row == nil {
+			// S7a can contain gaps after a swallowed empty receive.
+			for seq, recorded := range ec.bySeq {
+				if seq > ec.seq && (row == nil || seq < row.Seq) {
+					row = recorded
+				}
+			}
+		}
+		if row != nil {
+			ec.fatal = &NondeterminismError{Seq: row.Seq, Key: row.ActivityID, Recorded: row.Command, Reason: "execution stopped before recorded command"}
+		}
+	}
+	return ec.fatal
+}
+
+// Reserve persists an activity's command before its side effect.
+func (c *Command) Reserve(ctx context.Context) error {
+	ec := c.execution
+	if err := ec.Check(); err != nil {
+		return err
+	}
+	if ec.engine == nil {
+		return nil
+	}
+	_, err := ec.Storage().ReserveHistory(ctx, ec.Fence(), ec.instanceID, c.Key, c.name, c.Seq)
+	if err != nil {
+		ec.Fail(err)
+	}
+	return err
+}
+
+// StoreActivityOutcome fills only an already reserved activity command.
+func (c *Command) StoreActivityOutcome(ctx context.Context, t storage.HistoryEventType, payload []byte) (*storage.HistoryEvent, error) {
+	ec := c.execution
+	// Class 3 may finish after another command failed, but not after lease loss.
+	if ec.execution != nil {
+		if err := ec.execution.Check(); err != nil {
+			ec.Fail(err)
+			return nil, err
+		}
+	}
+	ec.mu.Lock()
+	ec.newActivities++
+	ec.mu.Unlock()
+	if ec.engine == nil {
+		return &storage.HistoryEvent{Seq: c.Seq, InstanceID: ec.instanceID, ActivityID: c.Key, Command: c.name, EventType: t, EventData: payload, DataType: "json"}, nil
+	}
+	row, err := ec.Storage().SetHistoryValueIfNull(ctx, nil, ec.instanceID, c.Key, c.name, t, payload)
+	if err != nil {
+		ec.Fail(err)
+	}
+	return row, err
 }
 
 // Context returns the underlying context.Context.
@@ -118,35 +197,10 @@ func (ec *ExecutionContext) InstanceID() string {
 	return ec.instanceID
 }
 
-// IsReplaying returns true if the workflow is being replayed.
-func (ec *ExecutionContext) IsReplaying() bool {
-	return ec.isReplaying
-}
-
-// GenerateActivityID generates a unique activity ID for the given activity name.
-func (ec *ExecutionContext) GenerateActivityID(activityName string) string {
-	ec.counterMu.Lock()
-	defer ec.counterMu.Unlock()
-
-	ec.activityCounter[activityName]++
-	return fmt.Sprintf("%s:%d", activityName, ec.activityCounter[activityName])
-}
-
-// Lookup retrieves a raw recorded row by its history key.
-func (ec *ExecutionContext) Lookup(key string) (*storage.HistoryEvent, bool) {
-	ec.counterMu.Lock()
-	defer ec.counterMu.Unlock()
-	event, ok := ec.recorded[key]
-	if ok {
-		ec.cacheHits++
-	}
-	return event, ok
-}
-
 // Fail marks an execution as failed even if workflow code catches the error.
 func (ec *ExecutionContext) Fail(err error) {
-	ec.counterMu.Lock()
-	defer ec.counterMu.Unlock()
+	ec.mu.Lock()
+	defer ec.mu.Unlock()
 	if ec.fatal == nil {
 		ec.fatal = err
 	}
@@ -154,42 +208,9 @@ func (ec *ExecutionContext) Fail(err error) {
 
 // Fatal returns the first failure that must terminate this execution.
 func (ec *ExecutionContext) Fatal() error {
-	ec.counterMu.Lock()
-	defer ec.counterMu.Unlock()
+	ec.mu.Lock()
+	defer ec.mu.Unlock()
 	return ec.fatal
-}
-
-// RecordActivityID records that an activity has been executed.
-func (ec *ExecutionContext) RecordActivityID(activityID string) {
-	// This is called after activity execution to track which activities have run
-}
-
-// RecordActivityResultWithContext records an already-encoded activity outcome.
-func (ec *ExecutionContext) RecordActivityResultWithContext(ctx context.Context, key string, eventType storage.HistoryEventType, payload []byte) (*storage.HistoryEvent, error) {
-	if ec.execution != nil {
-		if err := ec.execution.Check(); err != nil {
-			ec.Fail(err)
-			return nil, err
-		}
-	}
-	ec.counterMu.Lock()
-	ec.newActivities++
-	cmd := ec.claimed[key]
-	ec.counterMu.Unlock()
-	if ec.engine == nil {
-		return &storage.HistoryEvent{InstanceID: ec.instanceID, ActivityID: key, Command: cmd, EventType: eventType, EventData: payload, DataType: "json"}, nil
-	}
-	event, err := ec.engine.recordActivityPayload(ctx, ec.instanceID, key, cmd, eventType, payload)
-	if errors.Is(err, storage.ErrHistoryKeyConflict) || errors.Is(err, storage.ErrFenced) || errors.Is(err, ErrLeaseLost) {
-		ec.Fail(err)
-	}
-	if err != nil {
-		return nil, err
-	}
-	ec.counterMu.Lock()
-	ec.recorded[key] = event
-	ec.counterMu.Unlock()
-	return event, nil
 }
 
 // Storage returns the storage interface for advanced use cases.
@@ -259,35 +280,29 @@ func (e *Engine) executeWorkflow(ctx context.Context, instanceID string, runner 
 
 	// Keep raw rows even when their payload is invalid JSON. The typed caller
 	// must fail decoding rather than treating a corrupt result as unrecorded.
-	recorded := make(map[string]*storage.HistoryEvent)
+
+	execCtx := NewExecutionContext(ctx, instanceID)
+	execCtx.engine, execCtx.fence, execCtx.execution = e, f, x
 	historyCount := 0
 	for {
 		event, ok := iter.Next()
 		if !ok {
 			break
 		}
+		if event.Seq == 0 {
+			continue
+		}
 		historyCount++
-		recorded[event.ActivityID] = event
+		execCtx.byKey[event.ActivityID] = event
+		execCtx.bySeq[event.Seq] = event
+		if event.Seq > execCtx.maxRecordedSeq {
+			execCtx.maxRecordedSeq = event.Seq
+		}
 	}
 	if err := iter.Err(); err != nil {
 		return fmt.Errorf("failed to load history: %w", err)
 	}
-
-	// Create execution context
 	isReplaying := historyCount > 0
-	execCtx := &ExecutionContext{
-		ctx:             ctx,
-		instanceID:      instanceID,
-		engine:          e,
-		fence:           f,
-		execution:       x,
-		activityCounter: make(map[string]int),
-		history:         nil, // History is processed via iterator, not stored
-		historyIndex:    0,
-		isReplaying:     isReplaying,
-		recorded:        recorded,
-		claimed:         make(map[string]string),
-	}
 
 	startTime := time.Now()
 
@@ -310,7 +325,7 @@ func (e *Engine) executeWorkflow(ctx context.Context, instanceID string, runner 
 
 	// Execute the workflow
 	result, err := runner(execCtx)
-	if fatal := execCtx.Fatal(); fatal != nil {
+	if fatal := execCtx.checkLeftover(); fatal != nil {
 		err = fatal
 	}
 
@@ -401,34 +416,6 @@ func validateSuspendSignal(sig *SuspendSignal) error {
 	default:
 		return fmt.Errorf("unknown suspend type: %v", sig.Type)
 	}
-}
-
-// RecordActivityResult records an activity result in history.
-func (e *Engine) RecordActivityResult(
-	ctx context.Context,
-	instanceID string,
-	activityID string,
-	command string,
-	result any,
-	activityErr error,
-) (*storage.HistoryEvent, error) {
-	eventType := storage.HistoryActivityCompleted
-	var payload []byte
-	if activityErr != nil {
-		eventType = storage.HistoryActivityFailed
-		payload = e.codec.Encode(activityErr)
-	} else {
-		var err error
-		payload, err = json.Marshal(result)
-		if err != nil {
-			return nil, fmt.Errorf("failed to serialize result: %w", err)
-		}
-	}
-	return e.recordActivityPayload(ctx, instanceID, activityID, command, eventType, payload)
-}
-
-func (e *Engine) recordActivityPayload(ctx context.Context, instanceID, activityID, command string, eventType storage.HistoryEventType, payload []byte) (*storage.HistoryEvent, error) {
-	return e.storage.SetHistoryValueIfNull(ctx, nil, instanceID, activityID, command, eventType, payload)
 }
 
 // Fence returns the token for this execution's guarded writes.

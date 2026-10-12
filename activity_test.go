@@ -139,19 +139,19 @@ func TestActivity_Execute_CacheHit(t *testing.T) {
 			historyCache := map[string]any{
 				"test_activity:1": tt.cachedResult,
 			}
-			wfCtx := workflowContextWithRecordedHistory(t, historyCache)
+			workflowContextWithRecordedHistory(t, historyCache, func(wfCtx *WorkflowContext) {
+				result, err := activity.Execute(wfCtx, "input")
 
-			result, err := activity.Execute(wfCtx, "input")
+				assert.False(t, fnCalled, "activity function should not be called on cache hit")
 
-			assert.False(t, fnCalled, "activity function should not be called on cache hit")
-
-			if tt.wantErr {
-				require.Error(t, err)
-				assert.Equal(t, tt.wantResult, result)
-			} else {
-				require.NoError(t, err)
-				assert.Equal(t, tt.wantResult, result)
-			}
+				if tt.wantErr {
+					require.Error(t, err)
+					assert.Equal(t, tt.wantResult, result)
+				} else {
+					require.NoError(t, err)
+					assert.Equal(t, tt.wantResult, result)
+				}
+			})
 		})
 	}
 }
@@ -166,7 +166,7 @@ func TestActivity_Execute_WithActivityID(t *testing.T) {
 		{
 			name:         "auto-generated ID",
 			providedID:   "",
-			expectID:     "my_activity:1",
+			expectID:     "#1",
 			useAutoGenID: true,
 		},
 		{
@@ -185,20 +185,21 @@ func TestActivity_Execute_WithActivityID(t *testing.T) {
 				},
 			)
 
-			wfCtx := workflowContextWithRecordedHistory(t, nil)
+			workflowContextWithRecordedHistory(t, nil, func(wfCtx *WorkflowContext) {
+				var opts []ExecuteOption
+				if tt.providedID != "" {
+					opts = append(opts, WithActivityID(tt.providedID))
+				}
 
-			var opts []ExecuteOption
-			if tt.providedID != "" {
-				opts = append(opts, WithActivityID(tt.providedID))
-			}
+				result, err := activity.Execute(wfCtx, "input", opts...)
+				require.NoError(t, err)
+				assert.Equal(t, "result", result)
 
-			result, err := activity.Execute(wfCtx, "input", opts...)
-			require.NoError(t, err)
-			assert.Equal(t, "result", result)
-
-			cachedResult, found := wfCtx.lookupRecorded(tt.expectID)
-			assert.True(t, found, "result should be cached with expected ID")
-			assert.JSONEq(t, `"result"`, string(cachedResult.EventData))
+				cachedResult, err := wfCtx.Storage().GetHistoryEvent(wfCtx.Context(), wfCtx.InstanceID(), tt.expectID)
+				require.NoError(t, err)
+				require.NotNil(t, cachedResult)
+				assert.JSONEq(t, `"result"`, string(cachedResult.EventData))
+			})
 		})
 	}
 }
@@ -214,7 +215,7 @@ func TestActivity_executeWithRetry_SuccessOnFirstTry(t *testing.T) {
 	)
 
 	ctx := context.Background()
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", false)
+	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow")
 
 	result, err := activity.executeWithRetry(wfCtx, "input", "test:1")
 
@@ -237,7 +238,7 @@ func TestActivity_executeWithRetry_SuccessAfterRetries(t *testing.T) {
 	)
 
 	ctx := context.Background()
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", false)
+	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow")
 
 	result, err := activity.executeWithRetry(wfCtx, "input", "test:1")
 
@@ -257,7 +258,7 @@ func TestActivity_executeWithRetry_ExhaustedRetries(t *testing.T) {
 	)
 
 	ctx := context.Background()
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", false)
+	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow")
 
 	result, err := activity.executeWithRetry(wfCtx, "input", "test:1")
 
@@ -282,7 +283,7 @@ func TestActivity_executeWithRetry_TerminalErrorNoRetry(t *testing.T) {
 	)
 
 	ctx := context.Background()
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", false)
+	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow")
 
 	result, err := activity.executeWithRetry(wfCtx, "input", "test:1")
 
@@ -301,7 +302,7 @@ func TestActivity_executeWithRetry_ContextCancellation(t *testing.T) {
 	)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", false)
+	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow")
 
 	go func() {
 		time.Sleep(50 * time.Millisecond)
@@ -329,7 +330,7 @@ func TestActivity_executeWithRetry_Timeout(t *testing.T) {
 	)
 
 	ctx := context.Background()
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", false)
+	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow")
 
 	_, err := activity.executeWithRetry(wfCtx, "input", "test:1")
 
@@ -374,7 +375,7 @@ func TestActivity_Execute_NonTransactional_NoStorage(t *testing.T) {
 	)
 
 	ctx := context.Background()
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", false)
+	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow")
 
 	result, err := activity.Execute(wfCtx, "input")
 
@@ -382,8 +383,7 @@ func TestActivity_Execute_NonTransactional_NoStorage(t *testing.T) {
 	assert.Equal(t, "result", result)
 	assert.True(t, fnCalled)
 
-	_, found := wfCtx.lookupRecorded("test:1")
-	assert.False(t, found)
+	assert.Nil(t, wfCtx.Storage())
 }
 
 func TestActivity_Execute_Error_NoStorage(t *testing.T) {
@@ -395,7 +395,7 @@ func TestActivity_Execute_Error_NoStorage(t *testing.T) {
 	)
 
 	ctx := context.Background()
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", false)
+	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow")
 
 	result, err := activity.Execute(wfCtx, "input")
 
@@ -403,8 +403,7 @@ func TestActivity_Execute_Error_NoStorage(t *testing.T) {
 	assert.Empty(t, result)
 	assert.True(t, IsTerminalError(err))
 
-	_, found := wfCtx.lookupRecorded("test:1")
-	assert.False(t, found)
+	assert.Nil(t, wfCtx.Storage())
 }
 
 func TestActivity_TypedInputOutput(t *testing.T) {
@@ -427,7 +426,7 @@ func TestActivity_TypedInputOutput(t *testing.T) {
 	)
 
 	ctx := context.Background()
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow", false)
+	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow")
 
 	result, err := activity.Execute(wfCtx, Input{Name: "test", Value: 21})
 
