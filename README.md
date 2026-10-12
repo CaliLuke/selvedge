@@ -45,7 +45,22 @@ Channel names pass through unchanged and contain 1–255 bytes. Every signal wak
 
 An uncaught `WorkflowCancelledError` closes the instance as cancelled. A workflow that catches cancellation and returns successfully completes normally. Cancellation does not immediately change the instance status.
 
-Signals have no idempotency key. Receive timeouts are not available.
+Signals have no idempotency key.
+
+`ReceiveWithTimeout[T](ctx, channel, timeout)` returns a signal or an error that
+matches `context.DeadlineExceeded`. A nonpositive timeout records an immediate
+timeout without consuming a pending signal. Positive waits prefer cancellation,
+then a pending signal, then the timer fire. A signal or cancellation retires the
+timer in the same transaction as its observation. A later fire cannot wake the
+instance or change that observation.
+
+`NewTimer(ctx, duration, opts...)` returns a `*Timer` without suspending the
+workflow. `Timer.Key()` returns its history key. `Timer.IsReady()` reads the
+delivered view, like activity futures. `Timer.Get(ctx)` returns the recorded
+expiry time or cancellation and caches that outcome for this execution.
+A nonpositive duration expires immediately. `Sleep` and `NewTimer` followed by
+`Get` share the same command and support replay with either form. Timer Get
+consumes no command position and delivers no batch.
 
 `Await(ctx, cond)` waits until a predicate is true in the delivered view.
 `future.IsReady()` reports whether the future has been delivered or a Get has

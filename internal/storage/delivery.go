@@ -104,7 +104,7 @@ func (s signalStore) commitObservation(ctx context.Context, f *Fence, c *Observa
 	if f == nil {
 		return nil, rejectFence(ctx)
 	}
-	if c == nil || c.Seq <= 0 || (c.Record == nil) == (c.Fill == nil) || (c.DeliverAll && c.Batch != nil) || c.Retire != nil {
+	if c == nil || c.Seq <= 0 || (c.Record == nil) == (c.Fill == nil) || (c.DeliverAll && c.Batch != nil) {
 		return nil, errors.New("invalid observation commit")
 	}
 	key, command := "", ""
@@ -161,6 +161,14 @@ func (s signalStore) commitObservation(ctx context.Context, f *Fence, c *Observa
 			if c.Fill != nil {
 				result.Stored, err = writeHistory(ctx, conn, &HistoryEvent{InstanceID: f.InstanceID, ActivityID: key, Command: command, EventType: c.Fill.EventType, EventData: c.Fill.EventData}, true)
 				if err != nil {
+					return err
+				}
+			}
+			if c.Retire != nil {
+				if _, err := writeHistory(ctx, conn, &HistoryEvent{InstanceID: f.InstanceID, ActivityID: c.Retire.Key, Command: "sleep", EventType: HistoryTimerSuperseded, EventData: []byte(`true`)}, true); err != nil {
+					return err
+				}
+				if _, err := conn.ExecContext(ctx, `DELETE FROM workflow_timer_subscriptions WHERE instance_id=$1 AND timer_id=$2`, f.InstanceID, c.Retire.Key); err != nil {
 					return err
 				}
 			}

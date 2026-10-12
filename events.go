@@ -2,6 +2,7 @@ package selvedge
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/CaliLuke/selvedge/hooks"
@@ -42,7 +43,7 @@ func Sleep(ctx *WorkflowContext, duration time.Duration, opts ...SleepOption) er
 		return sleepOutcome(ctx, event)
 	}
 	if duration <= 0 && event == nil {
-		stored, err := ctx.execCtx.Storage().RecordHistory(ctx.Context(), ctx.execCtx.Fence(), &storage.HistoryEvent{Seq: cmd.Seq, InstanceID: ctx.InstanceID(), ActivityID: timerID, Command: "sleep", EventType: storage.HistoryTimerExpired, EventData: []byte(`true`), DataType: "json"})
+		stored, err := ctx.execCtx.Storage().RecordHistory(ctx.Context(), ctx.execCtx.Fence(), immediateTimerEvent(ctx.InstanceID(), timerID, cmd.Seq))
 		if err != nil {
 			ctx.execCtx.Fail(err)
 			return err
@@ -109,10 +110,16 @@ func cancellationAtYield(ctx *WorkflowContext) (*WorkflowCancelledError, error) 
 }
 
 func sleepOutcome(ctx *WorkflowContext, event *storage.HistoryEvent) error {
-	if event.EventType == storage.HistoryTimerCancelled {
+	switch event.EventType {
+	case storage.HistoryTimerExpired:
+		return nil
+	case storage.HistoryTimerCancelled:
 		return replayRecordedError(ctx, event)
+	default:
+		err := fmt.Errorf("internal timer outcome %s at %s", event.EventType, event.ActivityID)
+		ctx.execCtx.Fail(err)
+		return err
 	}
-	return nil
 }
 
 // SleepOption configures sleep behavior.

@@ -48,8 +48,9 @@ const (
 	HistoryActivityFailed    HistoryEventType = "ActivityFailed"
 
 	// Timer expired (via Sleep/SleepUntil)
-	HistoryTimerExpired   HistoryEventType = "TimerExpired"
-	HistoryTimerCancelled HistoryEventType = "TimerCancelled"
+	HistoryTimerExpired    HistoryEventType = "TimerExpired"
+	HistoryTimerCancelled  HistoryEventType = "TimerCancelled"
+	HistoryTimerSuperseded HistoryEventType = "TimerSuperseded"
 
 	// Signal observations contain the payload or a cancellation envelope.
 	HistorySignalReceived  HistoryEventType = "SignalReceived"
@@ -58,6 +59,7 @@ const (
 	HistoryAwaitCompleted HistoryEventType = "AwaitCompleted"
 	HistoryAwaitCancelled HistoryEventType = "AwaitCancelled"
 	HistorySignalNone     HistoryEventType = "SignalNone"
+	HistorySignalTimeout  HistoryEventType = "SignalTimeout"
 
 	// Workflow lifecycle events
 	HistoryWorkflowFailed    HistoryEventType = "WorkflowFailed"

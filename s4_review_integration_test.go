@@ -36,7 +36,9 @@ func TestRunnableNotificationsAfterCommitPostgres(t *testing.T) {
 	require.True(t, ok)
 	_, err = pg.ReserveActivity(h.app.ctx, &f, 1, "activity", "activity:A", &storage.ActivityTask{InstanceID: "lease", ActivityName: "A", InputData: []byte(`null`)})
 	require.NoError(t, err)
-	_, err = pg.ReserveHistory(h.app.ctx, &f, "lease", "pause", "sleep", 2)
+	_, err = pg.ReserveTimer(h.app.ctx, &f, 2, &storage.TimerSubscription{
+		InstanceID: "lease", TimerID: "pause", ActivityID: "pause", ExpiresAt: time.Now(),
+	})
 	require.NoError(t, err)
 	task, err := pg.ClaimActivityTask(h.app.ctx, "lease", "activity", "worker/task", time.Minute)
 	require.NoError(t, err)
