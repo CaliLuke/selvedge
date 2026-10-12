@@ -20,6 +20,7 @@ func WithChildID(id string) ChildOption { return func(o *childOptions) { o.id = 
 // Use its methods serially from the workflow coroutine.
 type Child[O any] struct {
 	exec                       *replay.ExecutionContext
+	scope                      *cancelScope
 	id, key, command           string
 	ready, observed, cancelled bool
 	value                      O
@@ -28,6 +29,7 @@ type Child[O any] struct {
 
 // StartChild starts a workflow by name. Registration is required only on a worker
 // that executes the child. The parent command and child creation commit together.
+// A locally cancelled scope records cancellation without creating an instance.
 func StartChild[O any](ctx *WorkflowContext, workflow string, input any, opts ...ChildOption) (*Child[O], error) {
 	if err := ctx.execCtx.Check(); err != nil {
 		return nil, err
@@ -47,12 +49,14 @@ func StartChild[O any](ctx *WorkflowContext, workflow string, input any, opts ..
 		return nil, err
 	}
 	defer cmd.End()
+	ctx.scope.track(cmd.Key, command, "child")
 	id := options.id
 	if id == "" {
 		id = ctx.InstanceID() + "/" + cmd.Key
 	}
 	row := cmd.Recorded
-	if row != nil {
+	switch {
+	case row != nil:
 		var reservation storage.ChildReservation
 		if err = json.Unmarshal(row.ReservationData, &reservation); err != nil {
 			ctx.execCtx.Fail(err)
@@ -63,7 +67,16 @@ func StartChild[O any](ctx *WorkflowContext, workflow string, input any, opts ..
 			ctx.execCtx.Fail(err)
 			return nil, err
 		}
-	} else {
+	case ctx.scope.locallyCancelled():
+		event := scopeCancelledEvent(ctx, cmd.Key, command, cmd.Seq, storage.HistoryChildCancelled)
+		event.ReservationData, _ = json.Marshal(storage.ChildReservation{ChildID: id, Workflow: workflow})
+		row, err = ctx.execCtx.Storage().RecordHistory(ctx.Context(), ctx.execCtx.Fence(), event)
+		if err != nil {
+			ctx.execCtx.Fail(err)
+			return nil, err
+		}
+		ctx.execCtx.ApplyDelivery(row.DeliveredSeq, storage.DeliveryBatch{HistoryKeys: []string{cmd.Key}})
+	default:
 		row, err = ctx.execCtx.Storage().StartChild(ctx.Context(), ctx.execCtx.Fence(), cmd.Seq, cmd.Key, command, &storage.WorkflowInstance{InstanceID: id, WorkflowName: workflow, InputData: data})
 		if err != nil {
 			ctx.execCtx.Fail(err)
@@ -71,7 +84,7 @@ func StartChild[O any](ctx *WorkflowContext, workflow string, input any, opts ..
 		}
 		ctx.app.wakeDispatcher()
 	}
-	c := &Child[O]{exec: ctx.execCtx, id: id, key: cmd.Key, command: command}
+	c := &Child[O]{exec: ctx.execCtx, scope: ctx.scope, id: id, key: cmd.Key, command: command}
 	if row.EventData != nil {
 		c.readOutcome(row)
 	}
@@ -82,7 +95,7 @@ func StartChild[O any](ctx *WorkflowContext, workflow string, input any, opts ..
 	return c, nil
 }
 
-// ID returns the durable instance ID, including for children not registered here.
+// ID returns the child ID, even when local cancellation prevented its creation.
 func (c *Child[O]) ID() string { return c.id }
 
 // Key returns the parent's child command key.
@@ -124,7 +137,8 @@ func (c *Child[O]) checkExecution(ctx *WorkflowContext) error {
 }
 
 // Get returns the stored outcome and consumes no command position or delivery
-// batch. A stored outcome wins over a parent's durable cancellation request.
+// batch. Cancellation follows the issuing scope, regardless of ctx's scope.
+// A stored outcome wins over cancellation.
 func (c *Child[O]) Get(ctx *WorkflowContext) (O, error) {
 	var zero O
 	end, err := ctx.execCtx.Enter()
@@ -151,16 +165,12 @@ func (c *Child[O]) Get(ctx *WorkflowContext) (O, error) {
 			c.readOutcome(row)
 			return c.outcome(ctx)
 		}
-		requested, err := ctx.execCtx.Storage().IsCancelRequested(ctx.Context(), ctx.InstanceID())
+		cancellation, err := scopeCancellation(ctx, c.scope)
 		if err != nil {
 			ctx.execCtx.Fail(err)
 			return zero, err
 		}
-		if requested {
-			cancellation, err := cancellationAtYield(ctx)
-			if err != nil {
-				return zero, err
-			}
+		if cancellation != nil {
 			row, err = ctx.execCtx.Storage().CancelChild(ctx.Context(), ctx.execCtx.Fence(), &storage.ChildCancel{ChildKey: c.key, ChildCommand: c.command, ChildID: c.id, EventData: encodeError(cancellation)})
 			if err != nil {
 				ctx.execCtx.Fail(err)

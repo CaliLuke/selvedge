@@ -98,6 +98,19 @@ func cancelWorkflowScope(ctx *WorkflowContext) {
 		}
 	}
 	ctx.scope.cancelled = true
+	// Cross-worker and local wakeups happen only after the scope transaction
+	// commits. A batch hint is sufficient: each affected child is runnable.
+	if cmd.Recorded == nil {
+		for _, target := range ctx.scope.targets {
+			if target.Kind == "child" {
+				if notifier, ok := ctx.app.storage.(interface{ NotifyRunnable(context.Context) }); ok {
+					notifier.NotifyRunnable(ctx.Context())
+				}
+				ctx.app.wakeDispatcher()
+				break
+			}
+		}
+	}
 }
 
 // scopeCoroutine keeps the nonblocking cancel guard local to scopes. Go has no
