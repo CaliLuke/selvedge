@@ -49,6 +49,7 @@ type Storage interface {
 
 	ActivityTaskManager
 	ChildManager
+	SnapshotReader
 
 	// Timer Subscription Operations
 	TimerSubscriptionManager

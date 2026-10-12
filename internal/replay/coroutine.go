@@ -15,11 +15,12 @@ var errExecutionClosed = errors.New("workflow execution closed")
 type WaitKind string
 
 const (
-	WaitChild    WaitKind = "child"
-	WaitAwait    WaitKind = "await"
-	WaitActivity WaitKind = "activity"
-	WaitTimer    WaitKind = "timer"
-	WaitSignal   WaitKind = "signal"
+	WaitQueryStop WaitKind = "query_stop"
+	WaitChild     WaitKind = "child"
+	WaitAwait     WaitKind = "await"
+	WaitActivity  WaitKind = "activity"
+	WaitTimer     WaitKind = "timer"
+	WaitSignal    WaitKind = "signal"
 )
 
 // Wait identifies the command that yielded control to the dispatcher.
@@ -91,6 +92,9 @@ func (ec *ExecutionContext) Yield(w Wait) error {
 		err := &NondeterminismError{Seq: w.Seq, Key: w.Key, Reason: "command issued off the workflow coroutine"}
 		ec.Fail(err)
 		return err
+	}
+	if ec.queryMode {
+		w.Kind = WaitQueryStop
 	}
 	ec.running.Store(false)
 	ec.coroutine.outcomes <- coroutineOutcome{wait: &w}

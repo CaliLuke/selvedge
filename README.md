@@ -336,6 +336,57 @@ Like other workflow commands, `Now` must be called serially from workflow
 code. Calls while the coroutine is closing return an error and the floor,
 without writing history.
 
+## Queries and status
+
+`SetQueryHandler(ctx, name, handler)` registers a zero-argument handler for the
+current execution. A registration replaces the previous handler with that name.
+A nil handler removes it. Names contain 1–255 bytes. Registration consumes no
+command position and writes no history. Live executions store handlers without
+calling them. Register handlers on the workflow coroutine, outside Await predicates.
+
+```go
+// Inside the workflow:
+err := selvedge.SetQueryHandler(ctx, "pending", func() (int, error) {
+    return selvedge.Pending(ctx, "results"), nil
+})
+
+// Outside the workflow:
+count, err := selvedge.Query[int](ctx, app, instanceID, "pending")
+```
+
+Each Query takes one consistent database snapshot and replays the workflow from
+its beginning. It stops before the first unrecorded command, blocking wait, or
+other storage action that requires live state. The selected handler runs before
+that replay closes. Each query therefore costs one full replay. Answers are not
+recorded. A later query can reach a later position and return a different answer.
+
+In-memory SQLite databases (`":memory:"` with shared cache) do not use WAL.
+A snapshot on these databases blocks writers for the duration of its read transaction.
+
+Handlers can read local values, Pending, and activity, timer, or child IsReady.
+These reads use the delivered view at the replay position. Arrived events stay
+invisible until a recorded delivery makes them visible. A recorded Get can return
+without delivering other events.
+
+Queries take no lease, fire no hooks, and write no workflow state. Commands and
+guarded calls in handlers return ErrQueryCommand and fail only the query.
+Handler errors and panics return QueryFailedError, which preserves wrapped errors.
+Results always pass through JSON encoding and decoding into the requested type.
+Encoding and decoding errors also return QueryFailedError.
+
+Queries work on running and closed instances. The querying App must register the
+workflow code. Otherwise, Query returns WorkflowNotRegisteredError. A handler
+absent at the replay position returns QueryNotFoundError. An unknown instance
+returns WorkflowNotFoundError. Replay mismatches return the original replay error.
+Caller cancellation is checked at command boundaries. Workflow code and handlers
+must not perform external I/O or block outside workflow commands.
+
+`Describe(ctx, app, instanceID)` returns WorkflowDescription with the workflow
+name, status, cancellation request and reason, parent links, and timestamps.
+WorkflowStatus has four values: StatusRunning, StatusCompleted, StatusFailed, and
+StatusCancelled. A newly created instance reports StatusRunning before execution.
+Describe returns WorkflowNotFoundError for an unknown instance.
+
 ## Storage and migrations
 
 SQLite and PostgreSQL are the supported storage backends. PostgreSQL also supports LISTEN/NOTIFY for workflow wakeups.

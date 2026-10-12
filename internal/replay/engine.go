@@ -56,6 +56,9 @@ type ExecutionContext struct {
 	coroutine                   *coroutine
 	running, closing, inCommand atomic.Bool
 	inPredicate                 atomic.Bool
+	inQueryHandler              atomic.Bool
+	queryMode                   bool
+	queries                     map[string]func() (any, error)
 
 	mu                       sync.Mutex
 	bySeq                    map[int64]*storage.HistoryEvent
@@ -92,6 +95,10 @@ func (ec *ExecutionContext) Issue(cmd, explicitKey string) (*Command, error) {
 	if ec.closing.Load() {
 		return nil, errExecutionClosed
 	}
+	if ec.inQueryHandler.Load() {
+		ec.Fail(ErrQueryCommand)
+		return nil, ErrQueryCommand
+	}
 	if !ec.running.Load() || !ec.inCommand.CompareAndSwap(false, true) {
 		err := &NondeterminismError{Seq: ec.Position() + 1, Key: explicitKey, Issued: cmd, Reason: "command issued off the workflow coroutine"}
 		ec.Fail(err)
@@ -106,6 +113,22 @@ func (ec *ExecutionContext) Issue(cmd, explicitKey string) (*Command, error) {
 	if err := ec.Check(); err != nil {
 		return nil, err
 	}
+	command, err := ec.issueLocked(cmd, explicitKey)
+	if err != nil {
+		return nil, err
+	}
+	if ec.queryMode && command.Recorded == nil {
+		ec.mu.Lock()
+		ec.seq--
+		delete(ec.issuedKeys, command.Key)
+		ec.mu.Unlock()
+		return nil, ec.stopQuery()
+	}
+	issued = true
+	return command, nil
+}
+
+func (ec *ExecutionContext) issueLocked(cmd, explicitKey string) (*Command, error) {
 	ec.mu.Lock()
 	defer ec.mu.Unlock()
 	if ec.fatal != nil {
@@ -137,7 +160,6 @@ func (ec *ExecutionContext) Issue(cmd, explicitKey string) (*Command, error) {
 	if ec.replaying {
 		ec.cacheHits++
 	}
-	issued = true
 	return &Command{Seq: ec.seq, Key: key, Recorded: row, name: cmd, execution: ec}, nil
 }
 
@@ -449,4 +471,9 @@ func (e *Engine) executeWorkflow(ctx context.Context, instanceID string, runner 
 }
 
 // Fence returns the token for this execution's guarded writes.
-func (ec *ExecutionContext) Fence() *storage.Fence { return &ec.fence }
+func (ec *ExecutionContext) Fence() *storage.Fence {
+	if ec.queryMode {
+		return nil
+	}
+	return &ec.fence
+}

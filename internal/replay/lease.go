@@ -123,6 +123,16 @@ func (ec *ExecutionContext) Check() error {
 	}
 	// Commands validate arguments before Issue. Predicate rejection must happen
 	// before that validation too, so every attempted command gets B6's error.
+	if ec.inQueryHandler.Load() {
+		ec.Fail(ErrQueryCommand)
+		return ErrQueryCommand
+	}
+	if ec.queryMode {
+		if err := ec.ctx.Err(); err != nil {
+			ec.Fail(err)
+			return err
+		}
+	}
 	if ec.inPredicate.Load() {
 		err := &NondeterminismError{Seq: ec.Position(), Reason: "command issued off the workflow coroutine"}
 		ec.Fail(err)

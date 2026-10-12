@@ -114,9 +114,11 @@ func (a *Activity[I, O]) ExecuteAsync(ctx *WorkflowContext, input I, opts ...Exe
 		future.readOutcome(cmd.Recorded)
 		return future, nil
 	}
-	if err := RegisterActivity(ctx.app, a); err != nil {
-		ctx.execCtx.Fail(err)
-		return nil, err
+	if !ctx.execCtx.QueryMode() {
+		if err := RegisterActivity(ctx.app, a); err != nil {
+			ctx.execCtx.Fail(err)
+			return nil, err
+		}
 	}
 	if h := ctx.Hooks(); h != nil {
 		h.OnActivityStart(ctx.Context(), hooks.ActivityStartInfo{

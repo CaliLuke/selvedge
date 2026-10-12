@@ -374,6 +374,9 @@ There are three write classes:
     transaction, or create it idempotently by a deterministic child ID. This
     is an assumption, not modelled (Go test `TestChildStartAtomic`).
 
+### Queries
+29. A query runs the workflow's handler against the delivered view at a position q that an acquire replay reaches. The engine takes one consistent snapshot of `hist`, `dpos` and `tpos`. It re-runs the workflow code as `FastForward` in `Acquire` does, and stops at the first unrecorded command, the first blocking yield without a recorded value, or the first other write. q is the position there. The handler sees the handlers registered up to q and the view at q: `IsReady`, `Pending()` and child readiness exactly as rule 19 and rule 22 define them. Events that have arrived but are not delivered are not visible, even when the replay passed a yield whose value a worker wrote. A query issues no commands, takes no lease, sets no runnable flag, fires no hooks and writes nothing; a command in a handler fails the query, not the run. The answer is not recorded, and a later query can see a later q. Not gated: queries are stuttering steps. Go tests `TestQueryReadsDeliveredView` and `TestQueryWritesNothing` must check it.
+
 ## How it maps to loom-mcp's engine interface
 
 | Interface | In the model |
@@ -393,17 +396,15 @@ There are three write classes:
 | `WithCancel` | The cancelled scope. It is observed at yields, propagated to the child, and it cancels B's future. |
 | `WorkflowHandle.Signal`, `Signaler.SignalByID` | `SendSignal(ch)`. |
 | `WorkflowHandle.Cancel`, `Canceler.CancelByID` | `RequestCancel`. |
-| `QueryRunStatus`, `QueryRunCompletion` | Read durable `status` and `hist` (not modelled as actions). |
+| `SetQueryHandler`, `Engine.QueryRootRunID`, `ToolAwaitQuerier` | No action; rule 29 (a read-only replay to q, the handler on the view at q) |
+| `QueryRunStatus`, `QueryRunCompletion` | Read durable `status` and `hist` (`Describe`, `WaitWorkflow`) |
 | `StartWorkflow` | `Init`. |
 
 ## What is deliberately not modelled
 
 - **Data values.** Payloads, typed results and error decoding are not
   modelled (Romancy's decode bug, and its replay of errors as strings).
-- **Queries.** `SetQueryHandler` handlers run workflow code against
-  delivered state, for example `Pending()`, not only against `status` and
-  `hist`. They must read only the delivered view and write nothing. The
-  model has no query action.
+- **Queries.** The model has no query action. A query writes nothing, so it is a stuttering step, and every invariant and liveness property holds with queries added. Rule 29 states what the engine must do.
 - **Versioning markers (S16).** These are not modelled, and neither is
   their interaction with the fail-fast command-mismatch check. A version
   marker must be a recorded command, so that replay of old histories takes
