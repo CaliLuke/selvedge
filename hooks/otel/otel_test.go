@@ -10,7 +10,6 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
-	"go.opentelemetry.io/otel/trace"
 
 	"github.com/CaliLuke/selvedge/hooks"
 )
@@ -285,98 +284,6 @@ func TestActivityCacheHit(t *testing.T) {
 	span := spans[0]
 	if span.Name() != "activity_cache_hit/reserve_inventory" {
 		t.Errorf("expected span name 'activity_cache_hit/reserve_inventory', got %s", span.Name())
-	}
-}
-
-func TestEventHandling(t *testing.T) {
-	h, sr := setupTest()
-	ctx := context.Background()
-
-	// Test event received
-	h.OnEventReceived(ctx, hooks.EventReceivedInfo{
-		EventType:   "payment.completed",
-		EventID:     "evt-001",
-		EventSource: "payment-service",
-		InstanceID:  "wf-123",
-	})
-
-	spans := sr.Ended()
-	if len(spans) != 1 {
-		t.Fatalf("expected 1 span, got %d", len(spans))
-	}
-
-	span := spans[0]
-	if span.Name() != "event_received/payment.completed" {
-		t.Errorf("expected span name 'event_received/payment.completed', got %s", span.Name())
-	}
-	if span.SpanKind() != trace.SpanKindConsumer {
-		t.Errorf("expected SpanKindConsumer, got %v", span.SpanKind())
-	}
-}
-
-func TestEventWait(t *testing.T) {
-	h, sr := setupTest()
-	ctx := context.Background()
-
-	timeout := 30 * time.Second
-
-	// Start waiting for event
-	h.OnEventWaitStart(ctx, hooks.EventWaitStartInfo{
-		InstanceID:   "wf-123",
-		WorkflowName: "order_workflow",
-		EventType:    "payment.completed",
-		Timeout:      &timeout,
-	})
-
-	// Event received
-	h.OnEventWaitComplete(ctx, hooks.EventWaitCompleteInfo{
-		InstanceID:   "wf-123",
-		WorkflowName: "order_workflow",
-		EventType:    "payment.completed",
-		Duration:     5 * time.Second,
-	})
-
-	spans := sr.Ended()
-	if len(spans) != 1 {
-		t.Fatalf("expected 1 span, got %d", len(spans))
-	}
-
-	span := spans[0]
-	if span.Name() != "event_wait/payment.completed" {
-		t.Errorf("expected span name 'event_wait/payment.completed', got %s", span.Name())
-	}
-	if span.Status().Code != codes.Ok {
-		t.Errorf("expected status OK, got %v", span.Status().Code)
-	}
-}
-
-func TestEventTimeout(t *testing.T) {
-	h, sr := setupTest()
-	ctx := context.Background()
-
-	timeout := 30 * time.Second
-
-	h.OnEventWaitStart(ctx, hooks.EventWaitStartInfo{
-		InstanceID:   "wf-123",
-		WorkflowName: "order_workflow",
-		EventType:    "payment.completed",
-		Timeout:      &timeout,
-	})
-
-	h.OnEventTimeout(ctx, hooks.EventTimeoutInfo{
-		InstanceID:   "wf-123",
-		WorkflowName: "order_workflow",
-		EventType:    "payment.completed",
-	})
-
-	spans := sr.Ended()
-	if len(spans) != 1 {
-		t.Fatalf("expected 1 span, got %d", len(spans))
-	}
-
-	span := spans[0]
-	if span.Status().Code != codes.Error {
-		t.Errorf("expected status Error (timeout), got %v", span.Status().Code)
 	}
 }
 

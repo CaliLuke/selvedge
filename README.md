@@ -118,7 +118,15 @@ func main() {
 
 Activities run without a database transaction around user code. Their results and failures are recorded in history before being returned to the workflow. `GetWorkflowContext(ctx)` provides workflow metadata inside an activity.
 
-Workflow code must return suspension signals from signal and timer waits so that the replay engine can suspend the instance.
+Workflow code runs on one coroutine per execution. A pending `Sleep` or `Receive` yields to the dispatcher without returning. The dispatcher closes that coroutine, runs its defers, and releases the lease. A later dispatch replays from the beginning.
+
+Workflow defers must not block: the dispatcher waits for them without a time limit. During coroutine closure, the runtime rejects commands from defers without hooks or writes. Workflow panics and unexpected `runtime.Goexit` calls fail the instance with `*WorkflowPanicError`, including the value and stack. An activity function panic also fails the instance with `*WorkflowPanicError` and is not retried. S15 owns activity retries and can revisit this behavior.
+
+Workflow code must issue workflow commands serially. Commands inside activity functions and overlapping commands from user goroutines fail the run with nondeterminism. The runtime also rejects commands while the workflow coroutine is not running. If a command reaches a blocking yield on a foreign goroutine, Yield returns a sticky nondeterminism error without a dispatcher handoff.
+
+The runtime cannot detect non-overlapping foreign commands that finish without a blocking yield while the workflow coroutine runs pure user code. Such use remains unsupported. Activities can use `GetWorkflowContext` to read metadata.
+
+S7 removes the public `SuspendSignal` family and the unused `OnEvent*` hooks.
 
 ## Storage and migrations
 

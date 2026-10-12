@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/CaliLuke/selvedge/internal/replay"
 	"github.com/CaliLuke/selvedge/internal/storage"
 )
 
@@ -35,10 +36,10 @@ func (a *App) Signal(ctx context.Context, instanceID, channel string, payload an
 
 // Receive returns the next signal from this instance's channel in arrival order.
 // Replay returns the recorded payload. Cancellation is observed before consuming
-// a pending signal. An empty inbox suspends; callers must propagate that error.
+// a pending signal. An empty inbox yields to the dispatcher without returning.
 func Receive[T any](ctx *WorkflowContext, channel string) (T, error) {
 	var zero T
-	if err := ctx.execCtx.Fatal(); err != nil {
+	if err := ctx.execCtx.Check(); err != nil {
 		return zero, err
 	}
 	if channel == "" || len(channel) > 255 {
@@ -79,7 +80,7 @@ func Receive[T any](ctx *WorkflowContext, channel string) (T, error) {
 		return zero, err
 	}
 	if signal == nil {
-		return zero, NewSignalSuspend(ctx.InstanceID(), channel, key)
+		return zero, ctx.execCtx.Yield(replay.Wait{Seq: cmd.Seq, Kind: replay.WaitSignal, Key: key})
 	}
 	stored, err := s.ConsumeSignal(ctx.Context(), ctx.execCtx.Fence(), signal.ID, &storage.HistoryEvent{Seq: cmd.Seq, InstanceID: ctx.InstanceID(), ActivityID: key, Command: command, EventType: storage.HistorySignalReceived, EventData: signal.Payload, DataType: "json"})
 	if err != nil {

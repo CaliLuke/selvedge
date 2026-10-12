@@ -20,6 +20,7 @@ func ContextWithWorkflowContext(ctx context.Context, wfCtx *WorkflowContext) con
 }
 
 // GetWorkflowContext retrieves workflow metadata from an activity context.
+// Activities must not issue workflow commands through this context.
 // Returns nil if the context does not contain a WorkflowContext.
 func GetWorkflowContext(ctx context.Context) *WorkflowContext {
 	if v := ctx.Value(workflowContextKey{}); v != nil {
@@ -49,7 +50,7 @@ type WorkflowContext struct {
 }
 
 // NewWorkflowContext creates a standalone context without recorded history.
-// Replay state is determined by the commands issued through the context.
+// Commands require an engine-managed workflow coroutine.
 func NewWorkflowContext(
 	ctx context.Context,
 	instanceID, workerID, workflowName string,

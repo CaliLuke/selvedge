@@ -13,6 +13,7 @@ import (
 	"github.com/CaliLuke/selvedge/hooks"
 	"github.com/CaliLuke/selvedge/internal/replay"
 	"github.com/CaliLuke/selvedge/internal/storage"
+	"github.com/CaliLuke/selvedge/internal/storage/faultstore"
 )
 
 func TestHistoryKeyWrittenOnce(t *testing.T) { testHistoryKeyWrittenOnce(t, createTestApp) }
@@ -156,6 +157,11 @@ func testReplayCommandMismatchFailsFast(t *testing.T, factory replayAppFactory) 
 				return "ignored", nil
 			})
 			id := seedErrorWorkflow(t, h, w)
+			if tc.name == "receive" {
+				require.NoError(t, h.app.Signal(h.app.ctx, id, "messages", "still pending"))
+			}
+			fs := faultstore.New(h.app.storage)
+			h.app.engine = replay.NewEngine(fs, h.app.hooks, "mismatch", errorCodec{})
 			original, err := fixtureRecord(h.app.ctx, h.app.storage, &storage.HistoryEvent{InstanceID: id, ActivityID: tc.key, Command: tc.command, EventType: storage.HistoryActivityCompleted, EventData: []byte(`"recorded"`), DataType: "json"})
 			require.NoError(t, err)
 			runErr := h.RunOnce(id)
@@ -168,6 +174,14 @@ func testReplayCommandMismatchFailsFast(t *testing.T, factory replayAppFactory) 
 			}
 			assertNondeterminism(t, h, id, runErr, 1, tc.command, issued)
 			require.Zero(t, calls)
+			if tc.name == "receive" {
+				require.NotContains(t, fs.Calls(), "NextSignal")
+				require.NotContains(t, fs.Calls(), "ConsumeSignal")
+				pending, readErr := h.app.storage.NextSignal(h.app.ctx, id, "messages")
+				require.NoError(t, readErr)
+				require.NotNil(t, pending)
+				require.JSONEq(t, `"still pending"`, string(pending.Payload))
+			}
 			require.Zero(t, observed.starts, "command validation must precede user hooks")
 			assertHistoryFailure(t, h, id, ErrDeterminismViolation, "nondeterminism")
 			rows, more, err := h.app.storage.GetHistoryPaginated(h.app.ctx, id, 0, 10)
@@ -403,14 +417,15 @@ func TestDuplicateClaimPreservesOriginalCommand(t *testing.T) {
 func testDuplicateClaimPreservesOriginalCommand(t *testing.T, factory replayAppFactory) {
 	t.Helper()
 	h := newTypedReplayHarness(t, factory)
-	a := DefineActivity("A", func(ctx context.Context, _ string) (string, error) {
-		wc := GetWorkflowContext(ctx)
-		_, err := wc.execCtx.Issue("activity:B", "k")
-		require.ErrorIs(t, err, ErrHistoryKeyConflict)
-		return "first", nil
-	})
+	a := DefineActivity("A", func(context.Context, string) (string, error) { return "first", nil })
 	w := DefineWorkflow("original_command", func(ctx *WorkflowContext, input string) (string, error) {
-		return a.Execute(ctx, input, WithActivityID("k"))
+		value, err := a.Execute(ctx, input, WithActivityID("k"))
+		if err != nil {
+			return "", err
+		}
+		_, err = ctx.execCtx.Issue("activity:B", "k")
+		require.ErrorIs(t, err, ErrHistoryKeyConflict)
+		return value, nil
 	})
 	id := seedErrorWorkflow(t, h, w)
 	require.ErrorIs(t, h.RunOnce(id), ErrHistoryKeyConflict)
@@ -456,7 +471,4 @@ type historyMismatchHooks struct {
 }
 
 func (h *historyMismatchHooks) OnActivityStart(context.Context, hooks.ActivityStartInfo) { h.starts++ }
-func (h *historyMismatchHooks) OnEventWaitStart(context.Context, hooks.EventWaitStartInfo) {
-	h.starts++
-}
-func (h *historyMismatchHooks) OnTimerStart(context.Context, hooks.TimerStartInfo) { h.starts++ }
+func (h *historyMismatchHooks) OnTimerStart(context.Context, hooks.TimerStartInfo)       { h.starts++ }

@@ -113,6 +113,9 @@ func (x *Execution) keepAlive(ctx context.Context, s storage.Storage, interval t
 
 // Check stops commands even when workflow code catches an earlier lease failure.
 func (ec *ExecutionContext) Check() error {
+	if ec.closing.Load() {
+		return errExecutionClosed
+	}
 	if err := ec.Fatal(); err != nil {
 		return err
 	}

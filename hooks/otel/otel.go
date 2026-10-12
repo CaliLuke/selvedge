@@ -18,7 +18,7 @@ const (
 )
 
 // OTelHooks implements WorkflowHooks with OpenTelemetry tracing.
-// It creates spans for workflow, activity, event, timer, and replay lifecycle events.
+// It creates spans for workflow, activity, timer, and replay lifecycle events.
 type OTelHooks struct {
 	hooks.NoOpHooks
 	tracer trace.Tracer
@@ -31,9 +31,6 @@ type OTelHooks struct {
 
 	// Map of instance_id:activity_id -> active span for tracking activity spans
 	activitySpans map[string]trace.Span
-
-	// Map of instance_id:event_type -> active span for tracking event wait spans
-	eventWaitSpans map[string]trace.Span
 
 	// Map of instance_id:timer_id -> active span for tracking timer spans
 	timerSpans map[string]trace.Span
@@ -57,7 +54,6 @@ func NewOTelHooks(tracerProvider trace.TracerProvider) *OTelHooks {
 		workflowSpans:    make(map[string]trace.Span),
 		workflowContexts: make(map[string]context.Context),
 		activitySpans:    make(map[string]trace.Span),
-		eventWaitSpans:   make(map[string]trace.Span),
 		timerSpans:       make(map[string]trace.Span),
 		replaySpans:      make(map[string]trace.Span),
 	}
@@ -205,68 +201,6 @@ func (h *OTelHooks) OnActivityCacheHit(ctx context.Context, info hooks.ActivityC
 	)
 	span.SetStatus(codes.Ok, "cache hit")
 	span.End()
-}
-
-// Event handling
-
-func (h *OTelHooks) eventWaitKey(instanceID, eventType string) string {
-	return instanceID + ":" + eventType
-}
-
-// OnEventReceived creates a span for a received event.
-func (h *OTelHooks) OnEventReceived(ctx context.Context, info hooks.EventReceivedInfo) {
-	_, span := h.tracer.Start(ctx, fmt.Sprintf("event_received/%s", info.EventType),
-		trace.WithSpanKind(trace.SpanKindConsumer),
-		trace.WithAttributes(
-			attribute.String("selvedge.event_type", info.EventType),
-			attribute.String("selvedge.event_id", info.EventID),
-			attribute.String("selvedge.event_source", info.EventSource),
-			attribute.String("selvedge.instance_id", info.InstanceID),
-		),
-	)
-	span.SetStatus(codes.Ok, "event received")
-	span.End()
-}
-
-// OnEventWaitStart creates a span when waiting for an event starts.
-func (h *OTelHooks) OnEventWaitStart(ctx context.Context, info hooks.EventWaitStartInfo) {
-	attrs := []attribute.KeyValue{
-		attribute.String("selvedge.instance_id", info.InstanceID),
-		attribute.String("selvedge.workflow_name", info.WorkflowName),
-		attribute.String("selvedge.event_type", info.EventType),
-	}
-	if info.Timeout != nil {
-		attrs = append(attrs, attribute.Int64("selvedge.timeout_ms", info.Timeout.Milliseconds()))
-	}
-
-	_, span := h.tracer.Start(ctx, fmt.Sprintf("event_wait/%s", info.EventType),
-		trace.WithSpanKind(trace.SpanKindInternal),
-		trace.WithAttributes(attrs...),
-	)
-	h.eventWaitSpans[h.eventWaitKey(info.InstanceID, info.EventType)] = span
-}
-
-// OnEventWaitComplete ends the event wait span with success status.
-func (h *OTelHooks) OnEventWaitComplete(ctx context.Context, info hooks.EventWaitCompleteInfo) {
-	key := h.eventWaitKey(info.InstanceID, info.EventType)
-	if span, ok := h.eventWaitSpans[key]; ok {
-		span.SetAttributes(
-			attribute.Int64("selvedge.duration_ms", info.Duration.Milliseconds()),
-		)
-		span.SetStatus(codes.Ok, "event received")
-		span.End()
-		delete(h.eventWaitSpans, key)
-	}
-}
-
-// OnEventTimeout ends the event wait span with timeout status.
-func (h *OTelHooks) OnEventTimeout(ctx context.Context, info hooks.EventTimeoutInfo) {
-	key := h.eventWaitKey(info.InstanceID, info.EventType)
-	if span, ok := h.eventWaitSpans[key]; ok {
-		span.SetStatus(codes.Error, "event timeout")
-		span.End()
-		delete(h.eventWaitSpans, key)
-	}
 }
 
 // Timer handling

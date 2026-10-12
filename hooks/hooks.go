@@ -21,12 +21,6 @@ type WorkflowHooks interface {
 	OnActivityFailed(ctx context.Context, info ActivityFailedInfo)
 	OnActivityRetry(ctx context.Context, info ActivityRetryInfo)
 
-	// Event handling
-	OnEventReceived(ctx context.Context, info EventReceivedInfo)
-	OnEventWaitStart(ctx context.Context, info EventWaitStartInfo)
-	OnEventWaitComplete(ctx context.Context, info EventWaitCompleteInfo)
-	OnEventTimeout(ctx context.Context, info EventTimeoutInfo)
-
 	// Timer handling
 	OnTimerStart(ctx context.Context, info TimerStartInfo)
 	OnTimerFired(ctx context.Context, info TimerFiredInfo)
@@ -122,37 +116,6 @@ type ActivityCacheHitInfo struct {
 	CachedResult any
 }
 
-// EventReceivedInfo contains information about a received event.
-type EventReceivedInfo struct {
-	EventType   string
-	EventID     string
-	EventSource string
-	InstanceID  string
-}
-
-// EventWaitStartInfo contains information about starting to wait for an event.
-type EventWaitStartInfo struct {
-	InstanceID   string
-	WorkflowName string
-	EventType    string
-	Timeout      *time.Duration
-}
-
-// EventWaitCompleteInfo contains information about completing an event wait.
-type EventWaitCompleteInfo struct {
-	InstanceID   string
-	WorkflowName string
-	EventType    string
-	Duration     time.Duration
-}
-
-// EventTimeoutInfo contains information about an event timeout.
-type EventTimeoutInfo struct {
-	InstanceID   string
-	WorkflowName string
-	EventType    string
-}
-
 // TimerStartInfo contains information about a timer start.
 type TimerStartInfo struct {
 	InstanceID   string
@@ -198,10 +161,6 @@ func (n *NoOpHooks) OnActivityStart(ctx context.Context, info ActivityStartInfo)
 func (n *NoOpHooks) OnActivityComplete(ctx context.Context, info ActivityCompleteInfo)   {}
 func (n *NoOpHooks) OnActivityFailed(ctx context.Context, info ActivityFailedInfo)       {}
 func (n *NoOpHooks) OnActivityRetry(ctx context.Context, info ActivityRetryInfo)         {}
-func (n *NoOpHooks) OnEventReceived(ctx context.Context, info EventReceivedInfo)         {}
-func (n *NoOpHooks) OnEventWaitStart(ctx context.Context, info EventWaitStartInfo)       {}
-func (n *NoOpHooks) OnEventWaitComplete(ctx context.Context, info EventWaitCompleteInfo) {}
-func (n *NoOpHooks) OnEventTimeout(ctx context.Context, info EventTimeoutInfo)           {}
 func (n *NoOpHooks) OnTimerStart(ctx context.Context, info TimerStartInfo)               {}
 func (n *NoOpHooks) OnTimerFired(ctx context.Context, info TimerFiredInfo)               {}
 func (n *NoOpHooks) OnReplayStart(ctx context.Context, info ReplayStartInfo)             {}

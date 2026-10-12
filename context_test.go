@@ -92,27 +92,26 @@ func TestWorkflowContext_Getters(t *testing.T) {
 }
 
 func TestWorkflowContext_WithContext(t *testing.T) {
-	parentCtx := context.Background()
-	wfCtx := NewWorkflowContext(parentCtx, "inst-1", "worker-1", "workflow")
+	workflowContextWithRecordedHistory(t, nil, func(wfCtx *WorkflowContext) {
+		func() { c, err := wfCtx.execCtx.Issue("activity:counter", ""); require.NoError(t, err); c.End() }()
+		func() { c, err := wfCtx.execCtx.Issue("activity:counter", ""); require.NoError(t, err); c.End() }()
 
-	func() { c, err := wfCtx.execCtx.Issue("activity:counter", ""); require.NoError(t, err); c.End() }()
-	func() { c, err := wfCtx.execCtx.Issue("activity:counter", ""); require.NoError(t, err); c.End() }()
+		newCtx := context.WithValue(context.Background(), testContextKey("key"), "new-value")
+		newWfCtx := wfCtx.WithContext(newCtx)
 
-	newCtx := context.WithValue(context.Background(), testContextKey("key"), "new-value")
-	newWfCtx := wfCtx.WithContext(newCtx)
+		assert.NotEqual(t, wfCtx.Context(), newWfCtx.Context())
+		assert.Equal(t, newCtx, newWfCtx.Context())
 
-	assert.NotEqual(t, wfCtx.Context(), newWfCtx.Context())
-	assert.Equal(t, newCtx, newWfCtx.Context())
+		assert.Equal(t, wfCtx.InstanceID(), newWfCtx.InstanceID())
+		assert.Equal(t, wfCtx.WorkerID(), newWfCtx.WorkerID())
+		assert.Equal(t, wfCtx.WorkflowName(), newWfCtx.WorkflowName())
+		assert.Equal(t, wfCtx.IsReplaying(), newWfCtx.IsReplaying())
 
-	assert.Equal(t, wfCtx.InstanceID(), newWfCtx.InstanceID())
-	assert.Equal(t, wfCtx.WorkerID(), newWfCtx.WorkerID())
-	assert.Equal(t, wfCtx.WorkflowName(), newWfCtx.WorkflowName())
-	assert.Equal(t, wfCtx.IsReplaying(), newWfCtx.IsReplaying())
-
-	cmd, err := newWfCtx.execCtx.Issue("activity:counter", "")
-	require.NoError(t, err)
-	defer cmd.End()
-	assert.Equal(t, "#3", cmd.Key)
+		cmd, err := newWfCtx.execCtx.Issue("activity:counter", "")
+		require.NoError(t, err)
+		defer cmd.End()
+		assert.Equal(t, "#3", cmd.Key)
+	})
 }
 
 func TestWorkflowContext_Cancel(t *testing.T) {

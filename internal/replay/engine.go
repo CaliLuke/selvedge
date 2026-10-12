@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -47,11 +48,13 @@ type WorkflowRunner func(ctx *ExecutionContext) (any, error)
 
 // ExecutionContext provides context for workflow execution.
 type ExecutionContext struct {
-	ctx        context.Context
-	instanceID string
-	engine     *Engine
-	fence      storage.Fence
-	execution  *Execution
+	ctx                         context.Context
+	instanceID                  string
+	engine                      *Engine
+	fence                       storage.Fence
+	execution                   *Execution
+	coroutine                   *coroutine
+	running, closing, inCommand atomic.Bool
 
 	mu                       sync.Mutex
 	bySeq                    map[int64]*storage.HistoryEvent
@@ -77,11 +80,25 @@ type Command struct {
 	execution *ExecutionContext
 }
 
-// End ends the caller's command scope. S7b adds coroutine ownership here.
-func (c *Command) End() {}
+// End releases the command scope after all hooks, user code, and writes.
+func (c *Command) End() { c.execution.inCommand.Store(false) }
 
 // Issue validates issue order and identity before hooks, user code, or writes.
 func (ec *ExecutionContext) Issue(cmd, explicitKey string) (*Command, error) {
+	if ec.closing.Load() {
+		return nil, errExecutionClosed
+	}
+	if !ec.running.Load() || !ec.inCommand.CompareAndSwap(false, true) {
+		err := &NondeterminismError{Seq: ec.Position() + 1, Key: explicitKey, Issued: cmd, Reason: "command issued off the workflow coroutine"}
+		ec.Fail(err)
+		return nil, err
+	}
+	issued := false
+	defer func() {
+		if !issued {
+			ec.inCommand.Store(false)
+		}
+	}()
 	if err := ec.Check(); err != nil {
 		return nil, err
 	}
@@ -116,6 +133,7 @@ func (ec *ExecutionContext) Issue(cmd, explicitKey string) (*Command, error) {
 	if ec.replaying {
 		ec.cacheHits++
 	}
+	issued = true
 	return &Command{Seq: ec.seq, Key: key, Recorded: row, name: cmd, execution: ec}, nil
 }
 
@@ -201,7 +219,7 @@ func (ec *ExecutionContext) InstanceID() string {
 func (ec *ExecutionContext) Fail(err error) {
 	ec.mu.Lock()
 	defer ec.mu.Unlock()
-	if ec.fatal == nil {
+	if ec.fatal == nil && !ec.closing.Load() {
 		ec.fatal = err
 	}
 }
@@ -323,8 +341,16 @@ func (e *Engine) executeWorkflow(ctx context.Context, instanceID string, runner 
 		StartTime:    startTime,
 	})
 
-	// Execute the workflow
-	result, err := runner(execCtx)
+	// Run user code on its coroutine and reclaim it before any lease release.
+	co := startCoroutine(execCtx, runner)
+	outcome := <-co.outcomes
+	if outcome.wait != nil {
+		co.closeBlocked(execCtx)
+		outcome.err = co.closeErr
+	} else {
+		<-co.exited
+	}
+	result, err := outcome.result, outcome.err
 	if fatal := execCtx.checkLeftover(); fatal != nil {
 		err = fatal
 	}
@@ -337,8 +363,8 @@ func (e *Engine) executeWorkflow(ctx context.Context, instanceID string, runner 
 		return errors.Join(err, ctx.Err())
 	}
 
-	if sig := AsSuspendSignal(err); sig != nil {
-		return validateSuspendSignal(sig)
+	if outcome.wait != nil && err == nil {
+		return nil
 	}
 	var resultData []byte
 	if err == nil {
@@ -405,17 +431,6 @@ func (e *Engine) executeWorkflow(ctx context.Context, instanceID string, runner 
 	})
 
 	return nil
-}
-
-// validateSuspendSignal accepts the supported durable waits.
-func validateSuspendSignal(sig *SuspendSignal) error {
-	switch sig.Type {
-	case SuspendForTimer, SuspendForSignal:
-		// Waits are durable already. Run releases the lease without setting runnable.
-		return nil
-	default:
-		return fmt.Errorf("unknown suspend type: %v", sig.Type)
-	}
 }
 
 // Fence returns the token for this execution's guarded writes.

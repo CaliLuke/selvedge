@@ -365,44 +365,15 @@ func TestWithActivityID_Option(t *testing.T) {
 	}
 }
 
-func TestActivity_Execute_NonTransactional_NoStorage(t *testing.T) {
-	var fnCalled bool
-	activity := DefineActivity("test",
-		func(ctx context.Context, input string) (string, error) {
-			fnCalled = true
-			return "result", nil
-		},
-	)
-
-	ctx := context.Background()
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow")
-
-	result, err := activity.Execute(wfCtx, "input")
-
-	require.NoError(t, err)
-	assert.Equal(t, "result", result)
-	assert.True(t, fnCalled)
-
-	assert.Nil(t, wfCtx.Storage())
-}
-
-func TestActivity_Execute_Error_NoStorage(t *testing.T) {
-	expectedErr := NewTerminalError(errors.New("activity error"))
-	activity := DefineActivity("test",
-		func(ctx context.Context, input string) (string, error) {
-			return "", expectedErr
-		},
-	)
-
-	ctx := context.Background()
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow")
-
-	result, err := activity.Execute(wfCtx, "input")
-
-	require.Error(t, err)
-	assert.Empty(t, result)
-	assert.True(t, IsTerminalError(err))
-
+func TestActivity_Execute_WithoutCoroutine(t *testing.T) {
+	called := false
+	activity := DefineActivity("test", func(context.Context, string) (string, error) { called = true; return "result", nil })
+	wfCtx := NewWorkflowContext(context.Background(), "inst-1", "worker-1", "workflow")
+	_, err := activity.Execute(wfCtx, "input")
+	var detail *NondeterminismError
+	require.ErrorAs(t, err, &detail)
+	assert.Equal(t, "command issued off the workflow coroutine", detail.Reason)
+	assert.False(t, called)
 	assert.Nil(t, wfCtx.Storage())
 }
 
@@ -425,12 +396,10 @@ func TestActivity_TypedInputOutput(t *testing.T) {
 		},
 	)
 
-	ctx := context.Background()
-	wfCtx := NewWorkflowContext(ctx, "inst-1", "worker-1", "workflow")
-
-	result, err := activity.Execute(wfCtx, Input{Name: "test", Value: 21})
-
-	require.NoError(t, err)
-	assert.Equal(t, "processed: test", result.Result)
-	assert.Equal(t, 42, result.Sum)
+	workflowContextWithRecordedHistory(t, nil, func(wfCtx *WorkflowContext) {
+		result, err := activity.Execute(wfCtx, Input{Name: "test", Value: 21})
+		require.NoError(t, err)
+		assert.Equal(t, "processed: test", result.Result)
+		assert.Equal(t, 42, result.Sum)
+	})
 }

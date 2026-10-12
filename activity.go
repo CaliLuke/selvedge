@@ -69,7 +69,7 @@ func (a *Activity[I, O]) Execute(
 	opts ...ExecuteOption,
 ) (O, error) {
 	if ctx.execCtx != nil {
-		if err := ctx.execCtx.Fatal(); err != nil {
+		if err := ctx.execCtx.Check(); err != nil {
 			var zero O
 			return zero, err
 		}
@@ -168,7 +168,7 @@ func (a *Activity[I, O]) executeWithRetry(ctx *WorkflowContext, input I, activit
 		}
 
 		// Embed WorkflowContext in the execution context
-		// This allows activities to access workflow features via GetWorkflowContext()
+		// Activities may read workflow metadata, but must not issue commands.
 		execCtx = ContextWithWorkflowContext(execCtx, ctx)
 
 		// Execute the activity
@@ -273,7 +273,7 @@ type executeOptions struct {
 }
 
 // WithActivityID specifies a manual activity ID.
-// Required for concurrent activity execution to maintain determinism.
+// Commands must be issued serially from workflow code.
 // IDs starting with $ or # are reserved.
 // Execute rejects these IDs with ErrHistoryKeyConflict before running the activity.
 func WithActivityID(id string) ExecuteOption {

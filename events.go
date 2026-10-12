@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/CaliLuke/selvedge/hooks"
+	"github.com/CaliLuke/selvedge/internal/replay"
 	"github.com/CaliLuke/selvedge/internal/storage"
 )
 
@@ -13,11 +14,11 @@ import (
 //
 // During replay, if the timer already fired, this returns immediately.
 // Otherwise, it reserves and arms the timer under the execution fence, then
-// returns a SuspendSignal. The engine releases the lease and preserves pending input.
+// yields to the dispatcher. The engine releases the lease and preserves pending input.
 //
 // When the timer expires, the workflow will be resumed.
 func Sleep(ctx *WorkflowContext, duration time.Duration, opts ...SleepOption) error {
-	if err := ctx.execCtx.Fatal(); err != nil {
+	if err := ctx.execCtx.Check(); err != nil {
 		return err
 	}
 	options := &sleepOptions{}
@@ -92,8 +93,7 @@ func Sleep(ctx *WorkflowContext, duration time.Duration, opts ...SleepOption) er
 		})
 	}
 
-	// Return SuspendSignal that the replay engine will handle
-	return NewTimerSuspend(ctx.InstanceID(), timerID, timerID, expiresAt)
+	return ctx.execCtx.Yield(replay.Wait{Seq: cmd.Seq, Kind: replay.WaitTimer, Key: timerID})
 }
 
 func cancellationAtYield(ctx *WorkflowContext) (*WorkflowCancelledError, error) {

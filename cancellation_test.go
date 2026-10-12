@@ -342,14 +342,17 @@ func testCancelObservationReplays(t *testing.T, factory replayAppFactory) {
 				require.ErrorAs(t, err, &cancelled)
 				require.Equal(t, "original reason", cancelled.Reason)
 				observations++
-				if observations == 1 {
-					return "", NewSignalSuspend(ctx.InstanceID(), "inbox", "later")
-				}
 				return "caught", nil
 			})
 			id := seedErrorWorkflow(t, h, w)
 			require.NoError(t, CancelWorkflow(h.app.ctx, h.app, id, "original reason"))
-			require.NoError(t, h.RunOnce(id))
+			fs.Before = func(_ context.Context, method string) error {
+				if method == "CloseInstance" && observations == 1 {
+					return replay.ErrLeaseLost
+				}
+				return nil
+			}
+			require.ErrorIs(t, h.RunOnce(id), replay.ErrLeaseLost)
 			require.NoError(t, fs.MarkRunnable(h.app.ctx, id))
 			require.NoError(t, h.RunOnce(id))
 			require.Equal(t, 2, observations)

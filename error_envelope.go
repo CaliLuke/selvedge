@@ -43,6 +43,9 @@ func envelopeForError(err error) *errorEnvelope {
 	ev := &errorEnvelope{V: 1, Kind: "generic", Message: err.Error()}
 	// Match the current node, not errors.As/Is: those would discard outer wrappers.
 	switch e := err.(type) {
+	case *WorkflowPanicError:
+		ev.Kind = "panic"
+		ev.Details, _ = json.Marshal(e)
 	case *NondeterminismError:
 		ev.Kind = "nondeterminism"
 		ev.Details, _ = json.Marshal(e)
@@ -133,6 +136,12 @@ func errorFromEnvelope(ev *errorEnvelope) error {
 		return &WorkflowCancelledError{InstanceID: ev.InstanceID, Reason: ev.Reason}
 	case "history_key_conflict":
 		return ErrHistoryKeyConflict
+	case "panic":
+		var detail WorkflowPanicError
+		if err := json.Unmarshal(ev.Details, &detail); err != nil {
+			return &ReplayDecodeError{GoType: "selvedge.WorkflowPanicError", Err: err}
+		}
+		return &detail
 	case "nondeterminism":
 		if len(ev.Details) == 0 {
 			return ErrDeterminismViolation

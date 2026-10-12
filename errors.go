@@ -115,36 +115,8 @@ var ErrWorkflowAlreadyStarted = storage.ErrWorkflowAlreadyStarted
 // ErrDeterminismViolation indicates non-deterministic behavior during replay.
 var ErrDeterminismViolation = replay.ErrDeterminismViolation
 
-// ========================================
-// SuspendSignal - Unified Workflow Suspension
-// ========================================
-// Re-exported from internal/replay package to avoid circular dependencies.
-
-// SuspendType represents the type of workflow suspension.
-type SuspendType = replay.SuspendType
-
-// SuspendSignal is returned when a workflow needs to suspend execution.
-// It implements the error interface for compatibility with Go's error handling,
-// but it is NOT an error - it's a control flow signal.
-type SuspendSignal = replay.SuspendSignal
-
-const (
-	// SuspendForTimer indicates the workflow is waiting for a timer to expire.
-	SuspendForTimer = replay.SuspendForTimer
-	// SuspendForSignal indicates the workflow is waiting for a signal.
-	SuspendForSignal = replay.SuspendForSignal
-)
-
-var (
-	// IsSuspendSignal returns true if the error is a SuspendSignal.
-	IsSuspendSignal = replay.IsSuspendSignal
-	// AsSuspendSignal extracts the SuspendSignal from an error if present.
-	AsSuspendSignal = replay.AsSuspendSignal
-	// NewTimerSuspend creates a SuspendSignal for timer waiting.
-	NewTimerSuspend = replay.NewTimerSuspend
-	// NewSignalSuspend creates a SuspendSignal for signal waiting.
-	NewSignalSuspend = replay.NewSignalSuspend
-)
+// WorkflowPanicError preserves a recovered workflow panic and its stack.
+type WorkflowPanicError = replay.WorkflowPanicError
 
 // ApplicationError carries a portable activity or workflow failure.
 // Details must be JSON-serializable and is returned as JSON-decoded data.

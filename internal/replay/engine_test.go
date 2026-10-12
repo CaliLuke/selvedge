@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -159,30 +158,6 @@ func TestEngine_StartWorkflow(t *testing.T) {
 			assert.Equal(t, tt.wantStatus, gotInstance.Status)
 		})
 	}
-}
-
-func TestEngine_StartWorkflow_TimerSuspend(t *testing.T) {
-	store := setupTestStorage(t)
-	engine := NewEngine(store, &hooks.NoOpHooks{}, "worker-1", testErrorCodec{})
-
-	instance := &storage.WorkflowInstance{
-		InstanceID:   "inst-timer",
-		WorkflowName: "test_workflow",
-		Status:       storage.StatusRunning,
-	}
-	require.NoError(t, store.CreateInstance(context.Background(), instance))
-
-	expiresAt := time.Now().Add(1 * time.Hour)
-	runner := func(execCtx *ExecutionContext) (any, error) {
-		return nil, NewTimerSuspend(execCtx.InstanceID(), "timer-1", "timer-1", expiresAt)
-	}
-
-	err := engine.Run(context.Background(), instance.InstanceID, runner)
-	require.NoError(t, err)
-
-	gotInstance, err := store.GetInstance(context.Background(), instance.InstanceID)
-	require.NoError(t, err)
-	assert.Equal(t, storage.StatusRunning, gotInstance.Status)
 }
 
 // The engine only encodes opaque error payloads; root tests exercise the full codec.
