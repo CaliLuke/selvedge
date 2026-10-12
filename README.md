@@ -191,15 +191,20 @@ the deadline has passed since the previous execution.
 
 Values use UTC and contain no monotonic clock reading. Live and replay values
 compare identically with both `==` and `Equal`. Each execution tracks the largest
-time returned so far, including replayed values. Contexts made with
+time returned so far, including replayed values and timer expiries observed by
+`Sleep` or `Timer.Get`. Contexts made with
 `WithContext` share this floor, so a backward clock step cannot lower a later
 live value. On error, `Now` returns the floor and a sticky error that fails the
 execution even if workflow code ignores it.
 
-`WithClock(func() time.Time)` configures the wall clock used by `Now`; the
-default (also for a nil clock) is `time.Now`. It does not change lease clocks
-or timer behavior. Timer expiry and fired timers do not yet advance the
-workflow time floor.
+`WithClock(func() time.Time)` configures the wall clock used by `Now` and timer
+expiry; the default (also for a nil clock) is `time.Now`. `Sleep` and `NewTimer`
+set expiry to the larger of that clock and the workflow time floor, plus the
+duration. Nonpositive durations still expire immediately. `SleepUntil` computes
+its duration against that same base. Replay keeps the stored expiry.
+Observing a fire advances the floor, so a later live `Now` cannot precede it.
+Issuing a timer or checking `IsReady` does not advance the floor.
+Lease clocks and the timer poller's store clock are unchanged.
 
 Like other workflow commands, `Now` must be called serially from workflow
 code. Calls while the coroutine is closing return an error and the floor,

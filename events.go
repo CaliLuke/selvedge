@@ -19,6 +19,10 @@ import (
 //
 // When the timer expires, the workflow will be resumed.
 func Sleep(ctx *WorkflowContext, duration time.Duration, opts ...SleepOption) error {
+	return sleep(ctx, duration, nil, opts...)
+}
+
+func sleep(ctx *WorkflowContext, duration time.Duration, until *time.Time, opts ...SleepOption) error {
 	if err := ctx.execCtx.Check(); err != nil {
 		return err
 	}
@@ -42,8 +46,13 @@ func Sleep(ctx *WorkflowContext, duration time.Duration, opts ...SleepOption) er
 	if event != nil && event.EventData != nil {
 		return sleepOutcome(ctx, event)
 	}
+	base := workflowTime(ctx)
+	if until != nil {
+		duration = until.Sub(base)
+	}
+	expiresAt := base.Add(duration)
 	if duration <= 0 && event == nil {
-		stored, err := ctx.execCtx.Storage().RecordHistory(ctx.Context(), ctx.execCtx.Fence(), immediateTimerEvent(ctx.InstanceID(), timerID, cmd.Seq))
+		stored, err := ctx.execCtx.Storage().RecordHistory(ctx.Context(), ctx.execCtx.Fence(), immediateTimerEvent(ctx.InstanceID(), timerID, cmd.Seq, expiresAt))
 		if err != nil {
 			ctx.execCtx.Fail(err)
 			return err
@@ -51,7 +60,7 @@ func Sleep(ctx *WorkflowContext, duration time.Duration, opts ...SleepOption) er
 		return sleepOutcome(ctx, stored)
 	}
 	stored, err := ctx.execCtx.Storage().ReserveTimer(ctx.Context(), ctx.execCtx.Fence(), cmd.Seq, &storage.TimerSubscription{
-		InstanceID: ctx.InstanceID(), TimerID: timerID, ActivityID: timerID, ExpiresAt: time.Now().Add(duration),
+		InstanceID: ctx.InstanceID(), TimerID: timerID, ActivityID: timerID, ExpiresAt: expiresAt,
 	})
 	if err != nil {
 		ctx.execCtx.Fail(err)
@@ -82,7 +91,7 @@ func Sleep(ctx *WorkflowContext, duration time.Duration, opts ...SleepOption) er
 		ctx.execCtx.Fail(err)
 		return err
 	}
-	expiresAt := reservation.ExpiresAt
+	expiresAt = reservation.ExpiresAt
 
 	// Call OnTimerStart hook
 	if h := ctx.Hooks(); h != nil {
@@ -112,7 +121,8 @@ func cancellationAtYield(ctx *WorkflowContext) (*WorkflowCancelledError, error) 
 func sleepOutcome(ctx *WorkflowContext, event *storage.HistoryEvent) error {
 	switch event.EventType {
 	case storage.HistoryTimerExpired:
-		return nil
+		_, err := observedTimerExpiry(ctx, event)
+		return err
 	case storage.HistoryTimerCancelled:
 		return replayRecordedError(ctx, event)
 	default:
@@ -144,5 +154,5 @@ func WithSleepID(id string) SleepOption {
 
 // SleepUntil suspends the workflow until a specific time.
 func SleepUntil(ctx *WorkflowContext, t time.Time, opts ...SleepOption) error {
-	return Sleep(ctx, time.Until(t), opts...)
+	return sleep(ctx, 0, &t, opts...)
 }

@@ -53,7 +53,13 @@ func fireTimer(ctx context.Context, s Storage, timer *TimerSubscription) error {
 		if n == 0 {
 			return nil
 		}
-		payload, err := json.Marshal(map[string]any{"timer_id": timer.TimerID, "expires_at": timer.ExpiresAt.Format(time.RFC3339Nano), "completed": true})
+		var reservation SleepReservation
+		if err := json.Unmarshal(row.ReservationData, &reservation); err != nil {
+			return err
+		}
+		// Subscription timestamps schedule polling at database precision; the
+		// immutable reservation retains the workflow deadline's full precision.
+		payload, err := json.Marshal(map[string]any{"timer_id": timer.TimerID, "expires_at": reservation.ExpiresAt.Format(time.RFC3339Nano), "completed": true})
 		if err != nil {
 			return err
 		}

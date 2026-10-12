@@ -9,15 +9,16 @@ import (
 	"github.com/CaliLuke/selvedge/internal/storage"
 )
 
-// WithClock sets the wall clock used by Now. A nil clock uses time.Now.
-// It does not change lease clocks, timer expiry, or the timer poller.
+// WithClock sets the wall clock used by Now and timer expiry. A nil clock uses time.Now.
+// It does not change lease clocks or the timer poller.
 func WithClock(clock func() time.Time) Option {
 	return func(c *appConfig) { c.clock = clock }
 }
 
 // Now returns recorded workflow time in UTC, without a monotonic reading.
 // Each live call writes one fenced history observation; replay returns that
-// observation. Time never falls below earlier Now values in this execution.
+// observation. Live time never falls below earlier Now values or timer expiries
+// observed by Sleep or Timer.Get in this execution.
 // On error, Now returns the last observed time and the run fails even if the
 // caller ignores the error.
 func Now(ctx *WorkflowContext) (value time.Time, err error) {
@@ -39,14 +40,7 @@ func Now(ctx *WorkflowContext) (value time.Time, err error) {
 		return nowOutcome(ctx, cmd.Recorded)
 	}
 
-	clock := time.Now
-	if ctx.app != nil && ctx.app.config.clock != nil {
-		clock = ctx.app.config.clock
-	}
-	value = clock().UTC()
-	if floor := ctx.timeFloor.load(); value.Before(floor) {
-		value = floor
-	}
+	value = workflowTime(ctx)
 	data, err := json.Marshal(value)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("encode workflow time: %w", err)
@@ -59,6 +53,19 @@ func Now(ctx *WorkflowContext) (value time.Time, err error) {
 		return time.Time{}, err
 	}
 	return nowOutcome(ctx, stored)
+}
+
+// workflowTime samples the clock without recording or advancing the floor.
+func workflowTime(ctx *WorkflowContext) time.Time {
+	clock := time.Now
+	if ctx.app != nil && ctx.app.config.clock != nil {
+		clock = ctx.app.config.clock
+	}
+	value := clock().UTC()
+	if floor := ctx.timeFloor.load(); value.Before(floor) {
+		return floor
+	}
+	return value
 }
 
 func nowOutcome(ctx *WorkflowContext, event *storage.HistoryEvent) (time.Time, error) {

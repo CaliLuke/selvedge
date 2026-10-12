@@ -2,6 +2,7 @@ package selvedge
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -108,6 +109,8 @@ func testWakeCancelRacesTimerFire(t *testing.T, factory replayAppFactory) {
 func TestTimerFireRecordedOnce(t *testing.T) { testTimerFireRecordedOnce(t, createTestApp) }
 func testTimerFireRecordedOnce(t *testing.T, factory replayAppFactory) {
 	h, _, fs := leaseHarness(t, factory)
+	reservationExpiry := time.Unix(123, 789).UTC()
+	WithClock(func() time.Time { return reservationExpiry.Add(-time.Hour) })(h.app.config)
 	w := DefineWorkflow("timer_once", func(ctx *WorkflowContext, _ string) (string, error) {
 		return "done", Sleep(ctx, time.Hour, WithSleepID("pause"))
 	})
@@ -117,7 +120,10 @@ func testTimerFireRecordedOnce(t *testing.T, factory replayAppFactory) {
 	require.NoError(t, fs.FireTimer(h.app.ctx, timer))
 	first, err := fs.GetHistoryEvent(h.app.ctx, id, "pause")
 	require.NoError(t, err)
-	// Two other pollers concurrently retry the same timer with different payloads.
+	var recorded storage.SleepReservation
+	require.NoError(t, json.Unmarshal(first.EventData, &recorded))
+	require.Equal(t, reservationExpiry, recorded.ExpiresAt, "fire uses the reservation, not a poller snapshot")
+	// Two other pollers concurrently retry with different snapshot timestamps.
 	outcomes := make(chan error, 2)
 	start := make(chan struct{})
 	for _, expiry := range []int64{20, 30} {

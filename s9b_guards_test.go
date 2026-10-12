@@ -98,6 +98,7 @@ func TestTimerGetFireWinsCancel(t *testing.T) { testTimerGetFireWinsCancel(t, cr
 func testTimerGetFireWinsCancel(t *testing.T, factory replayAppFactory) {
 	h, _, fs := leaseHarness(t, factory)
 	fireAt := time.Unix(123, 0).UTC()
+	WithClock(func() time.Time { return fireAt.Add(-time.Hour) })(h.app.config)
 	var got time.Time
 	w := DefineWorkflow("fire-cancel", func(ctx *WorkflowContext, _ string) (string, error) {
 		timer, err := NewTimer(ctx, time.Hour)

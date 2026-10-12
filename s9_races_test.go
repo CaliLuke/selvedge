@@ -270,6 +270,8 @@ func (h *typedReplayHarness) Deliveries(id string) ([]storage.SignalPosition, er
 func runDeliveryCrash(t *testing.T, factory replayAppFactory, scenario string, cut int, after bool) (deliverySnapshot, int) {
 	t.Helper()
 	h, _, fs := leaseHarness(t, factory)
+	// Keep reservation-sourced fire values identical across crash runs.
+	WithClock(func() time.Time { return time.Unix(123, 0).UTC() })(h.app.config)
 	h.app.storage = fs
 	a := DefineActivity("A", func(context.Context, string) (string, error) { return "A", nil })
 	b := DefineActivity("B", func(context.Context, string) (string, error) { return "B", nil })

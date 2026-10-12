@@ -42,9 +42,9 @@ func NewTimer(ctx *WorkflowContext, d time.Duration, opts ...SleepOption) (*Time
 	defer cmd.End()
 	row := cmd.Recorded
 	if row == nil && d <= 0 {
-		row, err = ctx.execCtx.Storage().RecordHistory(ctx.Context(), ctx.execCtx.Fence(), immediateTimerEvent(ctx.InstanceID(), cmd.Key, cmd.Seq))
+		row, err = ctx.execCtx.Storage().RecordHistory(ctx.Context(), ctx.execCtx.Fence(), immediateTimerEvent(ctx.InstanceID(), cmd.Key, cmd.Seq, workflowTime(ctx).Add(d)))
 	} else if row == nil || row.EventData == nil {
-		row, err = ctx.execCtx.Storage().ReserveTimer(ctx.Context(), ctx.execCtx.Fence(), cmd.Seq, &storage.TimerSubscription{InstanceID: ctx.InstanceID(), TimerID: cmd.Key, ActivityID: cmd.Key, ExpiresAt: time.Now().Add(d)})
+		row, err = ctx.execCtx.Storage().ReserveTimer(ctx.Context(), ctx.execCtx.Fence(), cmd.Seq, &storage.TimerSubscription{InstanceID: ctx.InstanceID(), TimerID: cmd.Key, ActivityID: cmd.Key, ExpiresAt: workflowTime(ctx).Add(d)})
 	}
 	if err != nil {
 		ctx.execCtx.Fail(err)
@@ -69,8 +69,8 @@ func NewTimer(ctx *WorkflowContext, d time.Duration, opts ...SleepOption) (*Time
 	return &Timer{exec: ctx.execCtx, key: cmd.Key, row: row}, nil
 }
 
-func immediateTimerEvent(instanceID, key string, seq int64) *storage.HistoryEvent {
-	data, _ := json.Marshal(storage.SleepReservation{ExpiresAt: time.Now().UTC()})
+func immediateTimerEvent(instanceID, key string, seq int64, expiresAt time.Time) *storage.HistoryEvent {
+	data, _ := json.Marshal(storage.SleepReservation{ExpiresAt: expiresAt})
 	return &storage.HistoryEvent{InstanceID: instanceID, ActivityID: key, Seq: seq, Command: "sleep", EventType: storage.HistoryTimerExpired, EventData: data, DataType: "json"}
 }
 
@@ -139,12 +139,7 @@ func (t *Timer) outcome(ctx *WorkflowContext, row *storage.HistoryEvent) (time.T
 	t.observed = true
 	switch row.EventType {
 	case storage.HistoryTimerExpired:
-		var value storage.SleepReservation
-		value, t.err = decodeRecorded[storage.SleepReservation](row)
-		t.value = value.ExpiresAt
-		if t.err != nil {
-			ctx.execCtx.Fail(t.err)
-		}
+		t.value, t.err = observedTimerExpiry(ctx, row)
 	case storage.HistoryTimerCancelled:
 		t.err = replayRecordedError(ctx, row)
 	default:
@@ -152,4 +147,15 @@ func (t *Timer) outcome(ctx *WorkflowContext, row *storage.HistoryEvent) (time.T
 		ctx.execCtx.Fail(t.err)
 	}
 	return t.value, t.err
+}
+
+func observedTimerExpiry(ctx *WorkflowContext, row *storage.HistoryEvent) (time.Time, error) {
+	value, err := decodeRecorded[storage.SleepReservation](row)
+	if err != nil {
+		ctx.execCtx.Fail(err)
+		return time.Time{}, err
+	}
+	expiresAt := value.ExpiresAt.UTC()
+	ctx.timeFloor.observe(expiresAt)
+	return expiresAt, nil
 }

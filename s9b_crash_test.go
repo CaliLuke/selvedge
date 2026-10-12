@@ -33,6 +33,8 @@ func testReplayDeterministicAfterCrashTimeout(t *testing.T, factory replayAppFac
 func runTimeoutCrash(t *testing.T, factory replayAppFactory, order string, cut int, after bool) (deliverySnapshot, int) {
 	t.Helper()
 	h, _, fs := leaseHarness(t, factory)
+	// Keep reservation-sourced fire values identical across crash runs.
+	WithClock(func() time.Time { return time.Unix(123, 0).UTC() })(h.app.config)
 	h.app.storage = fs
 	w := DefineWorkflow("timeout-crash", func(ctx *WorkflowContext, _ string) (string, error) {
 		v, err := ReceiveWithTimeout[int](ctx, "c", time.Hour)
@@ -85,7 +87,7 @@ func runTimeoutCrash(t *testing.T, factory replayAppFactory, order string, cut i
 		observation, err := fs.GetHistoryEvent(h.app.ctx, id, "#2")
 		require.NoError(t, err)
 		fire := func() error {
-			return fs.FireTimer(h.app.ctx, &storage.TimerSubscription{InstanceID: id, TimerID: "#1", ExpiresAt: time.Unix(123, 0).UTC()})
+			return fs.FireTimer(h.app.ctx, &storage.TimerSubscription{InstanceID: id, TimerID: "#1"})
 		}
 		appendOnce := func(channel string) error {
 			var n int
@@ -118,7 +120,7 @@ func runTimeoutCrash(t *testing.T, factory replayAppFactory, order string, cut i
 	require.NoError(t, err)
 	require.Equal(t, storage.StatusCompleted, inst.Status)
 	// A poller snapshot remains harmless even after the winning observation closed the instance.
-	require.NoError(t, fs.Storage.FireTimer(h.app.ctx, &storage.TimerSubscription{InstanceID: id, TimerID: "#1", ExpiresAt: time.Unix(123, 0).UTC()}))
+	require.NoError(t, fs.Storage.FireTimer(h.app.ctx, &storage.TimerSubscription{InstanceID: id, TimerID: "#1"}))
 	if cut > 0 {
 		require.True(t, crashed)
 	}

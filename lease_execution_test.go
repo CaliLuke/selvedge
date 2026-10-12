@@ -439,6 +439,8 @@ type historyValue struct {
 func runCrashScenario(t *testing.T, factory replayAppFactory, crashAt int, after bool) ([]historyValue, int) {
 	t.Helper()
 	h, _, fs := leaseHarness(t, factory)
+	// Keep reservation-sourced fire values identical across crash runs.
+	WithClock(func() time.Time { return time.Unix(123, 0).UTC() })(h.app.config)
 	calls := 0
 	writeIndex := 0
 	var injectionMu sync.Mutex
