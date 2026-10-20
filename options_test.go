@@ -313,18 +313,22 @@ func TestWithHooks(t *testing.T) {
 	tests := []struct {
 		name  string
 		hooks hooks.WorkflowHooks
+		want  hooks.WorkflowHooks
 	}{
 		{
 			name:  "NoOpHooks",
 			hooks: &hooks.NoOpHooks{},
+			want:  &hooks.NoOpHooks{},
 		},
 		{
 			name:  "custom hooks",
 			hooks: &mockHooks{},
+			want:  &mockHooks{},
 		},
 		{
 			name:  "nil hooks",
 			hooks: nil,
+			want:  &hooks.NoOpHooks{},
 		},
 	}
 
@@ -332,7 +336,7 @@ func TestWithHooks(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := defaultConfig()
 			WithHooks(tt.hooks)(cfg)
-			assert.Equal(t, tt.hooks, cfg.hooks)
+			assert.Equal(t, tt.want, cfg.hooks)
 		})
 	}
 }

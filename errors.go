@@ -159,7 +159,19 @@ func nonRetryableApplication(err error) bool {
 		if app, ok := err.(*ApplicationError); ok && app.NonRetryable {
 			return true
 		}
-		err = errors.Unwrap(err)
+		switch wrapped := err.(type) {
+		case interface{ Unwrap() []error }:
+			for _, cause := range wrapped.Unwrap() {
+				if nonRetryableApplication(cause) {
+					return true
+				}
+			}
+			return false
+		case interface{ Unwrap() error }:
+			err = wrapped.Unwrap()
+		default:
+			return false
+		}
 	}
 	return false
 }

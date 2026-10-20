@@ -49,7 +49,11 @@ func SetQueryHandler[R any](ctx *WorkflowContext, name string, handler func() (R
 // writers until the snapshot read transaction ends.
 func Query[R any](ctx context.Context, app *App, instanceID, name string) (R, error) {
 	var zero R
-	snapshot, err := app.storage.ReadSnapshot(ctx, instanceID)
+	store := app.Storage()
+	if app.closed.Load() || store == nil {
+		return zero, ErrAppNotStarted
+	}
+	snapshot, err := store.ReadSnapshot(ctx, instanceID)
 	if err != nil {
 		return zero, err
 	}
@@ -62,7 +66,7 @@ func Query[R any](ctx context.Context, app *App, instanceID, name string) (R, er
 	if !ok {
 		return zero, &WorkflowNotRegisteredError{WorkflowName: snapshot.Instance.WorkflowName}
 	}
-	execution, err := app.engine.Query(ctx, instanceID, runner, snapshot)
+	execution, err := new(replay.Engine).Query(ctx, instanceID, runner, snapshot)
 	if err != nil {
 		return zero, err
 	}

@@ -28,7 +28,11 @@ type WorkflowDescription struct {
 
 // Describe reads status and cancellation metadata from one consistent snapshot.
 func Describe(ctx context.Context, app *App, instanceID string) (*WorkflowDescription, error) {
-	snapshot, err := app.storage.ReadSnapshot(ctx, instanceID)
+	store := app.Storage()
+	if app.closed.Load() || store == nil {
+		return nil, ErrAppNotStarted
+	}
+	snapshot, err := store.ReadSnapshot(ctx, instanceID)
 	if err != nil {
 		return nil, err
 	}

@@ -10,14 +10,11 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/CaliLuke/selvedge/internal/storage"
+	"github.com/CaliLuke/selvedge/internal/testkit"
 )
 
 type s14PostgresPool struct {
@@ -28,28 +25,16 @@ type s14PostgresPool struct {
 	available []string
 }
 
-// Each top-level test owns a container and reuses empty schemas across its subcases.
+// Each top-level test owns a database and reuses empty schemas across its subcases.
 // Cleanup follows the test lifetime, so no package TestMain is needed.
 func s14PostgresFactory(t *testing.T) replayAppFactory {
 	t.Helper()
-	ctx := context.Background()
-	c, err := postgres.Run(ctx, "postgres:15-alpine",
-		postgres.WithDatabase("selvedge_test"), postgres.WithUsername("selvedge"), postgres.WithPassword("selvedge"),
-		testcontainers.WithWaitStrategy(wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(5*time.Minute), wait.ForListeningPort("5432/tcp")))
-	require.NoError(t, err)
-	suite := new(s14PostgresPool)
-	t.Cleanup(func() {
-		if suite.admin != nil {
-			require.NoError(t, suite.admin.Close())
-		}
-		cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)
-		defer cancel()
-		require.NoError(t, c.Terminate(cleanup))
-	})
-	suite.dsn, err = c.ConnectionString(ctx, "sslmode=disable")
-	require.NoError(t, err)
+	dsn, _ := testkit.PostgresDatabase(t)
+	suite := &s14PostgresPool{dsn: dsn}
+	var err error
 	suite.admin, err = storage.NewPostgresStorage(suite.dsn)
 	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, suite.admin.Close()) })
 	return func(t *testing.T, opts ...Option) (*App, func()) {
 		t.Helper()
 		schema := suite.s14AcquireSchema(t)

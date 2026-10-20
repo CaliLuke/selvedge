@@ -1,6 +1,7 @@
 package selvedge
 
 import (
+	"fmt"
 	"io/fs"
 	"time"
 
@@ -157,10 +158,14 @@ func WithTimerCheckInterval(d time.Duration) Option {
 	}
 }
 
-// WithHooks sets the workflow lifecycle hooks.
+// WithHooks sets the workflow lifecycle hooks. A nil value installs NoOpHooks,
+// replacing any hooks configured by earlier options.
 func WithHooks(h hooks.WorkflowHooks) Option {
 	return func(c *appConfig) {
 		c.hooks = h
+		if h == nil {
+			c.hooks = &hooks.NoOpHooks{}
+		}
 	}
 }
 
@@ -303,4 +308,22 @@ func WithMaxPollInterval(d time.Duration) Option {
 // Without this option an App serves every queue; an empty list serves none.
 func WithActivityQueues(queues ...string) Option {
 	return func(c *appConfig) { c.activityQueues = append([]string{}, queues...) }
+}
+
+// validate rejects values that would panic a background timer or spin a poller.
+func (c *appConfig) validate() error {
+	for _, setting := range []struct {
+		name  string
+		value time.Duration
+	}{
+		{"timer check interval", c.timerCheckInterval},
+		{"workflow resumption interval", c.workflowResumptionInterval},
+		{"shutdown timeout", c.shutdownTimeout},
+		{"notification reconnect delay", c.notifyReconnectDelay},
+	} {
+		if setting.value <= 0 {
+			return fmt.Errorf("%s must be positive", setting.name)
+		}
+	}
+	return c.lease.Validate()
 }

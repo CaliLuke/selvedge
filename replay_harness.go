@@ -104,10 +104,11 @@ func (e *ReplayError) Unwrap() []error {
 
 // ExportHistory reads one consistent snapshot from an initialized App.
 func ExportHistory(ctx context.Context, app *App, id string) (*RecordedHistory, error) {
-	if app.closed.Load() || app.storage == nil {
+	store := app.Storage()
+	if app.closed.Load() || store == nil {
 		return nil, ErrAppNotStarted
 	}
-	snapshot, err := app.storage.ReadSnapshot(ctx, id)
+	snapshot, err := store.ReadSnapshot(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -215,6 +216,30 @@ func validateHistory(history *RecordedHistory) error {
 	case StatusRunning, StatusCompleted, StatusFailed, StatusCancelled:
 	default:
 		return fmt.Errorf("invalid recorded workflow status %q", history.Instance.Status)
+	}
+	// Replay indexes commands by both position and key. Reject collisions before
+	// building those indexes, otherwise one entry silently hides another.
+	keys := make(map[string]struct{}, len(history.Events))
+	positions := make(map[int64]struct{}, len(history.Events))
+	for i := range history.Events {
+		event := &history.Events[i]
+		if _, duplicate := keys[event.Key]; duplicate {
+			return fmt.Errorf("duplicate recorded history key %q", event.Key)
+		}
+		keys[event.Key] = struct{}{}
+		if event.Seq > 0 {
+			if _, duplicate := positions[event.Seq]; duplicate {
+				return fmt.Errorf("duplicate recorded command position %d", event.Seq)
+			}
+			positions[event.Seq] = struct{}{}
+		}
+	}
+	signals := make(map[int64]struct{}, len(history.Signals))
+	for _, signal := range history.Signals {
+		if _, duplicate := signals[signal.ID]; duplicate {
+			return fmt.Errorf("duplicate recorded signal ID %d", signal.ID)
+		}
+		signals[signal.ID] = struct{}{}
 	}
 	return nil
 }

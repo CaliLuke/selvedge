@@ -74,7 +74,7 @@ func (s *PostgresStorage) IsNotifyEnabled() bool {
 
 // getConn returns the appropriate database handle based on context.
 func (s *PostgresStorage) getConn(ctx context.Context) Executor {
-	if state, ok := ctx.Value(txKey{}).(*txState); ok {
+	if state, ok := ctx.Value(txKey{s.db}).(*txState); ok {
 		return observeExecutor(s.driver, state.tx)
 	}
 	return observeExecutor(s.driver, s.db)
@@ -89,12 +89,12 @@ func (s *PostgresStorage) BeginTransaction(ctx context.Context) (context.Context
 		return ctx, err
 	}
 	state := &txState{tx: tx}
-	return context.WithValue(ctx, txKey{}, state), nil
+	return context.WithValue(ctx, txKey{s.db}, state), nil
 }
 
 // CommitTransaction commits the current transaction.
 func (s *PostgresStorage) CommitTransaction(ctx context.Context) error {
-	state, ok := ctx.Value(txKey{}).(*txState)
+	state, ok := ctx.Value(txKey{s.db}).(*txState)
 	if !ok {
 		return fmt.Errorf("no transaction in context")
 	}
@@ -118,7 +118,7 @@ func (s *PostgresStorage) CommitTransaction(ctx context.Context) error {
 // RollbackTransaction rolls back the current transaction.
 // Callbacks are not executed on rollback.
 func (s *PostgresStorage) RollbackTransaction(ctx context.Context) error {
-	state, ok := ctx.Value(txKey{}).(*txState)
+	state, ok := ctx.Value(txKey{s.db}).(*txState)
 	if !ok {
 		return nil
 	}
@@ -127,7 +127,7 @@ func (s *PostgresStorage) RollbackTransaction(ctx context.Context) error {
 
 // InTransaction returns whether a transaction is in progress.
 func (s *PostgresStorage) InTransaction(ctx context.Context) bool {
-	_, ok := ctx.Value(txKey{}).(*txState)
+	_, ok := ctx.Value(txKey{s.db}).(*txState)
 	return ok
 }
 
@@ -139,7 +139,7 @@ func (s *PostgresStorage) Conn(ctx context.Context) Executor {
 // RegisterPostCommitCallback registers a callback to be executed after a successful commit.
 // Returns an error if not currently in a transaction.
 func (s *PostgresStorage) RegisterPostCommitCallback(ctx context.Context, cb func() error) error {
-	state, ok := ctx.Value(txKey{}).(*txState)
+	state, ok := ctx.Value(txKey{s.db}).(*txState)
 	if !ok {
 		return fmt.Errorf("not in a transaction")
 	}

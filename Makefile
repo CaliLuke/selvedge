@@ -15,7 +15,7 @@ GOMOD := $(GOCMD) mod
 GOCLEAN := $(GOCMD) clean
 
 # golangci-lint
-GOLANGCI_LINT_VERSION := v2.7.1
+GOLANGCI_LINT_VERSION := v2.15.0
 GOLANGCI_LINT := $(shell which golangci-lint 2>/dev/null || echo "$(shell go env GOPATH)/bin/golangci-lint")
 
 help: ## Show this help message

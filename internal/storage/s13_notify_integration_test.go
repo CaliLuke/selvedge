@@ -4,11 +4,12 @@ package storage
 
 import (
 	"context"
+	"testing"
+	"time"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/require"
-	"testing"
-	"time"
 )
 
 func s13PostgresDSN(t *testing.T, s *PostgresStorage) string {

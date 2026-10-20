@@ -29,9 +29,13 @@ func StartWorkflowByName(ctx context.Context, app *App, workflow string, input a
 // WaitWorkflow waits for a terminal result. Workflow failures are in Result.Error.
 // Cancellation of ctx stops only the wait. GetWorkflowResult is the nonblocking form.
 func WaitWorkflow[O any](ctx context.Context, app *App, instanceID string) (*WorkflowResult[O], error) {
+	app.mu.Lock()
 	if app.closed.Load() || app.storage == nil {
+		app.mu.Unlock()
 		return nil, ErrAppNotStarted
 	}
+	appCtx := app.ctx
+	app.mu.Unlock()
 	wake, unsubscribe := app.subscribeClosed(instanceID)
 	defer unsubscribe()
 	ticker := time.NewTicker(app.config.waitPollInterval)
@@ -40,8 +44,14 @@ func WaitWorkflow[O any](ctx context.Context, app *App, instanceID string) (*Wor
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
+		if appCtx.Err() != nil {
+			return nil, ErrAppNotStarted
+		}
 		result, err := readWorkflowResult[O](ctx, app, instanceID)
 		if err != nil {
+			if appCtx.Err() != nil {
+				return nil, ErrAppNotStarted
+			}
 			return nil, err
 		}
 		if result.Status != "running" {
@@ -50,6 +60,8 @@ func WaitWorkflow[O any](ctx context.Context, app *App, instanceID string) (*Wor
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
+		case <-appCtx.Done():
+			return nil, ErrAppNotStarted
 		case <-wake:
 		case <-ticker.C:
 		}

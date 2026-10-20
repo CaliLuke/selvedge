@@ -17,17 +17,18 @@ type ActivityTaskInfo struct {
 
 // ListActivityTasks returns the instance's activities in reservation order.
 func ListActivityTasks(ctx context.Context, app *App, id string) ([]ActivityTaskInfo, error) {
-	if app.closed.Load() || app.storage == nil {
+	s := app.Storage()
+	if app.closed.Load() || s == nil {
 		return nil, ErrAppNotStarted
 	}
-	instance, err := app.storage.GetInstance(ctx, id)
+	instance, err := s.GetInstance(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 	if instance == nil {
 		return nil, &WorkflowNotFoundError{InstanceID: id}
 	}
-	rows, err := app.storage.ListActivityTasks(ctx, id)
+	rows, err := s.ListActivityTasks(ctx, id)
 	if err != nil {
 		return nil, err
 	}

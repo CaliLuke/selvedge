@@ -6,31 +6,14 @@ import (
 	"context"
 	"database/sql"
 	"testing"
-	"time"
 
 	"github.com/CaliLuke/selvedge/internal/storage"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
+	"github.com/CaliLuke/selvedge/internal/testkit"
 )
 
 func postgresSchemaBackend(t *testing.T) schemaBackend {
 	t.Helper()
-	ctx := context.Background()
-	container, err := postgres.Run(ctx, "postgres:15-alpine",
-		postgres.WithDatabase("schema_test"), postgres.WithUsername("selvedge"), postgres.WithPassword("selvedge"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(5*time.Minute),
-			// These rollback/literal tests also need the host port forward ready.
-			wait.ForListeningPort("5432/tcp")))
-	if err != nil {
-		t.Fatal(err)
-	}
-	testcontainers.CleanupContainer(t, container)
-	url, err := container.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		t.Fatal(err)
-	}
+	url, _ := testkit.PostgresDatabase(t)
 	store, err := storage.NewPostgresStorage(url)
 	if err != nil {
 		t.Fatal(err)

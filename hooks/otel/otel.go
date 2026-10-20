@@ -1,9 +1,14 @@
-// Package otel provides OpenTelemetry integration for Selvedge workflow hooks.
+// Package otel exports Selvedge lifecycle callbacks as completed OpenTelemetry
+// spans. Every callback owns and ends its span, including start and retry markers.
+// Durable operations can resume on another worker or complete before the starting
+// worker observes its callback, so hooks retain no spans or contexts between calls.
+// Correlate callbacks by instance and command attributes. Parentage comes only
+// from the supplied context; trace context is not propagated through storage.
 package otel
 
 import (
 	"context"
-	"fmt"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -13,258 +18,121 @@ import (
 	"github.com/CaliLuke/selvedge/hooks"
 )
 
-const (
-	tracerName = "selvedge"
-)
+const tracerName = "selvedge"
 
-// OTelHooks implements WorkflowHooks with OpenTelemetry tracing.
-// It creates spans for workflow, activity, timer, and replay lifecycle events.
+// OTelHooks implements WorkflowHooks with stateless, concurrency-safe tracing.
+// Terminal spans use the reported duration; start, retry, cache and timer
+// callbacks emit point-in-time markers. Durations do not depend on a local start.
 type OTelHooks struct {
 	hooks.NoOpHooks
 	tracer trace.Tracer
-
-	// Map of instance_id -> active span for tracking workflow spans
-	workflowSpans map[string]trace.Span
-
-	// Map of instance_id -> context with workflow span for child spans
-	workflowContexts map[string]context.Context
-
-	// Map of instance_id:activity_id -> active span for tracking activity spans
-	activitySpans map[string]trace.Span
-
-	// Map of instance_id:timer_id -> active span for tracking timer spans
-	timerSpans map[string]trace.Span
-
-	// Map of instance_id -> active span for tracking replay spans
-	replaySpans map[string]trace.Span
 }
 
-// NewOTelHooks creates a new OpenTelemetry hooks instance.
-// If tracerProvider is nil, the global tracer provider is used.
-func NewOTelHooks(tracerProvider trace.TracerProvider) *OTelHooks {
-	var tracer trace.Tracer
-	if tracerProvider != nil {
-		tracer = tracerProvider.Tracer(tracerName)
-	} else {
-		tracer = otel.Tracer(tracerName)
+// NewOTelHooks creates hooks using the provider, or the global provider if nil.
+func NewOTelHooks(provider trace.TracerProvider) *OTelHooks {
+	if provider == nil {
+		provider = otel.GetTracerProvider()
 	}
-
-	return &OTelHooks{
-		tracer:           tracer,
-		workflowSpans:    make(map[string]trace.Span),
-		workflowContexts: make(map[string]context.Context),
-		activitySpans:    make(map[string]trace.Span),
-		timerSpans:       make(map[string]trace.Span),
-		replaySpans:      make(map[string]trace.Span),
-	}
+	return &OTelHooks{tracer: provider.Tracer(tracerName)}
 }
 
-// Workflow lifecycle
+func (h *OTelHooks) record(ctx context.Context, name, instanceID, workflowName string, duration time.Duration, status codes.Code, description string, err error, attrs ...attribute.KeyValue) {
+	duration = max(0, duration)
+	ended := time.Now()
+	attrs = append(attrs,
+		attribute.String("selvedge.instance_id", instanceID),
+		attribute.String("selvedge.workflow_name", workflowName),
+		attribute.Int64("selvedge.duration_ms", duration.Milliseconds()),
+	)
+	_, span := h.tracer.Start(ctx, name,
+		trace.WithSpanKind(trace.SpanKindInternal),
+		trace.WithTimestamp(ended.Add(-duration)),
+		trace.WithAttributes(attrs...),
+	)
+	defer span.End(trace.WithTimestamp(ended))
+	if err != nil {
+		span.RecordError(err, trace.WithTimestamp(ended))
+		description = err.Error()
+	}
+	span.SetStatus(status, description)
+}
 
-// OnWorkflowStart creates a new span when a workflow starts.
 func (h *OTelHooks) OnWorkflowStart(ctx context.Context, info hooks.WorkflowStartInfo) {
-	spanCtx, span := h.tracer.Start(ctx, fmt.Sprintf("workflow/%s", info.WorkflowName),
-		trace.WithSpanKind(trace.SpanKindInternal),
-		trace.WithAttributes(
-			attribute.String("selvedge.instance_id", info.InstanceID),
-			attribute.String("selvedge.workflow_name", info.WorkflowName),
-			attribute.String("selvedge.start_time", info.StartTime.String()),
-		),
-	)
-	h.workflowSpans[info.InstanceID] = span
-	h.workflowContexts[info.InstanceID] = spanCtx
+	h.record(ctx, "workflow_start/"+info.WorkflowName, info.InstanceID, info.WorkflowName, 0, codes.Unset, "", nil,
+		attribute.String("selvedge.start_time", info.StartTime.String()))
 }
 
-// OnWorkflowComplete ends the workflow span with success status.
 func (h *OTelHooks) OnWorkflowComplete(ctx context.Context, info hooks.WorkflowCompleteInfo) {
-	if span, ok := h.workflowSpans[info.InstanceID]; ok {
-		span.SetAttributes(
-			attribute.Int64("selvedge.duration_ms", info.Duration.Milliseconds()),
-		)
-		span.SetStatus(codes.Ok, "workflow completed")
-		span.End()
-		delete(h.workflowSpans, info.InstanceID)
-		delete(h.workflowContexts, info.InstanceID)
-	}
+	h.record(ctx, "workflow/"+info.WorkflowName, info.InstanceID, info.WorkflowName, info.Duration, codes.Ok, "workflow completed", nil)
 }
 
-// OnWorkflowFailed ends the workflow span with error status.
 func (h *OTelHooks) OnWorkflowFailed(ctx context.Context, info hooks.WorkflowFailedInfo) {
-	if span, ok := h.workflowSpans[info.InstanceID]; ok {
-		span.SetAttributes(
-			attribute.Int64("selvedge.duration_ms", info.Duration.Milliseconds()),
-		)
-		span.RecordError(info.Error)
-		span.SetStatus(codes.Error, info.Error.Error())
-		span.End()
-		delete(h.workflowSpans, info.InstanceID)
-		delete(h.workflowContexts, info.InstanceID)
-	}
+	h.record(ctx, "workflow/"+info.WorkflowName, info.InstanceID, info.WorkflowName, info.Duration, codes.Error, "workflow failed", info.Error)
 }
 
-// OnWorkflowCancelled ends the workflow span with cancellation status.
 func (h *OTelHooks) OnWorkflowCancelled(ctx context.Context, info hooks.WorkflowCancelledInfo) {
-	if span, ok := h.workflowSpans[info.InstanceID]; ok {
-		span.SetAttributes(
-			attribute.Int64("selvedge.duration_ms", info.Duration.Milliseconds()),
-			attribute.String("selvedge.cancel_reason", info.Reason),
-		)
-		span.SetStatus(codes.Error, "workflow canceled: "+info.Reason)
-		span.End()
-		delete(h.workflowSpans, info.InstanceID)
-		delete(h.workflowContexts, info.InstanceID)
+	h.record(ctx, "workflow/"+info.WorkflowName, info.InstanceID, info.WorkflowName, info.Duration, codes.Error, "workflow canceled: "+info.Reason, nil,
+		attribute.String("selvedge.cancel_reason", info.Reason))
+}
+
+func activityAttrs(id, name string) []attribute.KeyValue {
+	return []attribute.KeyValue{
+		attribute.String("selvedge.activity_id", id),
+		attribute.String("selvedge.activity_name", name),
 	}
 }
 
-// Activity lifecycle
-
-func (h *OTelHooks) activityKey(instanceID, activityID string) string {
-	return instanceID + ":" + activityID
-}
-
-// OnActivityStart creates a new span when an activity starts.
-// The activity span is created as a child of the workflow span.
 func (h *OTelHooks) OnActivityStart(ctx context.Context, info hooks.ActivityStartInfo) {
-	// Use workflow context if available to create child span
-	parentCtx := ctx
-	if wfCtx, ok := h.workflowContexts[info.InstanceID]; ok {
-		parentCtx = wfCtx
-	}
-
-	_, span := h.tracer.Start(parentCtx, fmt.Sprintf("activity/%s", info.ActivityName),
-		trace.WithSpanKind(trace.SpanKindInternal),
-		trace.WithAttributes(
-			attribute.String("selvedge.instance_id", info.InstanceID),
-			attribute.String("selvedge.workflow_name", info.WorkflowName),
-			attribute.String("selvedge.activity_id", info.ActivityID),
-			attribute.String("selvedge.activity_name", info.ActivityName),
-			attribute.Bool("selvedge.is_replay", info.IsReplay),
-		),
-	)
-	h.activitySpans[h.activityKey(info.InstanceID, info.ActivityID)] = span
+	attrs := append(activityAttrs(info.ActivityID, info.ActivityName), attribute.Bool("selvedge.is_replay", info.IsReplay))
+	h.record(ctx, "activity_start/"+info.ActivityName, info.InstanceID, info.WorkflowName, 0, codes.Unset, "", nil, attrs...)
 }
 
-// OnActivityComplete ends the activity span with success status.
 func (h *OTelHooks) OnActivityComplete(ctx context.Context, info hooks.ActivityCompleteInfo) {
-	key := h.activityKey(info.InstanceID, info.ActivityID)
-	if span, ok := h.activitySpans[key]; ok {
-		span.SetAttributes(
-			attribute.Int64("selvedge.duration_ms", info.Duration.Milliseconds()),
-			attribute.Bool("selvedge.is_replay", info.IsReplay),
-		)
-		span.SetStatus(codes.Ok, "activity completed")
-		span.End()
-		delete(h.activitySpans, key)
-	}
+	attrs := append(activityAttrs(info.ActivityID, info.ActivityName), attribute.Bool("selvedge.is_replay", info.IsReplay))
+	h.record(ctx, "activity/"+info.ActivityName, info.InstanceID, info.WorkflowName, info.Duration, codes.Ok, "activity completed", nil, attrs...)
 }
 
-// OnActivityFailed ends the activity span with error status.
 func (h *OTelHooks) OnActivityFailed(ctx context.Context, info hooks.ActivityFailedInfo) {
-	key := h.activityKey(info.InstanceID, info.ActivityID)
-	if span, ok := h.activitySpans[key]; ok {
-		span.SetAttributes(
-			attribute.Int64("selvedge.duration_ms", info.Duration.Milliseconds()),
-			attribute.Int("selvedge.attempt", info.Attempt),
-		)
-		span.RecordError(info.Error)
-		span.SetStatus(codes.Error, info.Error.Error())
-		span.End()
-		delete(h.activitySpans, key)
-	}
+	attrs := append(activityAttrs(info.ActivityID, info.ActivityName), attribute.Int("selvedge.attempt", info.Attempt))
+	h.record(ctx, "activity/"+info.ActivityName, info.InstanceID, info.WorkflowName, info.Duration, codes.Error, "activity failed", info.Error, attrs...)
 }
 
-// OnActivityRetry records a retry event on the activity span.
 func (h *OTelHooks) OnActivityRetry(ctx context.Context, info hooks.ActivityRetryInfo) {
-	key := h.activityKey(info.InstanceID, info.ActivityID)
-	if span, ok := h.activitySpans[key]; ok {
-		span.AddEvent("activity_retry",
-			trace.WithAttributes(
-				attribute.Int("selvedge.attempt", info.Attempt),
-				attribute.Int("selvedge.max_attempts", info.MaxAttempts),
-				attribute.Int64("selvedge.next_delay_ms", info.NextDelay.Milliseconds()),
-				attribute.String("selvedge.error", info.Error.Error()),
-			),
-		)
-	}
+	attrs := append(activityAttrs(info.ActivityID, info.ActivityName),
+		attribute.Int("selvedge.attempt", info.Attempt),
+		attribute.Int("selvedge.max_attempts", info.MaxAttempts),
+		attribute.Int64("selvedge.next_delay_ms", info.NextDelay.Milliseconds()),
+	)
+	h.record(ctx, "activity_retry/"+info.ActivityName, info.InstanceID, info.WorkflowName, 0, codes.Unset, "", info.Error, attrs...)
 }
 
-// OnActivityCacheHit records a cache hit event during replay.
 func (h *OTelHooks) OnActivityCacheHit(ctx context.Context, info hooks.ActivityCacheHitInfo) {
-	_, span := h.tracer.Start(ctx, fmt.Sprintf("activity_cache_hit/%s", info.ActivityName),
-		trace.WithSpanKind(trace.SpanKindInternal),
-		trace.WithAttributes(
-			attribute.String("selvedge.instance_id", info.InstanceID),
-			attribute.String("selvedge.workflow_name", info.WorkflowName),
-			attribute.String("selvedge.activity_id", info.ActivityID),
-			attribute.String("selvedge.activity_name", info.ActivityName),
-		),
-	)
-	span.SetStatus(codes.Ok, "cache hit")
-	span.End()
+	h.record(ctx, "activity_cache_hit/"+info.ActivityName, info.InstanceID, info.WorkflowName, 0, codes.Ok, "cache hit", nil,
+		activityAttrs(info.ActivityID, info.ActivityName)...)
 }
 
-// Timer handling
-
-func (h *OTelHooks) timerKey(instanceID, timerID string) string {
-	return instanceID + ":" + timerID
-}
-
-// OnTimerStart creates a span when a timer starts.
 func (h *OTelHooks) OnTimerStart(ctx context.Context, info hooks.TimerStartInfo) {
-	_, span := h.tracer.Start(ctx, fmt.Sprintf("timer/%s", info.TimerID),
-		trace.WithSpanKind(trace.SpanKindInternal),
-		trace.WithAttributes(
-			attribute.String("selvedge.instance_id", info.InstanceID),
-			attribute.String("selvedge.workflow_name", info.WorkflowName),
-			attribute.String("selvedge.timer_id", info.TimerID),
-			attribute.String("selvedge.expires_at", info.ExpiresAt.String()),
-		),
-	)
-	h.timerSpans[h.timerKey(info.InstanceID, info.TimerID)] = span
+	h.record(ctx, "timer_start/"+info.TimerID, info.InstanceID, info.WorkflowName, 0, codes.Unset, "", nil,
+		attribute.String("selvedge.timer_id", info.TimerID),
+		attribute.String("selvedge.expires_at", info.ExpiresAt.String()))
 }
 
-// OnTimerFired ends the timer span when the timer fires.
 func (h *OTelHooks) OnTimerFired(ctx context.Context, info hooks.TimerFiredInfo) {
-	key := h.timerKey(info.InstanceID, info.TimerID)
-	if span, ok := h.timerSpans[key]; ok {
-		span.SetAttributes(
-			attribute.String("selvedge.fired_at", info.FiredAt.String()),
-		)
-		span.SetStatus(codes.Ok, "timer fired")
-		span.End()
-		delete(h.timerSpans, key)
-	}
+	h.record(ctx, "timer/"+info.TimerID, info.InstanceID, info.WorkflowName, 0, codes.Ok, "timer fired", nil,
+		attribute.String("selvedge.timer_id", info.TimerID),
+		attribute.String("selvedge.fired_at", info.FiredAt.String()))
 }
 
-// Replay
-
-// OnReplayStart creates a span when replay starts.
 func (h *OTelHooks) OnReplayStart(ctx context.Context, info hooks.ReplayStartInfo) {
-	_, span := h.tracer.Start(ctx, fmt.Sprintf("replay/%s", info.WorkflowName),
-		trace.WithSpanKind(trace.SpanKindInternal),
-		trace.WithAttributes(
-			attribute.String("selvedge.instance_id", info.InstanceID),
-			attribute.String("selvedge.workflow_name", info.WorkflowName),
-			attribute.Int("selvedge.history_events", info.HistoryEvents),
-			attribute.String("selvedge.resume_activity", info.ResumeActivity),
-		),
-	)
-	h.replaySpans[info.InstanceID] = span
+	h.record(ctx, "replay_start/"+info.WorkflowName, info.InstanceID, info.WorkflowName, 0, codes.Unset, "", nil,
+		attribute.Int("selvedge.history_events", info.HistoryEvents),
+		attribute.String("selvedge.resume_activity", info.ResumeActivity))
 }
 
-// OnReplayComplete ends the replay span with success status.
 func (h *OTelHooks) OnReplayComplete(ctx context.Context, info hooks.ReplayCompleteInfo) {
-	if span, ok := h.replaySpans[info.InstanceID]; ok {
-		span.SetAttributes(
-			attribute.Int("selvedge.cache_hits", info.CacheHits),
-			attribute.Int("selvedge.new_activities", info.NewActivities),
-			attribute.Int64("selvedge.duration_ms", info.Duration.Milliseconds()),
-		)
-		span.SetStatus(codes.Ok, "replay completed")
-		span.End()
-		delete(h.replaySpans, info.InstanceID)
-	}
+	h.record(ctx, "replay/"+info.WorkflowName, info.InstanceID, info.WorkflowName, info.Duration, codes.Ok, "replay completed", nil,
+		attribute.Int("selvedge.cache_hits", info.CacheHits),
+		attribute.Int("selvedge.new_activities", info.NewActivities))
 }
 
-// Ensure OTelHooks implements WorkflowHooks interface
 var _ hooks.WorkflowHooks = (*OTelHooks)(nil)

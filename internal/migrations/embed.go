@@ -5,9 +5,8 @@ import (
 	"io/fs"
 )
 
-// The SQL files are the schema source of truth. Before the first release,
-// keep one initial schema per dialect and edit both in place. Numbered
-// migrations start at S20.
+// The SQL files are the schema source of truth. Released migrations are
+// immutable. Add schema changes as new timestamped migrations for both dialects.
 //
 //go:embed sql/sqlite/*.sql sql/postgresql/*.sql
 var embeddedMigrations embed.FS

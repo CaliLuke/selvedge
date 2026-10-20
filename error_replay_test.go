@@ -139,6 +139,44 @@ func testFailedActivityNotRerunOnReplay(t *testing.T, factory replayAppFactory) 
 func TestNonRetryableApplicationErrorNotRetried(t *testing.T) {
 	testNonRetryableApplicationErrorNotRetried(t, createTestApp)
 }
+
+func TestJoinedNonRetryableApplicationErrorNotRetried(t *testing.T) {
+	stop := NewNonRetryableApplicationError("stop", "Stop", nil, nil)
+	retryable := NewApplicationError("transient", "Transient", nil, nil)
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"joined", errors.Join(retryable, stop)},
+		{"multiple_wrapped", fmt.Errorf("first: %w; second: %w", retryable, stop)},
+		{"nested", NewApplicationError("outer", "Outer", nil, errors.Join(retryable, stop))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newTypedReplayHarness(t, createTestApp)
+			calls := 0
+			activity := DefineActivity("failure", func(context.Context, string) (string, error) {
+				calls++
+				return "", tc.err
+			}, WithRetryPolicy[string, string](retry.Fixed(3, 0)))
+			var seen []error
+			id := addErrorReplayWorkflow(t, h, activity, &seen)
+
+			require.NoError(t, h.RunOnce(id))
+			require.Equal(t, 1, calls)
+			require.Len(t, seen, 1, "a non-retryable branch must complete the activity on its first attempt")
+			require.EqualError(t, seen[0], tc.err.Error())
+			var exhausted *RetryExhaustedError
+			require.False(t, errors.As(seen[0], &exhausted))
+
+			h.forceFire(t, id)
+			require.NoError(t, h.RunOnce(id))
+			require.Len(t, seen, 2)
+			require.EqualError(t, seen[1], tc.err.Error())
+			require.Equal(t, 1, calls, "replay must reuse the recorded failure")
+		})
+	}
+}
+
 func testNonRetryableApplicationErrorNotRetried(t *testing.T, factory replayAppFactory) {
 	t.Helper()
 	h := newTypedReplayHarness(t, factory)

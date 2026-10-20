@@ -87,32 +87,39 @@ func (p *Policy) ShouldRetry(attempts int, err error) bool {
 	return true
 }
 
-// GetDelay calculates the delay before the next retry.
+// GetDelay calculates the delay before the next retry. MaxInterval bounds the
+// final delay, including jitter. A nonpositive MaxInterval leaves it uncapped.
 func (p *Policy) GetDelay(attempts int) time.Duration {
-	if attempts <= 1 {
-		return p.addJitter(p.InitialInterval)
+	if p.InitialInterval <= 0 {
+		return 0
 	}
-
-	// Calculate exponential backoff
-	delay := float64(p.InitialInterval) * math.Pow(p.Multiplier, float64(attempts-1))
-
-	// Cap at maximum interval
-	if delay > float64(p.MaxInterval) {
-		delay = float64(p.MaxInterval)
+	multiplier := p.Multiplier
+	if math.IsNaN(multiplier) || multiplier < 1 {
+		multiplier = 1
 	}
-
-	return p.addJitter(time.Duration(delay))
-}
-
-// addJitter adds randomization to the delay.
-func (p *Policy) addJitter(delay time.Duration) time.Duration {
-	if p.RandomizationFactor == 0 {
-		return delay
+	delay := float64(p.InitialInterval)
+	if attempts > 1 {
+		delay *= math.Pow(multiplier, float64(attempts-1))
 	}
-
-	// Generate random factor between [1-factor, 1+factor]
-	factor := 1.0 + p.RandomizationFactor*(2*rand.Float64()-1)
-	return time.Duration(float64(delay) * factor)
+	limit := time.Duration(math.MaxInt64)
+	if p.MaxInterval > 0 {
+		limit = p.MaxInterval
+	}
+	delay = min(delay, float64(limit))
+	jitter := p.RandomizationFactor
+	if math.IsNaN(jitter) {
+		jitter = 0
+	}
+	jitter = max(0, min(1, jitter))
+	if jitter != 0 {
+		delay *= 1 + jitter*(2*rand.Float64()-1)
+	}
+	// float64 rounds MaxInt64 upward. Check before converting to avoid an
+	// overflow into negative durations, which would turn backoff into a spin.
+	if delay >= float64(limit) {
+		return limit
+	}
+	return time.Duration(delay)
 }
 
 // Builder provides a fluent API for building policies.

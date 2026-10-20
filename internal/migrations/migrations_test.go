@@ -55,6 +55,11 @@ func TestDetectDBType(t *testing.T) {
 		{"sqlite with sqlite:// prefix", "sqlite://test.db", "sqlite", false},
 		{"postgres with postgres://", "postgres://user:pass@localhost/db", "postgresql", false},
 		{"postgres with postgresql://", "postgresql://user:pass@localhost/db", "postgresql", false},
+		{"postgres with sqlite database name", "postgres://user:pass@localhost/sqlite.db", "postgresql", false},
+		{"postgres with sqlite password", "postgresql://user:sqlite@localhost/db", "postgresql", false},
+		{"anonymous memory database", ":memory:", "sqlite", false},
+		{"sqlite URI with query", "test.db?mode=rwc", "sqlite", false},
+		{"sqlite file without suffix", "data/workflows", "sqlite", false},
 		{"unknown database", "oracle://user:pass@localhost/db", "", true},
 	}
 

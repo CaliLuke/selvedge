@@ -31,16 +31,18 @@ import (
 //
 // Returns one of "sqlite", "postgresql".
 func DetectDBType(url string) (string, error) {
-	url = strings.ToLower(url)
-
-	if strings.Contains(url, "sqlite") || strings.HasPrefix(url, "file:") || strings.HasSuffix(url, ".db") {
-		return "sqlite", nil
-	}
-	if strings.HasPrefix(url, "postgres") {
+	normalized := strings.ToLower(url)
+	// Inspect the scheme before path text: credentials and database names may
+	// contain "sqlite" or end in ".db" on a PostgreSQL server.
+	if strings.HasPrefix(normalized, "postgres://") || strings.HasPrefix(normalized, "postgresql://") {
 		return "postgresql", nil
 	}
-
-	return "", fmt.Errorf("cannot detect database type from URL: %s", url)
+	if strings.HasPrefix(normalized, "sqlite:") || strings.HasPrefix(normalized, "file:") ||
+		(normalized != "" && !strings.Contains(normalized, "://")) {
+		return "sqlite", nil
+	}
+	// Connection URLs may contain credentials; never include them in errors.
+	return "", errors.New("cannot detect database type: unsupported URL scheme")
 }
 
 // EnsureSchemaMigrationsTable creates the schema_migrations table if it doesn't exist.
@@ -126,6 +128,8 @@ func withMigrationTransaction(ctx context.Context, db *sql.DB, dbType string, ap
 	}
 	defer func() { _ = conn.Close() }()
 	if err := beginMigrationTransaction(ctx, conn, begin); err != nil {
+		// BEGIN may have succeeded before its acknowledgement was lost.
+		_ = conn.Raw(func(any) error { return driver.ErrBadConn })
 		return err
 	}
 	committed := false

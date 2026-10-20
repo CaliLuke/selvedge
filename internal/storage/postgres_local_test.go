@@ -56,32 +56,6 @@ func pgLocalCleanup(t *testing.T, s *PostgresStorage) {
 	}
 }
 
-// insertInstance inserts a row directly with a chosen framework value.
-// Bypasses CreateInstance to allow framework='python'.
-func pgLocalInsertInstance(t *testing.T, s *PostgresStorage, id, name, framework string, status WorkflowStatus) {
-	t.Helper()
-	ctx := context.Background()
-	now := time.Now().UTC()
-	// Insert workflow_definitions first (FK)
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO workflow_definitions (workflow_name, source_hash, source_code, created_at)
-		VALUES ($1, $2, $3, $4)
-		ON CONFLICT DO NOTHING
-	`, name, "test-hash", "// test", now)
-	if err != nil {
-		t.Fatalf("insert workflow_definitions: %v", err)
-	}
-	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO workflow_instances (
-			instance_id, workflow_name, framework, status, input_data, source_hash,
-			started_at, updated_at, owner_service
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $7, 'test')
-	`, id, name, framework, string(status), "{}", "test-hash", now)
-	if err != nil {
-		t.Fatalf("insert workflow_instances: %v", err)
-	}
-}
-
 func TestPGLocal_AllFrameworks(t *testing.T) {
 	s := pgLocalSetup(t)
 	defer s.Close()

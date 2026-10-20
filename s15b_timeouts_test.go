@@ -144,7 +144,9 @@ func testStartToCloseTimeout(t *testing.T, factory replayAppFactory) {
 		setStoreClock(t, h, int64(1000+attempt*31))
 		select {
 		case err := <-ran:
-			require.NoError(t, err)
+			// The local deadline may finish the attempt before the store-clock
+			// update; either path must produce the same persisted timeout.
+			require.True(t, err == nil || errors.Is(err, context.DeadlineExceeded), "unexpected execution error: %v", err)
 		case <-time.After(time.Second):
 			t.Fatal("deadline did not unblock inline waiter")
 		}
@@ -153,7 +155,11 @@ func testStartToCloseTimeout(t *testing.T, factory replayAppFactory) {
 		}
 	}
 	require.NoError(t, h.app.checkActivityTimeouts(h.app.ctx))
-	err := h.RunOnce(id)
+	runErr := h.RunOnce(id)
+	require.True(t, runErr == nil || errors.Is(runErr, context.DeadlineExceeded), "unexpected execution error: %v", runErr)
+	result, err := GetWorkflowResult[string](h.app.ctx, h.app, id)
+	require.NoError(t, err)
+	err = result.Error
 	var exhausted *RetryExhaustedError
 	require.ErrorAs(t, err, &exhausted)
 	require.Equal(t, 2, exhausted.Attempts)

@@ -63,11 +63,11 @@ func TestWorkflowLifecycle(t *testing.T) {
 
 	// Check spans
 	spans := sr.Ended()
-	if len(spans) != 1 {
-		t.Fatalf("expected 1 span, got %d", len(spans))
+	if len(spans) != 2 {
+		t.Fatalf("expected start marker and terminal span, got %d", len(spans))
 	}
 
-	span := spans[0]
+	span := spans[len(spans)-1]
 	if span.Name() != "workflow/order_workflow" {
 		t.Errorf("expected span name 'workflow/order_workflow', got %s", span.Name())
 	}
@@ -99,11 +99,11 @@ func TestWorkflowFailed(t *testing.T) {
 	})
 
 	spans := sr.Ended()
-	if len(spans) != 1 {
-		t.Fatalf("expected 1 span, got %d", len(spans))
+	if len(spans) != 2 {
+		t.Fatalf("expected start marker and terminal span, got %d", len(spans))
 	}
 
-	span := spans[0]
+	span := spans[len(spans)-1]
 	if span.Status().Code != codes.Error {
 		t.Errorf("expected status Error, got %v", span.Status().Code)
 	}
@@ -127,11 +127,11 @@ func TestWorkflowCancelled(t *testing.T) {
 	})
 
 	spans := sr.Ended()
-	if len(spans) != 1 {
-		t.Fatalf("expected 1 span, got %d", len(spans))
+	if len(spans) != 2 {
+		t.Fatalf("expected start marker and terminal span, got %d", len(spans))
 	}
 
-	span := spans[0]
+	span := spans[len(spans)-1]
 	if span.Status().Code != codes.Error {
 		t.Errorf("expected status Error (canceled), got %v", span.Status().Code)
 	}
@@ -165,11 +165,11 @@ func TestActivityLifecycle(t *testing.T) {
 	})
 
 	spans := sr.Ended()
-	if len(spans) != 1 {
-		t.Fatalf("expected 1 span, got %d", len(spans))
+	if len(spans) != 2 {
+		t.Fatalf("expected start marker and terminal span, got %d", len(spans))
 	}
 
-	span := spans[0]
+	span := spans[len(spans)-1]
 	if span.Name() != "activity/reserve_inventory" {
 		t.Errorf("expected span name 'activity/reserve_inventory', got %s", span.Name())
 	}
@@ -204,11 +204,11 @@ func TestActivityFailed(t *testing.T) {
 	})
 
 	spans := sr.Ended()
-	if len(spans) != 1 {
-		t.Fatalf("expected 1 span, got %d", len(spans))
+	if len(spans) != 2 {
+		t.Fatalf("expected start marker and terminal span, got %d", len(spans))
 	}
 
-	span := spans[0]
+	span := spans[len(spans)-1]
 	if span.Status().Code != codes.Error {
 		t.Errorf("expected status Error, got %v", span.Status().Code)
 	}
@@ -249,19 +249,16 @@ func TestActivityRetry(t *testing.T) {
 	})
 
 	spans := sr.Ended()
-	if len(spans) != 1 {
-		t.Fatalf("expected 1 span, got %d", len(spans))
+	if len(spans) != 3 {
+		t.Fatalf("expected start, retry and completion spans, got %d", len(spans))
 	}
-
-	// Check that retry event was added
-	span := spans[0]
-	events := span.Events()
-	if len(events) != 1 {
-		t.Fatalf("expected 1 event (retry), got %d", len(events))
+	span := spans[1]
+	if span.Name() != "activity_retry/fetch_data" {
+		t.Errorf("expected retry marker, got %s", span.Name())
 	}
-	if events[0].Name != "activity_retry" {
-		t.Errorf("expected event name 'activity_retry', got %s", events[0].Name)
-	}
+	checkAttributeInt(t, span.Attributes(), "selvedge.attempt", 1)
+	checkAttributeInt(t, span.Attributes(), "selvedge.max_attempts", 3)
+	checkAttributeInt(t, span.Attributes(), "selvedge.next_delay_ms", 5000)
 }
 
 func TestActivityCacheHit(t *testing.T) {
@@ -278,10 +275,10 @@ func TestActivityCacheHit(t *testing.T) {
 
 	spans := sr.Ended()
 	if len(spans) != 1 {
-		t.Fatalf("expected 1 span, got %d", len(spans))
+		t.Fatalf("expected one cache marker, got %d", len(spans))
 	}
 
-	span := spans[0]
+	span := spans[len(spans)-1]
 	if span.Name() != "activity_cache_hit/reserve_inventory" {
 		t.Errorf("expected span name 'activity_cache_hit/reserve_inventory', got %s", span.Name())
 	}
@@ -308,11 +305,11 @@ func TestTimerHandling(t *testing.T) {
 	})
 
 	spans := sr.Ended()
-	if len(spans) != 1 {
-		t.Fatalf("expected 1 span, got %d", len(spans))
+	if len(spans) != 2 {
+		t.Fatalf("expected start marker and terminal span, got %d", len(spans))
 	}
 
-	span := spans[0]
+	span := spans[len(spans)-1]
 	if span.Name() != "timer/payment_timeout" {
 		t.Errorf("expected span name 'timer/payment_timeout', got %s", span.Name())
 	}
@@ -341,11 +338,11 @@ func TestReplayLifecycle(t *testing.T) {
 	})
 
 	spans := sr.Ended()
-	if len(spans) != 1 {
-		t.Fatalf("expected 1 span, got %d", len(spans))
+	if len(spans) != 2 {
+		t.Fatalf("expected start marker and terminal span, got %d", len(spans))
 	}
 
-	span := spans[0]
+	span := spans[len(spans)-1]
 	if span.Name() != "replay/order_workflow" {
 		t.Errorf("expected span name 'replay/order_workflow', got %s", span.Name())
 	}

@@ -207,9 +207,23 @@ func (c *Child[O]) Cancel(ctx *WorkflowContext) error {
 		return err
 	}
 	defer cmd.End()
+	// Older histories lack cancellation target metadata. New commands preserve
+	// it so moving a cancellation to another handle cannot silently replay.
+	target := storage.ScopeTarget{Key: c.key, Command: c.command, Kind: "child"}
+	if cmd.Recorded != nil && cmd.Recorded.ReservationData != nil {
+		var recorded storage.ScopeTarget
+		if err = json.Unmarshal(cmd.Recorded.ReservationData, &recorded); err == nil && recorded != target {
+			err = &NondeterminismError{Seq: cmd.Seq, Key: cmd.Key, Recorded: recorded.Key, Issued: target.Key, Reason: "child cancellation target changed"}
+		}
+		if err != nil {
+			ctx.execCtx.Fail(err)
+			return err
+		}
+	}
 	if cmd.Recorded == nil {
 		cancellation := &WorkflowCancelledError{InstanceID: ctx.InstanceID(), Reason: "parent cancelled child"}
 		record := &storage.HistoryEvent{InstanceID: ctx.InstanceID(), ActivityID: cmd.Key, Seq: cmd.Seq, Command: "child_cancel", EventType: storage.HistoryChildCancelled, EventData: encodeError(cancellation), DataType: "json"}
+		record.ReservationData, _ = json.Marshal(target)
 		row, err := ctx.execCtx.Storage().CancelChild(ctx.Context(), ctx.execCtx.Fence(), &storage.ChildCancel{Seq: cmd.Seq, Record: record, ChildKey: c.key, ChildCommand: c.command, ChildID: c.id, EventData: encodeError(cancellation)})
 		if err != nil {
 			ctx.execCtx.Fail(err)

@@ -6,13 +6,11 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/url"
 	"testing"
 	"testing/fstest"
-	"time"
 
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
+	"github.com/CaliLuke/selvedge/internal/testkit"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -60,29 +58,10 @@ DROP TABLE IF EXISTS test_users;
 func TestApplyMigrations_PostgreSQL_Integration(t *testing.T) {
 	ctx := context.Background()
 
-	container, err := postgres.Run(ctx,
-		"postgres:15-alpine",
-		postgres.WithDatabase("migration_test"),
-		postgres.WithUsername("test"),
-		postgres.WithPassword("test"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).
-				WithStartupTimeout(5*time.Minute),
-			// Container logs can precede the host port forward on macOS.
-			wait.ForListeningPort("5432/tcp")),
-	)
-	if err != nil {
-		t.Fatalf("failed to start PostgreSQL container: %v", err)
-	}
-	defer testcontainers.CleanupContainer(t, container)
+	connStr, cleanup := testkit.PostgresDatabase(t)
+	defer cleanup()
 
-	connStr, err := container.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		t.Fatalf("failed to get connection string: %v", err)
-	}
-
-	db, err := sql.Open("pgx", connStr+"&default_transaction_isolation=repeatable+read")
+	db, err := sql.Open("pgx", repeatableReadURL(connStr))
 	if err != nil {
 		t.Fatalf("failed to open database: %v", err)
 	}
@@ -149,27 +128,8 @@ func TestApplyMigrations_PostgreSQL_Integration(t *testing.T) {
 func TestApplyMigrations_MultiWorker_PostgreSQL_Integration(t *testing.T) {
 	ctx := context.Background()
 
-	container, err := postgres.Run(ctx,
-		"postgres:15-alpine",
-		postgres.WithDatabase("multiworker_test"),
-		postgres.WithUsername("test"),
-		postgres.WithPassword("test"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).
-				WithStartupTimeout(5*time.Minute),
-			// Container logs can precede the host port forward on macOS.
-			wait.ForListeningPort("5432/tcp")),
-	)
-	if err != nil {
-		t.Fatalf("failed to start PostgreSQL container: %v", err)
-	}
-	defer testcontainers.CleanupContainer(t, container)
-
-	connStr, err := container.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		t.Fatalf("failed to get connection string: %v", err)
-	}
+	connStr, cleanup := testkit.PostgresDatabase(t)
+	defer cleanup()
 
 	// Simulate multiple workers starting simultaneously
 	const numWorkers = 5
@@ -177,7 +137,7 @@ func TestApplyMigrations_MultiWorker_PostgreSQL_Integration(t *testing.T) {
 
 	for i := 0; i < numWorkers; i++ {
 		go func(workerID int) {
-			db, err := sql.Open("pgx", connStr+"&default_transaction_isolation=repeatable+read")
+			db, err := sql.Open("pgx", repeatableReadURL(connStr))
 			if err != nil {
 				results <- err
 				return
@@ -202,7 +162,10 @@ func TestApplyMigrations_MultiWorker_PostgreSQL_Integration(t *testing.T) {
 	}
 
 	// Verify migration was applied exactly once
-	db, _ := sql.Open("pgx", connStr+"&default_transaction_isolation=repeatable+read")
+	db, err := sql.Open("pgx", repeatableReadURL(connStr))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer db.Close()
 
 	var count int
@@ -213,4 +176,15 @@ func TestApplyMigrations_MultiWorker_PostgreSQL_Integration(t *testing.T) {
 	if count != 1 {
 		t.Errorf("expected 1 migration record, got %d", count)
 	}
+}
+
+func repeatableReadURL(connection string) string {
+	address, err := url.Parse(connection)
+	if err != nil {
+		panic(err)
+	} // PostgresDatabase supplies validated URLs.
+	params := address.Query()
+	params.Set("default_transaction_isolation", "repeatable read")
+	address.RawQuery = params.Encode()
+	return address.String()
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"runtime"
+	"slices"
 
 	"github.com/CaliLuke/selvedge/internal/storage"
 )
@@ -88,11 +89,24 @@ func cancelWorkflowScope(ctx *WorkflowContext) {
 		return
 	}
 	defer cmd.End()
+	// The count alone cannot distinguish two scopes with different handles.
+	// Preserve compatibility with histories written before targets were saved.
+	if cmd.Recorded != nil && cmd.Recorded.ReservationData != nil {
+		var recorded []storage.ScopeTarget
+		if err = json.Unmarshal(cmd.Recorded.ReservationData, &recorded); err == nil && !slices.Equal(recorded, ctx.scope.targets) {
+			err = &NondeterminismError{Seq: cmd.Seq, Key: cmd.Key, Reason: "scope cancellation targets changed"}
+		}
+		if err != nil {
+			ec.Fail(err)
+			return
+		}
+	}
 	if cmd.Recorded == nil {
 		data, _ := json.Marshal(struct {
 			Targets int `json:"targets"`
 		}{len(ctx.scope.targets)})
-		_, err = commitObservation(ctx, &storage.ObservationCommit{Seq: cmd.Seq, Record: &storage.HistoryEvent{InstanceID: ctx.InstanceID(), ActivityID: cmd.Key, Seq: cmd.Seq, Command: "cancel_scope", EventType: storage.HistoryScopeCancelled, EventData: data, DataType: "json"}, Cancel: &storage.ScopeCancel{Targets: ctx.scope.targets}})
+		targets, _ := json.Marshal(ctx.scope.targets)
+		_, err = commitObservation(ctx, &storage.ObservationCommit{Seq: cmd.Seq, Record: &storage.HistoryEvent{InstanceID: ctx.InstanceID(), ActivityID: cmd.Key, Seq: cmd.Seq, Command: "cancel_scope", EventType: storage.HistoryScopeCancelled, EventData: data, ReservationData: targets, DataType: "json"}, Cancel: &storage.ScopeCancel{Targets: ctx.scope.targets}})
 		if err != nil {
 			return
 		}

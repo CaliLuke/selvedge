@@ -7,15 +7,17 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
 )
 
-// txKey is the context key for transactions.
-type txKey struct{}
+// txKey isolates transactions by database pool even when callers share a context.
+type txKey struct{ db *sql.DB }
 
 // txState holds transaction state including post-commit callbacks.
 type txState struct {
@@ -32,21 +34,28 @@ type SQLiteStorage struct {
 
 // NewSQLiteStorage creates a new SQLite storage.
 func NewSQLiteStorage(dbPath string) (*SQLiteStorage, error) {
-	// For in-memory databases, use shared cache mode so all connections share the same database.
-	// This is required because database/sql uses connection pooling, and without shared cache,
-	// each connection to ":memory:" would get its own separate database.
+	// Each anonymous memory store needs its own identity, while its pooled
+	// connections share that identity. Named memory URIs retain explicit sharing.
 	connStr := dbPath
-	if dbPath == ":memory:" {
-		connStr = "file::memory:?cache=shared"
+	// sqlite:// is the public shorthand; the driver accepts SQLite file: URIs.
+	// Preserve the path and query verbatim before adding pool-level options.
+	if path, ok := strings.CutPrefix(connStr, "sqlite://"); ok {
+		connStr = "file:" + path
 	}
-	connStr += "?_pragma=busy_timeout(5000)"
-
-	// For shared memory, the connection string already has query params, so use & instead of ?
 	if dbPath == ":memory:" {
-		connStr = "file::memory:?cache=shared&_pragma=busy_timeout(5000)"
+		connStr = "file:selvedge-" + uuid.NewString() + "?mode=memory&cache=shared"
 	}
-
-	connStr += "&_txlock=immediate"
+	path, query, _ := strings.Cut(connStr, "?")
+	params, err := url.ParseQuery(query)
+	if err != nil {
+		return nil, fmt.Errorf("invalid SQLite query options: %w", err)
+	}
+	params.Add("_pragma", "busy_timeout(5000)")
+	// Foreign keys are connection-local; every pool connection must enforce the
+	// schema's ownership constraints and cascading deletes.
+	params.Add("_pragma", "foreign_keys(1)")
+	params.Set("_txlock", "immediate")
+	connStr = path + "?" + params.Encode()
 	db, err := sql.Open("sqlite", connStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
@@ -136,7 +145,7 @@ func parseSQLiteTime(s string) (time.Time, error) {
 
 // getConn returns the appropriate database handle based on context (internal use).
 func (s *SQLiteStorage) getConn(ctx context.Context) Executor {
-	if state, ok := ctx.Value(txKey{}).(*txState); ok {
+	if state, ok := ctx.Value(txKey{s.db}).(*txState); ok {
 		return observeExecutor(s.driver, state.tx)
 	}
 	return observeExecutor(s.driver, s.db)
@@ -151,12 +160,12 @@ func (s *SQLiteStorage) BeginTransaction(ctx context.Context) (context.Context, 
 		return ctx, err
 	}
 	state := &txState{tx: tx}
-	return context.WithValue(ctx, txKey{}, state), nil
+	return context.WithValue(ctx, txKey{s.db}, state), nil
 }
 
 // CommitTransaction commits the current transaction.
 func (s *SQLiteStorage) CommitTransaction(ctx context.Context) error {
-	state, ok := ctx.Value(txKey{}).(*txState)
+	state, ok := ctx.Value(txKey{s.db}).(*txState)
 	if !ok {
 		return fmt.Errorf("no transaction in context")
 	}
@@ -180,7 +189,7 @@ func (s *SQLiteStorage) CommitTransaction(ctx context.Context) error {
 // RollbackTransaction rolls back the current transaction.
 // Callbacks are not executed on rollback.
 func (s *SQLiteStorage) RollbackTransaction(ctx context.Context) error {
-	state, ok := ctx.Value(txKey{}).(*txState)
+	state, ok := ctx.Value(txKey{s.db}).(*txState)
 	if !ok {
 		return nil // No transaction to rollback
 	}
@@ -189,7 +198,7 @@ func (s *SQLiteStorage) RollbackTransaction(ctx context.Context) error {
 
 // InTransaction returns whether a transaction is in progress.
 func (s *SQLiteStorage) InTransaction(ctx context.Context) bool {
-	_, ok := ctx.Value(txKey{}).(*txState)
+	_, ok := ctx.Value(txKey{s.db}).(*txState)
 	return ok
 }
 
@@ -208,7 +217,7 @@ func (s *SQLiteStorage) Conn(ctx context.Context) Executor {
 // RegisterPostCommitCallback registers a callback to be executed after a successful commit.
 // Returns an error if not currently in a transaction.
 func (s *SQLiteStorage) RegisterPostCommitCallback(ctx context.Context, cb func() error) error {
-	state, ok := ctx.Value(txKey{}).(*txState)
+	state, ok := ctx.Value(txKey{s.db}).(*txState)
 	if !ok {
 		return fmt.Errorf("not in a transaction")
 	}
@@ -542,12 +551,15 @@ func (s *SQLiteStorage) FindExpiredTimers(ctx context.Context, limit int) ([]*Ti
 	if limit <= 0 {
 		limit = 100
 	}
+	// ReserveTimer stores canonical UTC timestamps with six fractional digits.
+	// Compare at that precision: datetime() drops fractions and can fire early.
+	// Padding the millisecond store clock preserves sub-millisecond deadlines.
 	conn := s.getConn(ctx)
 	rows, err := conn.QueryContext(ctx, `
 		SELECT t.id, t.instance_id, t.timer_id, t.expires_at, t.activity_id, t.created_at
 		FROM workflow_timer_subscriptions t
 		JOIN workflow_instances w ON t.instance_id = w.instance_id
-		WHERE datetime(t.expires_at) <= datetime('now')
+		WHERE t.expires_at <= (strftime('%Y-%m-%d %H:%M:%f', (`+s.driver.NowMillisExpr()+`)/1000.0, 'unixepoch') || '000')
 		ORDER BY t.expires_at ASC
 		LIMIT ?
 	`, limit)

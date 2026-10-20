@@ -72,7 +72,14 @@ type App struct {
 	initialized bool
 	running     bool
 	closed      atomic.Bool
+	shutdown    *appShutdown
 	mu          sync.Mutex
+}
+
+// appShutdown belongs to one run. Closing done publishes err to all waiters.
+type appShutdown struct {
+	done chan struct{}
+	err  error
 }
 
 // NewApp creates a new Selvedge application.
@@ -109,12 +116,27 @@ func (a *App) Start(ctx context.Context) error {
 	if a.running {
 		return fmt.Errorf("app already running")
 	}
+	if a.shutdown != nil {
+		select {
+		case <-a.shutdown.done:
+			a.shutdown = nil
+		default:
+			return fmt.Errorf("app is shutting down")
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := a.config.validate(); err != nil {
+		return err
+	}
 
 	// Create cancellable context
 	a.ctx, a.cancel = context.WithCancel(ctx)
 
 	// Initialize storage
 	if err := a.initStorage(); err != nil {
+		a.closed.Store(true)
 		a.cancel()
 		if a.storage != nil {
 			_ = a.storage.Close()
@@ -140,66 +162,59 @@ func (a *App) Start(ctx context.Context) error {
 	return nil
 }
 
-// Shutdown gracefully shuts down the application.
+// Shutdown gracefully shuts down the application. Cleanup continues if the caller
+// times out; subsequent calls wait for the same cleanup operation.
 func (a *App) Shutdown(ctx context.Context) error {
 	a.mu.Lock()
-	if !a.running {
-		a.mu.Unlock()
-		return nil
+	shutdown := a.shutdown
+	if shutdown == nil {
+		if !a.running {
+			a.mu.Unlock()
+			return nil
+		}
+		shutdown = &appShutdown{done: make(chan struct{})}
+		a.shutdown = shutdown
+		a.running = false
+		a.closed.Store(true)
+		if a.cancel != nil {
+			a.cancel()
+		}
+		go a.finishShutdown(shutdown)
 	}
-	a.running = false
-	a.closed.Store(true)
 	a.mu.Unlock()
 
+	timer := time.NewTimer(a.config.shutdownTimeout)
+	defer timer.Stop()
+	select {
+	case <-shutdown.done:
+		return shutdown.err
+	case <-ctx.Done():
+		return fmt.Errorf("shutdown interrupted: %w", ctx.Err())
+	case <-timer.C:
+		return fmt.Errorf("shutdown timed out after %v", a.config.shutdownTimeout)
+	}
+}
+
+func (a *App) finishShutdown(shutdown *appShutdown) {
+	defer close(shutdown.done)
 	if a.localUnsubscribe != nil {
 		a.localUnsubscribe()
 	}
-
-	// Stop LISTEN/NOTIFY listener if enabled
 	if a.notifyListener != nil {
-		if err := a.notifyListener.Stop(ctx); err != nil {
+		if err := a.notifyListener.Stop(context.Background()); err != nil {
 			slog.Debug("error stopping LISTEN/NOTIFY listener", "error", err)
 		}
 	}
-
-	// Cancel background tasks
-	if a.cancel != nil {
-		a.cancel()
+	a.wg.Wait()
+	if a.storage == nil {
+		return
 	}
 
-	// Wait for background tasks with timeout
-	done := make(chan struct{})
-	go func() {
-		a.wg.Wait()
-		// Lease releases must commit before the wake, including when the caller
-		// has already timed out. Use a bounded context independent of shutdown.
-		if a.storage != nil {
-			notifyCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			a.storage.NotifyRunnable(notifyCtx)
-			cancel()
-		}
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		// All tasks completed
-	case <-ctx.Done():
-		return fmt.Errorf("shutdown timed out")
-	case <-time.After(a.config.shutdownTimeout):
-		return fmt.Errorf("shutdown timed out after %v", a.config.shutdownTimeout)
-	}
-
-	// Release the leader lock if we held it. Without this, a fresh
-	// process starting after a graceful shutdown has to wait the full
-	// leader-lease TTL (default 45s) before it can become leader and
-	// resume timer checks. The TTL is the safety
-	// net for crash scenarios; clean shutdowns should release the
-	// lock symmetrically with TryAcquireSystemLock.
-	//
-	// Background tasks have already stopped at this point so
-	// a.isLeader is stable.
-	if a.isLeader.Load() && a.storage != nil {
+	// Releases must commit before waking other workers, even after caller timeout.
+	notifyCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	a.storage.NotifyRunnable(notifyCtx)
+	cancel()
+	if a.isLeader.Load() {
 		releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		if err := a.storage.ReleaseSystemLock(releaseCtx, "selvedge_leader", a.config.workerID); err != nil {
 			slog.Debug("failed to release leader lock on shutdown", "error", err)
@@ -207,15 +222,9 @@ func (a *App) Shutdown(ctx context.Context) error {
 		cancel()
 		a.isLeader.Store(false)
 	}
-
-	// Close storage
-	if a.storage != nil {
-		if err := a.storage.Close(); err != nil {
-			return fmt.Errorf("failed to close storage: %w", err)
-		}
+	if err := a.storage.Close(); err != nil {
+		shutdown.err = fmt.Errorf("failed to close storage: %w", err)
 	}
-
-	return nil
 }
 
 // initStorage initializes the storage backend.
@@ -343,7 +352,11 @@ func addJitter(d time.Duration) time.Duration {
 	const jitterPercent = 0.25
 	// Generate a factor between (1 - jitterPercent) and (1 + jitterPercent)
 	factor := 1.0 + jitterPercent*(2*rand.Float64()-1)
-	return time.Duration(float64(d) * factor)
+	delay := float64(d) * factor
+	if delay >= float64(math.MaxInt64) {
+		return time.Duration(math.MaxInt64)
+	}
+	return max(time.Nanosecond, time.Duration(delay))
 }
 
 // calculateBackoff computes exponential backoff with max cap.
@@ -353,11 +366,11 @@ func calculateBackoff(base time.Duration, consecutiveEmpty int, maxBackoff time.
 		return base
 	}
 	exp := min(consecutiveEmpty, 5) // Cap exponent to prevent overflow
-	backoff := time.Duration(float64(base) * math.Pow(2, float64(exp)))
-	if backoff > maxBackoff {
+	backoff := float64(base) * math.Pow(2, float64(exp))
+	if backoff >= float64(maxBackoff) {
 		return maxBackoff
 	}
-	return backoff
+	return time.Duration(backoff)
 }
 
 // addJitterFraction adds random jitter as a fraction of the duration.
@@ -581,7 +594,8 @@ func (a *App) registerWorkflowWithRunner(name string, workflow any, runner repla
 
 // startWorkflow starts a new workflow instance.
 func (a *App) startWorkflow(ctx context.Context, workflowName string, input any, opts *startOptions) (string, error) {
-	if a.closed.Load() || a.storage == nil {
+	s := a.Storage()
+	if a.closed.Load() || s == nil {
 		return "", fmt.Errorf("%w: %w", ErrWorkflowStartRejected, ErrAppNotStarted)
 	}
 	if workflowName == "" || len(workflowName) > 255 {
@@ -613,7 +627,7 @@ func (a *App) startWorkflow(ctx context.Context, workflowName string, input any,
 	if err := ctx.Err(); err != nil {
 		return "", fmt.Errorf("%w: %w", ErrWorkflowStartRejected, err)
 	}
-	if err := a.storage.CreateInstance(ctx, instance); err != nil {
+	if err := s.CreateInstance(ctx, instance); err != nil {
 		return "", fmt.Errorf("failed to create instance: %w", err)
 	}
 
@@ -655,11 +669,12 @@ func (a *App) resumeWorkflow(ctx context.Context, instanceID string) error {
 
 // GetInstance retrieves a workflow instance by ID.
 func (a *App) GetInstance(ctx context.Context, instanceID string) (*storage.WorkflowInstance, error) {
-	if a.storage == nil {
+	s := a.Storage()
+	if a.closed.Load() || s == nil {
 		return nil, ErrAppNotStarted
 	}
 
-	instance, err := a.storage.GetInstance(ctx, instanceID)
+	instance, err := s.GetInstance(ctx, instanceID)
 	if err != nil {
 		return nil, err
 	}
@@ -699,11 +714,12 @@ func (a *App) FindInstances(ctx context.Context, inputFilters map[string]any) ([
 // Use this when you need pagination, status filters, or other advanced options
 // in addition to input filters.
 func (a *App) FindInstancesWithOptions(ctx context.Context, opts storage.ListInstancesOptions) ([]*storage.WorkflowInstance, error) {
-	if a.storage == nil {
-		return nil, fmt.Errorf("storage not initialized")
+	s := a.Storage()
+	if a.closed.Load() || s == nil {
+		return nil, ErrAppNotStarted
 	}
 
-	result, err := a.storage.ListInstances(ctx, opts)
+	result, err := s.ListInstances(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -713,10 +729,11 @@ func (a *App) FindInstancesWithOptions(ctx context.Context, opts storage.ListIns
 
 // cancelWorkflow durably requests cancellation and wakes dispatch.
 func (a *App) cancelWorkflow(ctx context.Context, instanceID, reason string) error {
-	if a.closed.Load() || a.storage == nil {
+	s := a.Storage()
+	if a.closed.Load() || s == nil {
 		return ErrAppNotStarted
 	}
-	status, err := a.storage.RequestCancel(ctx, instanceID, reason)
+	status, err := s.RequestCancel(ctx, instanceID, reason)
 	if errors.Is(err, storage.ErrInstanceNotFound) {
 		return &WorkflowNotFoundError{InstanceID: instanceID}
 	}
@@ -734,6 +751,8 @@ func (a *App) cancelWorkflow(ctx context.Context, instanceID, reason string) err
 
 // Storage returns the storage instance for advanced usage.
 func (a *App) Storage() storage.Storage {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	return a.storage
 }
 

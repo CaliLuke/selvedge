@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	sqldriver "database/sql/driver"
 	"errors"
 	"fmt"
 	"time"
@@ -33,7 +34,7 @@ func (s *PostgresStorage) ReadSnapshot(ctx context.Context, id string) (*Instanc
 	return readSnapshot(ctx, s.db, s.driver, id, "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
 }
 
-func readSnapshot(ctx context.Context, db *sql.DB, driver Driver, id, begin string) (*InstanceSnapshot, error) {
+func readSnapshot(ctx context.Context, db *sql.DB, driver Driver, id, begin string) (result *InstanceSnapshot, err error) {
 	conn, err := db.Conn(ctx)
 	if err != nil {
 		return nil, err
@@ -41,13 +42,22 @@ func readSnapshot(ctx context.Context, db *sql.DB, driver Driver, id, begin stri
 	defer func() { _ = conn.Close() }()
 	observed := observeExecutor(driver, conn)
 	if _, err = observed.ExecContext(ctx, begin); err != nil {
+		// An error can mean the server began the transaction but its acknowledgement
+		// was lost. database/sql cannot detect a manual transaction in that state.
+		_ = conn.Raw(func(any) error { return sqldriver.ErrBadConn })
 		return nil, err
 	}
 	// Always release the transaction, including on caller cancellation. No callbacks or notifications.
 	defer func() {
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
-		_, _ = observed.ExecContext(cleanup, "ROLLBACK")
+		if _, rollbackErr := observed.ExecContext(cleanup, "ROLLBACK"); rollbackErr != nil {
+			// A manually started transaction is invisible to database/sql. Discard its
+			// connection if rollback failed, so a later caller cannot inherit it.
+			_ = conn.Raw(func(any) error { return sqldriver.ErrBadConn })
+			result = nil
+			err = errors.Join(err, fmt.Errorf("rollback snapshot: %w", rollbackErr))
+		}
 	}()
 	snapshot, err := readSnapshotInstance(ctx, observed, id)
 	if err != nil || snapshot == nil {

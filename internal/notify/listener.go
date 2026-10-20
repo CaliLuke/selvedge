@@ -4,6 +4,7 @@ package notify
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -60,7 +61,7 @@ type Listener struct {
 	conn   *pgx.Conn
 	ctx    context.Context
 	cancel context.CancelFunc
-	wg     sync.WaitGroup
+	done   chan struct{}
 	mu     sync.RWMutex
 
 	// Status
@@ -100,30 +101,35 @@ func (l *Listener) OnNotification(channel NotifyChannel, handler NotificationHan
 	l.handlers[channel] = append(l.handlers[channel], handler)
 }
 
-// Start begins listening for notifications.
-// This method blocks until the context is cancelled.
+// Start begins listening in the background. A listener may be restarted after Stop completes.
 func (l *Listener) Start(ctx context.Context) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.done != nil {
+		select {
+		case <-l.done:
+		default:
+			return fmt.Errorf("notification listener already running")
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	l.ctx, l.cancel = context.WithCancel(ctx)
-
-	l.wg.Add(1)
-	go l.listenLoop()
-
+	l.done = make(chan struct{})
+	go l.listenLoop(l.done)
 	return nil
 }
 
-// Stop gracefully shuts down the listener.
+// Stop cancels the listener and waits for its connection and handlers to finish.
 func (l *Listener) Stop(ctx context.Context) error {
-	if l.cancel != nil {
-		l.cancel()
+	l.mu.RLock()
+	cancel, done := l.cancel, l.done
+	l.mu.RUnlock()
+	if cancel == nil {
+		return nil
 	}
-
-	// Wait for goroutines to finish
-	done := make(chan struct{})
-	go func() {
-		l.wg.Wait()
-		close(done)
-	}()
-
+	cancel()
 	select {
 	case <-done:
 		return nil
@@ -146,8 +152,9 @@ func (l *Listener) LastError() error {
 	return l.lastError
 }
 
-func (l *Listener) listenLoop() {
-	defer l.wg.Done()
+func (l *Listener) listenLoop(done chan struct{}) {
+	defer close(done)
+	defer l.closeConnection()
 
 	for {
 		select {
@@ -238,7 +245,9 @@ func (l *Listener) closeConnection() {
 	defer l.mu.Unlock()
 
 	if l.conn != nil {
-		_ = l.conn.Close(context.Background())
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = l.conn.Close(ctx)
+		cancel()
 		l.conn = nil
 	}
 	l.isActive = false
@@ -280,8 +289,9 @@ func (l *Listener) dispatchNotification(channel NotifyChannel, payload string) {
 	l.mu.RUnlock()
 
 	for _, handler := range handlers {
-		// Run handlers in goroutines to not block the listen loop
-		go func(h NotificationHandler) {
+		// Handlers are short wake-up callbacks. Dispatch synchronously to bound
+		// resource use and ensure Stop joins every callback before returning.
+		func(h NotificationHandler) {
 			defer func() {
 				if r := recover(); r != nil {
 					slog.Error("panic in notification handler",

@@ -8,74 +8,34 @@ import (
 	"testing"
 	"time"
 
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
+	"github.com/CaliLuke/selvedge/internal/testkit"
 )
 
 func setupPostgresContainer(t *testing.T) (*PostgresStorage, func()) {
 	t.Helper()
 	ctx := context.Background()
 
-	container, err := postgres.Run(ctx,
-		"postgres:15-alpine",
-		postgres.WithDatabase("selvedge_test"),
-		postgres.WithUsername("selvedge"),
-		postgres.WithPassword("selvedge"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).
-				WithStartupTimeout(5*time.Minute),
-			// Container logs can precede the host port forward on macOS.
-			wait.ForListeningPort("5432/tcp")),
-	)
-	if err != nil {
-		t.Fatalf("failed to start PostgreSQL container: %v", err)
-	}
-
-	connStr, err := container.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		testcontainers.CleanupContainer(t, container)
-		t.Fatalf("failed to get connection string: %v", err)
-	}
+	connStr, databaseCleanup := testkit.PostgresDatabase(t)
 
 	store, err := NewPostgresStorage(connStr)
 	if err != nil {
-		testcontainers.CleanupContainer(t, container)
+		databaseCleanup()
 		t.Fatalf("failed to create PostgreSQL storage: %v", err)
 	}
 
 	// Apply the embedded schema instead of Initialize() (which is a no-op)
 	if err := InitializeTestSchemaPostgres(ctx, store); err != nil {
 		store.Close()
-		testcontainers.CleanupContainer(t, container)
+		databaseCleanup()
 		t.Fatalf("failed to initialize test schema: %v", err)
 	}
 
 	cleanup := func() {
 		store.Close()
-		testcontainers.CleanupContainer(t, container)
+		databaseCleanup()
 	}
 
 	return store, cleanup
-}
-
-func cleanupPostgresTables(t *testing.T, store *PostgresStorage) {
-	t.Helper()
-	ctx := context.Background()
-
-	tables := []string{
-		"workflow_timer_subscriptions",
-		"workflow_history",
-		"workflow_instances",
-		"system_locks",
-	}
-
-	for _, table := range tables {
-		if _, err := store.db.ExecContext(ctx, "DELETE FROM "+table); err != nil {
-			t.Logf("Warning: failed to clean table %s: %v", table, err)
-		}
-	}
 }
 
 func TestPostgresIntegration_Initialize(t *testing.T) {

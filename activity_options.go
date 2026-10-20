@@ -111,7 +111,7 @@ func validateActivityOptions(o ActivityOptions, call bool) error {
 		if p.MaxAttempts < 0 || p.InitialInterval < 0 || p.MaxInterval < 0 {
 			return fmt.Errorf("activity retry counts and intervals must not be negative")
 		}
-		if math.IsNaN(p.Multiplier) || math.IsInf(p.Multiplier, 0) || math.IsNaN(p.RandomizationFactor) {
+		if math.IsNaN(p.Multiplier) || math.IsInf(p.Multiplier, 0) || math.IsNaN(p.RandomizationFactor) || math.IsInf(p.RandomizationFactor, 0) {
 			return fmt.Errorf("activity retry factors must be finite numbers")
 		}
 		if call && len(p.NonRetryableErrors) > 0 {

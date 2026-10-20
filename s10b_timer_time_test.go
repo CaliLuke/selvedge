@@ -207,6 +207,9 @@ func testTimerPollerPrecision(t *testing.T, factory replayAppFactory) {
 	})
 	id := seedErrorWorkflow(t, h, w)
 	require.NoError(t, h.RunOnce(id))
+	// RunOnce suspended and released its lease. Advance the store clock past
+	// the persisted deadline; the next run acquires a fresh lease at this time.
+	setStoreClock(t, h, before.Add(time.Hour+time.Millisecond).UnixMilli())
 	timers, err := fs.FindExpiredTimers(h.app.ctx, 10)
 	require.NoError(t, err)
 	require.Len(t, timers, 1)

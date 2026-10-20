@@ -21,6 +21,11 @@ Removed from Romancy: LLM and MCP integrations, public channels and groups, Saga
 - `CancelWorkflow` requests cancellation of an instance. `GetWorkflowResult` reads its status and output.
 - Workflow hooks and `hooks/otel` provide observability.
 
+`hooks/otel` emits a completed span for each lifecycle callback. Start, retry,
+and cache-hit callbacks are markers; completion spans use the reported duration.
+Correlate callbacks through instance and command ID attributes. Spans inherit the
+callback context and do not remain open across suspension or worker handoff.
+
 ## Signals and cancellation
 
 `App.Signal(ctx, instanceID, channel, payload)` stores a JSON payload for one workflow instance. The inbox accepts signals immediately after instance creation.
@@ -59,6 +64,10 @@ scope and its attached descendants. It also cancels their queued or running task
 and deletes their timer subscriptions. Repeated calls, including after ancestor
 cancellation, write nothing and consume no command position. Replay repeats the
 same cancel calls without new writes.
+
+New scope and child cancellation records include their targets so replay rejects
+changes to which commands are cancelled. Older records remain readable, but lack
+the target metadata needed for that check.
 
 A scope cancellation matches `context.Canceled` and is not a
 `WorkflowCancelledError`. Commands issued in a locally cancelled scope record
@@ -183,7 +192,7 @@ Memo, SearchAttributes, and start RetryPolicy are not supported.
 
 ## Install
 
-Use Go 1.24.3 or later.
+Use Go 1.27.3 or later.
 
 ```sh
 go get github.com/CaliLuke/selvedge
@@ -499,16 +508,15 @@ SQLite and PostgreSQL are the supported storage backends. PostgreSQL also suppor
 
 `App.Start` applies embedded migrations by default. `WithAutoMigrate(false)` disables this behavior. `WithMigrationsFS` supplies an alternative migration filesystem.
 
-`internal/migrations/sql/` is the schema source of truth. The module embeds one initial schema file for each dialect, and tests apply those same files. Before the first release, edit both schema files in place. Numbered migrations start at S20.
+`internal/migrations/sql/` is the schema source of truth. The module embeds the migration files for each dialect, and tests apply those same files. Released migrations are immutable. Add schema changes as new timestamped migrations for both SQLite and PostgreSQL.
 
-Error envelopes use snake_case JSON fields, including panic and nondeterminism details. Pre-1.0 databases must be recreated after envelope-format changes; no compatibility shim is provided.
+Version 0.7.0 is the first Selvedge release and establishes its schema baseline.
+Automatic upgrades from Romancy or earlier development schemas are not supported;
+use a fresh database for this release. Those schemas can share the initial
+migration version while lacking required tables, columns, or constraints, so
+`App.Start` cannot upgrade them by reapplying the initial migration.
 
-Pre-S12 databases must be recreated: child instances now have parent links and constraints.
-
-Pre-S9 databases must be recreated: delivery and consumption positions were added
-to history and signals. The initial schema also includes the S8 durable activity
-tasks and command positions. Histories without command positions fail on first
-history access.
+Error envelopes use snake_case JSON fields, including panic and nondeterminism details. Older development envelope formats have no compatibility shim.
 
 Schema application is transactional: SQLite uses `BEGIN IMMEDIATE`; PostgreSQL takes a transaction-scoped advisory lock before checking `schema_migrations`. SQL errors abort and roll back the schema application.
 
@@ -519,7 +527,7 @@ Migration lock waits use the context passed to `App.Start`. Without a deadline, 
 ```sh
 go build ./...
 go vet ./...
-go test ./...
+go test -race ./...
 make lint
 ```
 
@@ -531,7 +539,17 @@ SELVEDGE_TEST_POSTGRES_URL='postgres://selvedge:selvedge@localhost:5433/selvedge
     go test -tags=postgres,pglocal ./internal/storage
 ```
 
-Tests with the `integration` build tag use PostgreSQL testcontainers and require Docker.
+Tests with the `integration` build tag use PostgreSQL testcontainers by default
+and require Docker. Set `SELVEDGE_TEST_POSTGRES_URL` to reuse a test server instead;
+each fixture creates and removes its own database. That test account must have
+permission to create databases.
+
+```sh
+go test -race -tags=integration -count=1 -timeout=25m ./...
+```
+
+CI runs the race detector, both PostgreSQL storage suites, and the integration
+suite against a PostgreSQL service with separate databases for each fixture.
 
 Dispatch filters use registered workflow names. The storage `FindDispatchable` variadic names filter treats omitted names or a nil slice as all workflows, and a non-nil empty slice as none.
 

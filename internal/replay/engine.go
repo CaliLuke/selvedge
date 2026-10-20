@@ -316,6 +316,13 @@ func (e *Engine) Run(ctx context.Context, instanceID string, runner WorkflowRunn
 
 // executeWorkflow executes or replays a workflow.
 func (e *Engine) executeWorkflow(ctx context.Context, instanceID string, runner WorkflowRunner, f storage.Fence, x *Execution) error {
+	instance, err := e.storage.GetInstance(ctx, instanceID)
+	if err != nil {
+		return fmt.Errorf("failed to load workflow metadata: %w", err)
+	}
+	if instance == nil {
+		return storage.ErrInstanceNotFound
+	}
 	// Load history using iterator (streams from storage in batches)
 	iter := storage.NewHistoryIterator(ctx, e.storage, instanceID, &storage.HistoryIteratorOptions{
 		BatchSize: 1000,
@@ -357,12 +364,16 @@ func (e *Engine) executeWorkflow(ctx context.Context, instanceID string, runner 
 	isReplaying := historyCount > 0
 
 	startTime := time.Now()
+	workflowStartTime := instance.StartedAt
+	if workflowStartTime.IsZero() {
+		workflowStartTime = startTime
+	}
 
 	// Call OnReplayStart hook if replaying
 	if isReplaying {
 		e.hooks.OnReplayStart(ctx, hooks.ReplayStartInfo{
 			InstanceID:     instanceID,
-			WorkflowName:   "",
+			WorkflowName:   instance.WorkflowName,
 			HistoryEvents:  historyCount,
 			ResumeActivity: "", // Not tracked in current implementation
 		})
@@ -371,8 +382,8 @@ func (e *Engine) executeWorkflow(ctx context.Context, instanceID string, runner 
 	// Call the workflow start hook
 	e.hooks.OnWorkflowStart(ctx, hooks.WorkflowStartInfo{
 		InstanceID:   instanceID,
-		WorkflowName: "",
-		StartTime:    startTime,
+		WorkflowName: instance.WorkflowName,
+		StartTime:    workflowStartTime,
 	})
 
 	// Run user code on its coroutine and reclaim it before any lease release.
@@ -446,7 +457,7 @@ func (e *Engine) executeWorkflow(ctx context.Context, instanceID string, runner 
 		return err
 	}
 	if err != nil {
-		e.hooks.OnWorkflowFailed(ctx, hooks.WorkflowFailedInfo{InstanceID: instanceID, Error: err, Duration: duration})
+		e.hooks.OnWorkflowFailed(ctx, hooks.WorkflowFailedInfo{InstanceID: instanceID, WorkflowName: instance.WorkflowName, Error: err, Duration: time.Since(workflowStartTime)})
 		return err
 	}
 
@@ -454,7 +465,7 @@ func (e *Engine) executeWorkflow(ctx context.Context, instanceID string, runner 
 	if isReplaying {
 		e.hooks.OnReplayComplete(ctx, hooks.ReplayCompleteInfo{
 			InstanceID:    instanceID,
-			WorkflowName:  "",
+			WorkflowName:  instance.WorkflowName,
 			CacheHits:     execCtx.cacheHits,
 			NewActivities: execCtx.newActivities,
 			Duration:      duration,
@@ -462,9 +473,10 @@ func (e *Engine) executeWorkflow(ctx context.Context, instanceID string, runner 
 	}
 
 	e.hooks.OnWorkflowComplete(ctx, hooks.WorkflowCompleteInfo{
-		InstanceID: instanceID,
-		OutputData: result,
-		Duration:   duration,
+		InstanceID:   instanceID,
+		WorkflowName: instance.WorkflowName,
+		OutputData:   result,
+		Duration:     time.Since(workflowStartTime),
 	})
 
 	return nil

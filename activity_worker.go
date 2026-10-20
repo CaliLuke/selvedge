@@ -348,5 +348,7 @@ func invokeActivityAttempt(attemptCtx, claimCtx context.Context, definition acti
 		return result.value, result.err
 	case <-claimCtx.Done():
 		return nil, context.Cause(claimCtx)
+	case <-attemptCtx.Done():
+		return nil, context.Cause(attemptCtx)
 	}
 }
