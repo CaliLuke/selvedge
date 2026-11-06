@@ -73,3 +73,6 @@ local-docs/
 # Environment files
 .env
 .env.local
+
+# Python quality-check bytecode
+__pycache__/

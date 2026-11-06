@@ -16,6 +16,7 @@ import (
 	"golang.org/x/sync/semaphore"
 
 	"github.com/CaliLuke/selvedge/hooks"
+	"github.com/CaliLuke/selvedge/internal/ctxerr"
 	"github.com/CaliLuke/selvedge/internal/migrations"
 	"github.com/CaliLuke/selvedge/internal/notify"
 	"github.com/CaliLuke/selvedge/internal/replay"
@@ -232,6 +233,15 @@ func (a *App) initStorage() error {
 	if err := a.config.lease.Validate(); err != nil {
 		return err
 	}
+	if err := a.openStorage(a.ctx, true); err != nil {
+		return err
+	}
+	a.engine = replay.NewEngine(a.storage, a.hooks, a.config.workerID, errorCodec{})
+	return a.engine.ConfigureLease(a.config.lease, nil)
+}
+
+// openStorage shares persistence setup without starting execution services.
+func (a *App) openStorage(ctx context.Context, listener bool) error {
 	if a.config.databaseURL == "" {
 		a.config.databaseURL = "selvedge.db"
 	}
@@ -252,15 +262,21 @@ func (a *App) initStorage() error {
 		// Configure LISTEN/NOTIFY if enabled
 		if a.shouldEnableListenNotify(isPostgres) {
 			pgStorage.SetNotifyEnabled(true)
-			a.initNotifyListener(url)
+			if listener {
+				a.initNotifyListener(url)
+			}
 		}
 	default:
 		// Default to SQLite
-		sqliteStorage, err := storage.NewSQLiteStorage(url)
+		sqliteStorage, err := storage.NewSQLiteStorageContext(ctx, url)
 		if err != nil {
 			return fmt.Errorf("failed to create SQLite storage: %w", err)
 		}
 		a.storage = sqliteStorage
+	}
+
+	if err := a.storage.DB().PingContext(ctx); err != nil {
+		return fmt.Errorf("failed to connect to database: %w", err)
 	}
 
 	// Run automatic migrations if enabled
@@ -275,7 +291,7 @@ func (a *App) initStorage() error {
 				migrationsFS = EmbeddedMigrationsFS()
 			}
 
-			applied, err := migrations.ApplyMigrations(a.ctx, a.storage.DB(), dbType, migrationsFS)
+			applied, err := migrations.ApplyMigrations(ctx, a.storage.DB(), dbType, migrationsFS)
 			if err != nil {
 				return fmt.Errorf("failed to apply migrations: %w", err)
 			}
@@ -288,13 +304,7 @@ func (a *App) initStorage() error {
 		}
 	}
 
-	// Create the replay engine
-	a.engine = replay.NewEngine(a.storage, a.hooks, a.config.workerID, errorCodec{})
-	if err := a.engine.ConfigureLease(a.config.lease, nil); err != nil {
-		return err
-	}
-
-	return nil
+	return ctx.Err()
 }
 
 // shouldEnableListenNotify determines if LISTEN/NOTIFY should be enabled.
@@ -447,7 +457,9 @@ func (a *App) tryAcquireLeadership() {
 		a.config.leaderLeaseDuration,
 	)
 	if err != nil {
-		slog.Error("leader election error", "error", err)
+		if !ctxerr.IsTermination(a.ctx, err) {
+			slog.Error("leader election error", "error", err)
+		}
 		return
 	}
 
@@ -514,10 +526,10 @@ func (a *App) runTimerCheckWithContext(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := a.checkActivityTimeouts(ctx); err != nil {
+			if err := a.checkActivityTimeouts(ctx); err != nil && !ctxerr.IsTermination(ctx, err) {
 				slog.Error("error checking activity timeouts", "error", err)
 			}
-			if err := a.checkExpiredTimers(); err != nil {
+			if err := a.checkExpiredTimers(); err != nil && !ctxerr.IsTermination(a.ctx, err) {
 				slog.Error("error checking expired timers", "error", err)
 			}
 		}
@@ -551,7 +563,9 @@ func (a *App) checkExpiredTimers() error {
 			defer a.timerSem.Release(1)
 
 			if err := a.handleExpiredTimer(timer); err != nil {
-				slog.Error("error handling timer", "timer_id", timer.TimerID, "error", err)
+				if !ctxerr.IsTermination(a.ctx, err) {
+					slog.Error("error handling timer", "timer_id", timer.TimerID, "error", err)
+				}
 			}
 		}(timer)
 	}
@@ -608,7 +622,7 @@ func (a *App) startWorkflow(ctx context.Context, workflowName string, input any,
 	}
 
 	// Serialize input
-	inputData, err := json.Marshal(input)
+	inputData, err := encodeWorkflowInput(input)
 	if err != nil {
 		return "", fmt.Errorf("%w: failed to serialize input: %w", ErrWorkflowStartRejected, err)
 	}
@@ -787,7 +801,9 @@ func (a *App) runWorkflowResumption() {
 		count, err := a.resumeResumableWorkflows()
 		switch {
 		case err != nil:
-			slog.Error("error resuming workflows", "error", err)
+			if !ctxerr.IsTermination(a.ctx, err) {
+				slog.Error("error resuming workflows", "error", err)
+			}
 			consecutiveEmpty++
 		case count == 0:
 			consecutiveEmpty++
@@ -867,4 +883,16 @@ func (a *App) wakeDispatcher() {
 	case a.resumeWakeEvent <- struct{}{}:
 	default:
 	}
+}
+
+// encodeWorkflowInput keeps byte-preserving submission explicit. Ordinary
+// json.RawMessage retains the existing encoding/json marshaling behavior.
+func encodeWorkflowInput(input any) ([]byte, error) {
+	if encoded, ok := input.(encodedWorkflowInput); ok {
+		if !json.Valid(encoded) {
+			return nil, errors.New("input must be valid JSON")
+		}
+		return append([]byte(nil), encoded...), nil
+	}
+	return json.Marshal(input)
 }

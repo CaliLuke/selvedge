@@ -25,6 +25,10 @@ linters:
     - copyloopvar
   # Linter-specific settings (was linters-settings in v1)
   settings:
+    maintidx:
+      under: 20
+    dupl:
+      threshold: 150
     gocritic:
       enabled-tags:
         - diagnostic
@@ -55,9 +59,10 @@ linters:
 
 issues:
   # Maximum issues count per linter
-  max-issues-per-linter: 50
+  max-issues-per-linter: 0
   # Maximum count of issues with same text
-  max-same-issues: 5
+  max-same-issues: 0
+  uniq-by-line: false
 
 formatters:
   enable:

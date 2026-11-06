@@ -1,7 +1,7 @@
 # Selvedge - Development Commands
 # Run `make` or `make help` to see available commands
 
-.PHONY: help build test test-coverage test-verbose lint lint-fix fmt tidy clean install-tools check
+.PHONY: help build test test-coverage test-verbose lint lint-fix fmt tidy clean install-tools install-hooks check check-fast
 
 # Default target - show help
 .DEFAULT_GOAL := help
@@ -15,7 +15,7 @@ GOMOD := $(GOCMD) mod
 GOCLEAN := $(GOCMD) clean
 
 # golangci-lint
-GOLANGCI_LINT_VERSION := v2.15.0
+include scripts/quality/tools.env
 GOLANGCI_LINT := $(shell which golangci-lint 2>/dev/null || echo "$(shell go env GOPATH)/bin/golangci-lint")
 
 help: ## Show this help message
@@ -35,8 +35,7 @@ test: ## Run tests
 test-verbose: ## Run tests with verbose output
 	$(GOTEST) ./... -v -count=1
 
-test-coverage: ## Run tests with coverage
-	$(GOTEST) ./... -cover -count=1
+test-coverage: check ## Run full coverage gates (requires Docker or a dedicated PostgreSQL URL)
 
 lint: ## Run golangci-lint
 	$(GOLANGCI_LINT) run
@@ -44,8 +43,8 @@ lint: ## Run golangci-lint
 lint-fix: ## Run golangci-lint with auto-fix
 	$(GOLANGCI_LINT) run --fix
 
-fmt: ## Format code
-	$(GOFMT) ./...
+fmt: ## Apply Go formatting and import fixes
+	$(GOLANGCI_LINT) fmt
 
 tidy: ## Run go mod tidy
 	$(GOMOD) tidy
@@ -58,4 +57,11 @@ clean: ## Clean build artifacts and caches
 install-tools: ## Install development tools (golangci-lint)
 	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 
-check: fmt lint test ## Run all checks (fmt, lint, test)
+install-hooks: ## Install Prek pre-commit and pre-push hooks
+	prek install --hook-type pre-commit --hook-type pre-push
+
+check-fast: ## Check build, formatting, lint, hygiene and maintainability without edits
+	GOLANGCI_LINT="$(GOLANGCI_LINT)" ./scripts/check.sh fast
+
+check: ## Run all quality gates, including fresh race tests and package coverage
+	GOLANGCI_LINT="$(GOLANGCI_LINT)" ./scripts/check.sh full

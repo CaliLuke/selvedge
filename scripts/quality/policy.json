@@ -1,0 +1,63 @@
+{
+  "coverage": {
+    "github.com/CaliLuke/selvedge": {
+      "minimum": 80,
+      "reason": "Default floor for owned executable code."
+    },
+    "github.com/CaliLuke/selvedge/hooks": {
+      "minimum": 100,
+      "no_statements": true,
+      "reason": "Only hook interfaces, data types and empty NoOpHooks bodies; no executable statements."
+    },
+    "github.com/CaliLuke/selvedge/hooks/otel": {
+      "minimum": 80,
+      "reason": "Default floor for owned executable code."
+    },
+    "github.com/CaliLuke/selvedge/internal/migrations": {
+      "minimum": 80,
+      "reason": "Default floor for owned executable code."
+    },
+    "github.com/CaliLuke/selvedge/internal/notify": {
+      "minimum": 75,
+      "reason": "Accepted coverage debt: measured 77.69%; reconnect, malformed notification and handler-panic paths remain uncovered. Follow-up: exercise connection loss/recovery and dispatch error behavior. Small margin accommodates concurrent listener paths."
+    },
+    "github.com/CaliLuke/selvedge/internal/qualitygate": {
+      "minimum": 80,
+      "reason": "Default floor for owned executable code."
+    },
+    "github.com/CaliLuke/selvedge/internal/replay": {
+      "minimum": 80,
+      "reason": "Default floor for owned executable code."
+    },
+    "github.com/CaliLuke/selvedge/internal/sqliteutil": {
+      "minimum": 80,
+      "reason": "Default floor for owned executable code."
+    },
+    "github.com/CaliLuke/selvedge/internal/storage": {
+      "minimum": 80,
+      "reason": "Default floor for owned executable code."
+    },
+    "github.com/CaliLuke/selvedge/internal/storage/faultstore": {
+      "minimum": 72,
+      "reason": "Accepted coverage debt: measured 72.27%; several delegated operations and injected-error branches are not exercised. Follow-up: cover missing fault boundaries through consumer behavior tests."
+    },
+    "github.com/CaliLuke/selvedge/internal/testkit": {
+      "minimum": 69,
+      "reason": "Accepted coverage debt: measured 69.23%; canonical checks supply a dedicated PostgreSQL server, leaving the alternate testcontainers startup path and infrastructure-failure branches uncovered. Follow-up: validate that fallback separately without weakening the production package floors."
+    },
+    "github.com/CaliLuke/selvedge/retry": {
+      "minimum": 80,
+      "reason": "Default floor for owned executable code."
+    },
+    "github.com/CaliLuke/selvedge/internal/ctxerr": {
+      "minimum": 100,
+      "reason": "Small shared error-tree classifier; every termination and joined-failure branch must be covered."
+    }
+  },
+  "file_coverage": {
+    "internal/qualitygate/main.go": 80,
+    "internal/sqliteutil/busy.go": 100,
+    "producer.go": 80
+  },
+  "version": 1
+}

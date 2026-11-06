@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/CaliLuke/selvedge/internal/ctxerr"
 )
 
 // NotifyChannel represents a PostgreSQL notification channel name.
@@ -166,6 +168,9 @@ func (l *Listener) listenLoop(done chan struct{}) {
 
 		// Try to connect
 		if err := l.connect(); err != nil {
+			if ctxerr.IsTermination(l.ctx, err) {
+				return
+			}
 			l.mu.Lock()
 			l.isActive = false
 			l.lastError = err
@@ -272,7 +277,7 @@ func (l *Listener) listenForNotifications() error {
 
 		notification, err := conn.WaitForNotification(l.ctx)
 		if err != nil {
-			if l.ctx.Err() != nil {
+			if ctxerr.IsTermination(l.ctx, err) {
 				return nil // Context cancelled, graceful shutdown
 			}
 			return err

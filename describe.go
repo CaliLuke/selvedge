@@ -2,6 +2,7 @@ package selvedge
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/CaliLuke/selvedge/internal/storage"
@@ -19,8 +20,10 @@ const (
 
 // WorkflowDescription exposes durable status and parent metadata.
 type WorkflowDescription struct {
-	InstanceID, WorkflowName                  string
-	Status                                    WorkflowStatus
+	InstanceID, WorkflowName string
+	Status                   WorkflowStatus
+	// InputData is the stored JSON input, including its original encoding.
+	InputData                                 json.RawMessage
 	CancelRequested                           bool
 	CancelReason, ParentInstanceID, ParentKey string
 	StartedAt, UpdatedAt                      time.Time
@@ -40,7 +43,7 @@ func Describe(ctx context.Context, app *App, instanceID string) (*WorkflowDescri
 		return nil, &WorkflowNotFoundError{InstanceID: instanceID}
 	}
 	inst := snapshot.Instance
-	return &WorkflowDescription{InstanceID: inst.InstanceID, WorkflowName: inst.WorkflowName, Status: inst.Status,
+	return &WorkflowDescription{InstanceID: inst.InstanceID, WorkflowName: inst.WorkflowName, Status: inst.Status, InputData: append(json.RawMessage(nil), inst.InputData...),
 		CancelRequested: snapshot.CancelRequested, CancelReason: inst.CancelReason, ParentInstanceID: inst.ParentInstanceID,
 		ParentKey: inst.ParentKey, StartedAt: inst.StartedAt, UpdatedAt: inst.UpdatedAt}, nil
 }

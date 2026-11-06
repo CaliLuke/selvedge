@@ -40,9 +40,10 @@ func s14PostgresFactory(t *testing.T) replayAppFactory {
 		schema := suite.s14AcquireSchema(t)
 		dsn, err := url.Parse(suite.dsn)
 		require.NoError(t, err)
-		params := dsn.Query()
+		params, err := testkit.PostgresQuery(dsn.RawQuery)
+		require.NoError(t, err)
 		params.Set("search_path", schema)
-		dsn.RawQuery = params.Encode()
+		dsn.RawQuery = testkit.EncodePostgresQuery(params)
 		options := append([]Option{WithDatabase(dsn.String())}, opts...)
 		app := NewApp(options...)
 		return app, func() {
