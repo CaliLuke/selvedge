@@ -14,6 +14,8 @@ import (
 	"github.com/google/uuid"
 	"modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
+
+	"github.com/CaliLuke/selvedge/internal/sqliteutil"
 )
 
 // txKey isolates transactions by database pool even when callers share a context.
@@ -86,9 +88,20 @@ func NewSQLiteStorageContext(ctx context.Context, dbPath string) (*SQLiteStorage
 }
 
 func enableSQLiteWAL(ctx context.Context, db *sql.DB) error {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+	return sqliteutil.WithoutBusyTimeout(ctx, conn, func() error {
+		return setSQLiteWAL(ctx, conn)
+	})
+}
+
+func setSQLiteWAL(ctx context.Context, conn *sql.Conn) error {
 	for {
 		var mode string
-		err := db.QueryRowContext(ctx, "PRAGMA journal_mode=WAL").Scan(&mode)
+		err := conn.QueryRowContext(ctx, "PRAGMA journal_mode=WAL").Scan(&mode)
 		if err == nil {
 			// SQLite memory databases cannot use WAL and report "memory".
 			if mode != "wal" && mode != "memory" {

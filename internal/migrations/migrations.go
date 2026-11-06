@@ -25,6 +25,8 @@ import (
 
 	"modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
+
+	"github.com/CaliLuke/selvedge/internal/sqliteutil"
 )
 
 // DetectDBType detects database type from connection URL.
@@ -127,7 +129,14 @@ func withMigrationTransaction(ctx context.Context, db *sql.DB, dbType string, ap
 		return err
 	}
 	defer func() { _ = conn.Close() }()
-	if err := beginMigrationTransaction(ctx, conn, begin); err != nil {
+	if dbType == "sqlite" {
+		err = sqliteutil.WithoutBusyTimeout(ctx, conn, func() error {
+			return beginMigrationTransaction(ctx, conn, begin)
+		})
+	} else {
+		err = beginMigrationTransaction(ctx, conn, begin)
+	}
+	if err != nil {
 		// BEGIN may have succeeded before its acknowledgement was lost.
 		_ = conn.Raw(func(any) error { return driver.ErrBadConn })
 		return err
@@ -168,8 +177,8 @@ func beginMigrationTransaction(ctx context.Context, conn *sql.Conn, begin string
 		if !errors.As(err, &sqliteErr) || sqliteErr.Code()&0xff != sqlite3.SQLITE_BUSY {
 			return err
 		}
-		// Another worker's migration can outlast SQLite's busy_timeout.
-		// Wait for the startup context instead, retrying only lock acquisition:
+		// SQLite busy waiting is disabled on this connection during acquisition.
+		// Wait with the startup context, retrying only lock acquisition:
 		// no migration SQL has run, so there are no effects to replay.
 		timer := time.NewTimer(10 * time.Millisecond)
 		select {
