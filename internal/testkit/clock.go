@@ -1,4 +1,4 @@
-// Package testkit provides deterministic execution clocks for tests.
+// Package testkit provides database fixtures and deterministic clocks for tests.
 package testkit
 
 import (

@@ -61,9 +61,10 @@ func TestProducerNotifiesIdlePostgresWorker(t *testing.T) {
 
 	address, err := url.Parse(worker.config.databaseURL)
 	require.NoError(t, err)
-	query := address.Query()
+	query, err := testkit.PostgresQuery(address.RawQuery)
+	require.NoError(t, err)
 	query.Set("application_name", "producer_notification_test")
-	address.RawQuery = query.Encode()
+	address.RawQuery = testkit.EncodePostgresQuery(query)
 	// Distinct literal DSNs also prevent the local notification bus reaching the worker.
 	require.NotEqual(t, worker.config.databaseURL, address.String())
 	producer, err := OpenProducer(ctx, WithDatabase(address.String()), WithAutoMigrate(false))

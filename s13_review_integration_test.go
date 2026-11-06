@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/CaliLuke/selvedge/internal/storage"
+	"github.com/CaliLuke/selvedge/internal/testkit"
 )
 
 func TestWaitWorkflowWakeBetweenReadAndSelect_Postgres(t *testing.T) {
@@ -32,12 +33,13 @@ func TestWaitWorkflowClosedNotifyHandler_Postgres(t *testing.T) {
 	require.NoError(t, worker.Start(context.Background()))
 	dsn, err := url.Parse(worker.config.databaseURL)
 	require.NoError(t, err)
-	query := dsn.Query()
+	query, err := testkit.PostgresQuery(dsn.RawQuery)
+	require.NoError(t, err)
 	query.Set("application_name", "s13_notify_client")
 	// One round trip per SELECT: an idle backend then means the read finished,
 	// rather than a prepare round trip finishing before execution starts.
 	query.Set("default_query_exec_mode", "exec")
-	dsn.RawQuery = query.Encode()
+	dsn.RawQuery = testkit.EncodePostgresQuery(query)
 	// The same database has different literal DSNs, so the local bus cannot
 	// deliver the worker's close to the client. Only PostgreSQL NOTIFY can.
 	require.NotEqual(t, worker.config.databaseURL, dsn.String())

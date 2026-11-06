@@ -183,8 +183,11 @@ func repeatableReadURL(connection string) string {
 	if err != nil {
 		panic(err)
 	} // PostgresDatabase supplies validated URLs.
-	params := address.Query()
+	params, err := testkit.PostgresQuery(address.RawQuery)
+	if err != nil {
+		panic(err)
+	}
 	params.Set("default_transaction_isolation", "repeatable read")
-	address.RawQuery = params.Encode()
+	address.RawQuery = testkit.EncodePostgresQuery(params)
 	return address.String()
 }

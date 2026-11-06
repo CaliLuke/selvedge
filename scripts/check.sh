@@ -45,6 +45,8 @@ run() {
         echo "FAIL $name (exit $status)" >&2
         tail -60 "$quality_dir/$name.stdout" >&2
         tail -60 "$quality_dir/$name.stderr" >&2
+        # Package failures can precede a long tail of successful test events.
+        grep '"Action":"fail"' "$quality_dir/$name.stdout" >&2 || true
         return "$status"
     fi
 }

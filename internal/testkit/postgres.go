@@ -76,10 +76,13 @@ func isolatedPostgresDatabase(t *testing.T, server string) (databaseURL string, 
 		t.Fatalf("create isolated PostgreSQL test database: %v", err)
 	}
 	// pgx query parameters override the URL path, so remove both database aliases.
-	params := address.Query()
+	params, err := PostgresQuery(address.RawQuery)
+	if err != nil {
+		t.Fatalf("parse PostgreSQL test URL parameters: %v", err)
+	}
 	params.Del("dbname")
 	params.Del("database")
-	address.RawQuery = params.Encode()
+	address.RawQuery = EncodePostgresQuery(params)
 	address.Path = "/" + name
 	address.RawPath = ""
 	return address.String(), cleanup
