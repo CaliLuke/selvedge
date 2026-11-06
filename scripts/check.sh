@@ -68,7 +68,7 @@ if [[ -z "${SELVEDGE_TEST_POSTGRES_URL:-}" ]]; then
     container_name="selvedge-quality-$$-$RANDOM"
     container_id=$(docker run --rm -d --name "$container_name" -e POSTGRES_USER=selvedge -e POSTGRES_PASSWORD=selvedge_test -e POSTGRES_DB=selvedge_test -p 127.0.0.1::5432 postgres:17)
     ready=false
-    for attempt in {1..60}; do
+    for _ in {1..60}; do
         if docker exec "$container_id" pg_isready -U selvedge >/dev/null 2>&1; then ready=true; break; fi
         sleep 1
     done

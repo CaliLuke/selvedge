@@ -48,6 +48,10 @@
     "github.com/CaliLuke/selvedge/retry": {
       "minimum": 80,
       "reason": "Default floor for owned executable code."
+    },
+    "github.com/CaliLuke/selvedge/internal/ctxerr": {
+      "minimum": 100,
+      "reason": "Small shared error-tree classifier; every termination and joined-failure branch must be covered."
     }
   },
   "file_coverage": {

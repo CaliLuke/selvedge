@@ -18,6 +18,11 @@ def load(path):
         return json.load(stream)
 
 
+def validate_floor(value, identity):
+    if type(value) not in (int, float) or not 0 <= value <= 100:
+        raise ValueError(f"invalid coverage floor for {identity}: {value!r}")
+
+
 def validate_inventory(report, policy):
     if report.get("version") != 1 or report.get("tags") != TAGS:
         raise ValueError("unsupported or incomplete source inventory")
@@ -37,6 +42,14 @@ def validate_inventory(report, policy):
         raise ValueError("coverage inventory contains unknown sources")
     if set(report.get("source_hashes", {})) != expected_files:
         raise ValueError("incomplete source fingerprints")
+    for package, entry in policy["coverage"].items():
+        validate_floor(entry.get("minimum"), package)
+        if not entry.get("reason"):
+            raise ValueError(f"missing coverage policy rationale: {package}")
+    for filename, floor in policy.get("file_coverage", {}).items():
+        validate_floor(floor, filename)
+        if filename not in expected_files:
+            raise ValueError(f"unknown targeted coverage file: {filename}")
     return packages
 
 
@@ -113,8 +126,6 @@ def coverage_failures(report, policy, profiles, events):
     for package, (covered, total) in sorted(totals.items()):
         entry = policy["coverage"][package]
         floor = entry["minimum"]
-        if not isinstance(floor, (int, float)) or not 0 <= floor <= 100 or not entry.get("reason"):
-            raise ValueError(f"missing coverage policy: {package}")
         if total == 0:
             if not entry.get("no_statements"):
                 raise ValueError(f"no instrumented statements: {package}")

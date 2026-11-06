@@ -602,6 +602,11 @@ Migration lock waits use the context passed to `App.Start`. Without a deadline, 
 
 ## Development
 
+The full race-enabled gate requires a supported OS/architecture, cgo enabled,
+and a C compiler where required by Go (for example GCC or Clang on Linux).
+See [Go's race detector requirements](https://go.dev/doc/articles/race_detector#Requirements).
+It also requires Docker or a dedicated PostgreSQL test URL, as described below.
+
 ```sh
 make install-tools
 uv tool install prek==0.5.10

@@ -49,7 +49,7 @@ analysis run serially to bound resource use.
 ## Coverage policy and accepted debt
 
 The default package floor is 80%. The producer and gate source files also have
-80% individual floors; SQLite busy-timeout restoration requires 100%.
+80% individual floors; SQLite busy-timeout restoration and the shared context-error classifier require 100%.
 The initial complete test run measured these existing gaps:
 
 | Package | Measured | Floor | Follow-up |

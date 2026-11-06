@@ -16,6 +16,7 @@ import (
 	"golang.org/x/sync/semaphore"
 
 	"github.com/CaliLuke/selvedge/hooks"
+	"github.com/CaliLuke/selvedge/internal/ctxerr"
 	"github.com/CaliLuke/selvedge/internal/migrations"
 	"github.com/CaliLuke/selvedge/internal/notify"
 	"github.com/CaliLuke/selvedge/internal/replay"
@@ -456,7 +457,7 @@ func (a *App) tryAcquireLeadership() {
 		a.config.leaderLeaseDuration,
 	)
 	if err != nil {
-		if !isContextTermination(a.ctx, err) {
+		if !ctxerr.IsTermination(a.ctx, err) {
 			slog.Error("leader election error", "error", err)
 		}
 		return
@@ -525,10 +526,10 @@ func (a *App) runTimerCheckWithContext(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := a.checkActivityTimeouts(ctx); err != nil && !isContextTermination(ctx, err) {
+			if err := a.checkActivityTimeouts(ctx); err != nil && !ctxerr.IsTermination(ctx, err) {
 				slog.Error("error checking activity timeouts", "error", err)
 			}
-			if err := a.checkExpiredTimers(); err != nil && !isContextTermination(a.ctx, err) {
+			if err := a.checkExpiredTimers(); err != nil && !ctxerr.IsTermination(a.ctx, err) {
 				slog.Error("error checking expired timers", "error", err)
 			}
 		}
@@ -562,7 +563,7 @@ func (a *App) checkExpiredTimers() error {
 			defer a.timerSem.Release(1)
 
 			if err := a.handleExpiredTimer(timer); err != nil {
-				if !isContextTermination(a.ctx, err) {
+				if !ctxerr.IsTermination(a.ctx, err) {
 					slog.Error("error handling timer", "timer_id", timer.TimerID, "error", err)
 				}
 			}
@@ -800,7 +801,7 @@ func (a *App) runWorkflowResumption() {
 		count, err := a.resumeResumableWorkflows()
 		switch {
 		case err != nil:
-			if !isContextTermination(a.ctx, err) {
+			if !ctxerr.IsTermination(a.ctx, err) {
 				slog.Error("error resuming workflows", "error", err)
 			}
 			consecutiveEmpty++
@@ -882,11 +883,6 @@ func (a *App) wakeDispatcher() {
 	case a.resumeWakeEvent <- struct{}{}:
 	default:
 	}
-}
-
-// isContextTermination excludes unrelated failures racing with cancellation.
-func isContextTermination(ctx context.Context, err error) bool {
-	return ctx.Err() != nil && errors.Is(err, ctx.Err())
 }
 
 // encodeWorkflowInput keeps byte-preserving submission explicit. Ordinary

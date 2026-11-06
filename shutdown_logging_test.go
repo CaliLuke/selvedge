@@ -16,15 +16,18 @@ import (
 
 func TestShutdownLogsOnlyUnexpectedBackgroundErrors(t *testing.T) {
 	for _, loop := range []string{"leader", "resumption", "timers"} {
-		for _, unexpected := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/unexpected=%v", loop, unexpected), func(t *testing.T) {
+		for _, failure := range []string{"cancellation", "database", "joined"} {
+			t.Run(fmt.Sprintf("%s/%s", loop, failure), func(t *testing.T) {
 				h := newTypedReplayHarness(t, createTestApp, WithTimerCheckInterval(time.Millisecond))
 				faults := faultstore.New(h.app.storage)
 				h.app.storage = faults
 				faults.Before = func(_ context.Context, _ string) error {
 					h.app.cancel()
-					if unexpected {
+					if failure == "database" {
 						return errors.New("database unavailable")
+					}
+					if failure == "joined" {
+						return errors.Join(context.Canceled, errors.New("database unavailable"))
 					}
 					return fmt.Errorf("database operation: %w", context.Canceled)
 				}
@@ -42,7 +45,7 @@ func TestShutdownLogsOnlyUnexpectedBackgroundErrors(t *testing.T) {
 					h.app.wg.Add(1)
 					h.app.runTimerCheckWithContext(h.app.ctx)
 				}
-				if unexpected {
+				if failure != "cancellation" {
 					require.NotEmpty(t, logs.String())
 				} else {
 					require.Empty(t, logs.String())

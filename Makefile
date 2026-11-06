@@ -35,7 +35,7 @@ test: ## Run tests
 test-verbose: ## Run tests with verbose output
 	$(GOTEST) ./... -v -count=1
 
-test-coverage: check ## Run full tests and enforce package coverage
+test-coverage: check ## Run full coverage gates (requires Docker or a dedicated PostgreSQL URL)
 
 lint: ## Run golangci-lint
 	$(GOLANGCI_LINT) run

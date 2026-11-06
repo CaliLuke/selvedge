@@ -30,6 +30,22 @@ class InventoryTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 gates.validate_inventory(broken, policy)
 
+    def test_invalid_package_and_file_floors_fail_before_tests(self):
+        for value in (-1, 101, True, False, None, "80", float("nan"), float("inf")):
+            for target in ("package", "file"):
+                with self.subTest(target=target, value=value):
+                    report, policy = fixture()
+                    if target == "package":
+                        policy["coverage"][P]["minimum"] = value
+                    else:
+                        policy["file_coverage"] = {"a.go": value}
+                    with self.assertRaises(ValueError):
+                        gates.validate_inventory(report, policy)
+        report, policy = fixture()
+        policy["file_coverage"] = {"missing.go": 80}
+        with self.assertRaises(ValueError):
+            gates.validate_inventory(report, policy)
+
     def test_unreviewed_package_and_duplicate_ownership_fail(self):
         report, policy = fixture()
         report["packages"][P + "/new"] = ["a.go"]
