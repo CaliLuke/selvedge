@@ -129,7 +129,7 @@ def coverage_failures(report, policy, profiles, events):
             raise ValueError(f"missing targeted file coverage: {filename}")
         covered, total = file_totals[filename]
         percent = 100 * covered / total
-        print(f"COVERAGE {filename}: {percent:.2f}% (minimum {floor}%)")
+        print(f"COVERAGE {filename} = {percent:.2f}% (minimum {floor}%)")
         if percent < floor:
             failures.append(f"{filename}: coverage {percent:.2f}% below {floor}%")
     return failures
