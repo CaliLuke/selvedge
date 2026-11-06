@@ -77,12 +77,6 @@ type App struct {
 	mu          sync.Mutex
 }
 
-// appShutdown belongs to one run. Closing done publishes err to all waiters.
-type appShutdown struct {
-	done chan struct{}
-	err  error
-}
-
 // NewApp creates a new Selvedge application.
 func NewApp(opts ...Option) *App {
 	config := defaultConfig()
@@ -163,8 +157,12 @@ func (a *App) Start(ctx context.Context) error {
 	return nil
 }
 
-// Shutdown gracefully shuts down the application. Cleanup continues if the caller
-// times out; subsequent calls wait for the same cleanup operation.
+// Shutdown gracefully shuts down the application. Concurrent and repeated calls
+// wait for the same cleanup operation. Cancellation or WithShutdownTimeout returns
+// an error matching ErrShutdownInterrupted and the context error; cleanup continues.
+// Call again to observe completion and the final cleanup error (if any). A completed
+// cleanup takes precedence over caller cancellation. Start begins a new lifecycle
+// after cleanup completes, so observe the old cleanup result before restarting.
 func (a *App) Shutdown(ctx context.Context) error {
 	a.mu.Lock()
 	shutdown := a.shutdown
@@ -184,16 +182,7 @@ func (a *App) Shutdown(ctx context.Context) error {
 	}
 	a.mu.Unlock()
 
-	timer := time.NewTimer(a.config.shutdownTimeout)
-	defer timer.Stop()
-	select {
-	case <-shutdown.done:
-		return shutdown.err
-	case <-ctx.Done():
-		return fmt.Errorf("shutdown interrupted: %w", ctx.Err())
-	case <-timer.C:
-		return fmt.Errorf("shutdown timed out after %v", a.config.shutdownTimeout)
-	}
+	return shutdown.wait(ctx, a.config.shutdownTimeout)
 }
 
 func (a *App) finishShutdown(shutdown *appShutdown) {

@@ -91,10 +91,18 @@ after a successful open has no effect on later operations.
 `Shutdown` rejects new operations, drains admitted operations, then closes storage.
 Give each operation its own deadline to bound draining. Concurrent and repeated
 shutdown calls join the same cleanup. Cancelling a shutdown waiter or reaching
-`WithShutdownTimeout` interrupts only that wait; cleanup continues. A wrapped
-`context.Canceled` or `context.DeadlineExceeded` reports interrupted waiting.
+`WithShutdownTimeout` interrupts only that wait; cleanup continues. Use
+`errors.Is(err, selvedge.ErrShutdownInterrupted)` to identify interrupted waiting.
+That error also wraps `context.Canceled` or `context.DeadlineExceeded`. A final
+cleanup failure may itself wrap a context error, so checking only that cause
+does not establish whether cleanup finished.
 Call `Shutdown` again to observe completion and any storage-close error. A closed
 producer cannot reopen; create another with `OpenProducer`.
+
+Worker `App.Shutdown` uses the same interrupted-wait marker and retains the final
+cleanup result for repeated calls. Completed cleanup takes precedence over a
+cancelled waiting context. Observe the result before restarting an App, since
+`Start` begins a new lifecycle after cleanup completes.
 
 Database, migration, notification publishing and shutdown timeout options apply
 to producers. Worker options do not enable execution. `WithListenNotify` controls

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/CaliLuke/selvedge/hooks"
 )
@@ -111,8 +110,9 @@ func GetProducerWorkflowResult[O any](ctx context.Context, producer *Producer, i
 // Shutdown rejects new operations, drains admitted calls, and closes storage.
 // Operations retain their own contexts: bound them to bound cleanup time.
 // Cleanup continues if this caller stops waiting. Concurrent and repeated calls
-// wait for the same cleanup and return its result. A wrapped context error or a
-// timeout means waiting was interrupted; call again to observe completed cleanup.
+// wait for the same cleanup and return its result. Cancellation or WithShutdownTimeout
+// returns an error matching ErrShutdownInterrupted and the context error; call again
+// to observe completed cleanup. A completed cleanup takes precedence over cancellation.
 func (p *Producer) Shutdown(ctx context.Context) error {
 	p.mu.Lock()
 	if p.app == nil {
@@ -127,22 +127,7 @@ func (p *Producer) Shutdown(ctx context.Context) error {
 	timeout := p.app.config.shutdownTimeout
 	p.mu.Unlock()
 
-	// Prefer an already completed cleanup over an interrupted waiting context.
-	select {
-	case <-shutdown.done:
-		return shutdown.err
-	default:
-	}
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-	select {
-	case <-shutdown.done:
-		return shutdown.err
-	case <-ctx.Done():
-		return fmt.Errorf("producer shutdown interrupted: %w", ctx.Err())
-	case <-timer.C:
-		return fmt.Errorf("producer shutdown timed out after %v: %w", timeout, context.DeadlineExceeded)
-	}
+	return shutdown.wait(ctx, timeout)
 }
 
 func (p *Producer) finishShutdown(shutdown *appShutdown) {
