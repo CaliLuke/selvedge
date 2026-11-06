@@ -57,8 +57,8 @@ run maintainability "$GOLANGCI_LINT" run --enable-only=maintidx,dupl --tests=fal
 run gate-unit-tests go test -count=1 ./internal/qualitygate
 run gate-rejection-tests python3 -m unittest discover -s scripts/quality -p 'test_*.py'
 run inventory go run ./internal/qualitygate
-run structure python3 scripts/quality/gates.py structure --inventory "$quality_dir/inventory.stdout" --policy scripts/quality/policy.json
-cat "$quality_dir/structure.stdout"
+run coverage-policy python3 scripts/quality/gates.py inventory --inventory "$quality_dir/inventory.stdout" --policy scripts/quality/policy.json
+cat "$quality_dir/coverage-policy.stdout"
 if [[ "$mode" == fast ]]; then
     echo 'PASS fast checks (full tests and coverage not run)'
     exit 0

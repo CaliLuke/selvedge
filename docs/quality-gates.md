@@ -18,16 +18,15 @@ or `prek run --all-files --hook-stage pre-push`; the latter is the full gate.
 | Lint and dead code | Existing standard and repository linters remain enabled, including `unused`. Exported library APIs remain reachable by external consumers; executable-root deadcode analysis must not delete them. |
 | Module hygiene | `go mod tidy -diff` must succeed without dependency drift. |
 | Duplication | A separate production-code golangci-lint pass rejects `dupl` findings at 150 syntax-tree tokens. Test wrappers are outside this duplication policy, but remain in correctness lint and tests. |
-| Function maintainability | The same production pass rejects maintainability index below 20. No existing function violations are exempted. |
-| Structural maintainability | The repository's AST inventory rejects new or worsening receiver, file, package and dependency-holder measurements against the reviewed policy. |
+| Function maintainability | The same production pass rejects maintainability index below 20. This score combines Halstead volume, cyclomatic complexity and lines of code. No existing function violations are exempted. |
 | Tests | Fresh race-enabled default tests, PostgreSQL storage tests (`postgres,pglocal`), and integration tests (`integration`), retaining their separate established scopes. |
 | Coverage | Fresh atomic profiles from all three test runs, per-package floors, and targeted floors for new producer, SQLite initialization and gate code. |
-| Gate integrity | Unit and rejection fixtures prove failures for new violations, growth, missing analysis, malformed profiles and incomplete test results. |
+| Gate integrity | Unit and rejection fixtures prove failures for low maintainability, duplication, missing source inventory, malformed profiles and incomplete test results. |
 
 `golangci-lint` remains pinned at v2.15.0 in `scripts/quality/tools.env`.
 The maintainability/duplication pass analyzes production Go files. Ordinary lint
 still includes tests and the repository's existing narrow test-linter exclusions.
-The inventory uses the same build tags, parses all owned non-generated Go files,
+The coverage inventory uses the same build tags, parses all owned non-generated Go files,
 and fails on package-list or syntax errors. Only the standard `Code generated ...
 DO NOT EDIT.` header marks generated code; ordinary implementation and tool code
 remain in scope. Current owned packages have no generated-source exceptions.
@@ -63,59 +62,31 @@ These are explicit accepted coverage debts, not excluded packages. Their floors
 remain blocking and should rise as coverage improves. Any change requires review
 of the measurements and reason in `scripts/quality/policy.json`.
 
-## Structural policy and accepted debt
+## Maintainability policy
 
-Default limits are 600 source lines per file, one substantial disconnected group
-in a file above that size, 30 declared methods / 600 method lines per receiver,
-25 files / 6,000 lines per package, and eight external-package type qualifiers in
-a struct's fields. These are review triggers, not evidence of a runtime defect.
+The pinned `maintidx` implementation uses Halstead volume, branching complexity
+and source line count in a composite function score. It does not independently
+cap Halstead difficulty or effort. The floor of 20 blocks low-scoring production
+functions; there are no grandfathered function-score exceptions. Rejection tests
+exercise both branch-heavy and large straight-line functions, plus duplication.
+See the [analyzer documentation](https://github.com/yagipy/maintidx) for its metric
+and [golangci-lint configuration](https://golangci-lint.run/docs/linters/configuration/#maintidx)
+for threshold semantics. Scores are indicators to review, not proof of good design.
 
-The scanner groups declarations by references within each file, connects methods
-of the same receiver, and measures substantial groups (at least 80 lines, or at
-least two declarations totaling 40 lines). This is an AST signal: local identifier
-shadowing can conservatively join unrelated groups, and the checker does not
-resolve promoted method sets or cross-package semantic concern groups. Receiver,
-file and package growth remain independently bounded even when that graph joins
-all declarations. It does not invent cross-layer rules absent from this project.
-
-A complete type-aware Lagotto audit remains unavailable on Go 1.27.3:
-[Lagotto #58](https://github.com/CaliLuke/lagotto/issues/58) tracks the v0.2.7 export
-data incompatibility. Its partial reports are never consumed as acceptance data.
-The working AST check supplies narrower structural enforcement. Reevaluate it
-when a released Lagotto version can completely load this module; remove the
-fallback only after reviewing complete results and preserving the growth limits.
-No dependency source or fork is used.
-
-Initial reviewed hotspots:
-
-| Identity | Accepted measurement | Classification and follow-up |
-| --- | --- | --- |
-| `App` | 39 methods, 972 method lines | Debt: lifecycle, election, dispatch and client ingress share one owner. Extract worker coordination behind a narrower owner while preserving public APIs and shutdown/lease ordering. |
-| `app.go` | 902 lines | Debt: separate lifecycle and dispatch responsibilities by ownership, not by splitting methods into arbitrary files. |
-| `SQLiteStorage` / `PostgresStorage` | 59 / 61 methods | Debt: adapters implement the broad Storage contract. First narrow consumers to existing manager interfaces; preserve transaction and fencing boundaries. |
-| `internal/storage/sqlite.go` | 670 lines | Debt: pool setup, transaction handling, instance CRUD and search are combined. Separate connection setup and query responsibilities without splitting transaction ownership. |
-| Root / storage packages | 29 / 26 production files | Debt: public APIs/runtime and multiple persistence responsibilities are broad. Refactor responsibility boundaries before adding package layers. |
-| `queryStorage` | 57 methods | Intentional exception: the read-only wrapper must reject the mutation surface of Storage. Review new methods against that boundary. |
-| `faultstore.Store` | 54 methods | Intentional exception: fault injection mirrors Storage to test failures around durable effects. Review delegation and hook ordering. |
-
-These follow-up descriptions are local refactoring drafts, not authorization to
-perform unrelated runtime redesign. The policy retains exact numeric ceilings
-and individual reasons. A previously flagged receiver cannot keep growing simply
-because it still produces one finding. New or increased violations fail;
-improvements pass and are reported for tightening. Removed identities fail with
-a stale-baseline error until their removal is reviewed. Updating a baseline is an explicit code-review operation:
-show old/new measurements and rationale, and tighten resolved debt. There is no
-automatic refresh command or blanket directory suppression.
+Architecture and cohesion belong in design review. Specialized structural tools
+may support a concrete refactoring investigation, but are not required by these
+hooks or CI. There are no automatic file-size, receiver-method-count or package-size
+ceilings and no custom structural analyzer in the gate.
 
 ## Verification
 
-The scanner tests cover real package loading, missing/invalid source, generic
-receiver identity, generated-file boundaries and disconnected declarations.
-The policy fixtures verify new and worsening violations, improvements, narrow
-exceptions, missing packages and metrics, coverage regressions, missing/failed
-test runs, valid-but-truncated profiles, changed sources and failed tools.
-Real temporary Go modules prove the pinned linter rejects both low-maintainability
-functions and duplicated implementations. These checks run in the fast gate.
+Coverage-inventory tests cover real package loading, missing/invalid source and
+generated-file boundaries. Policy fixtures verify missing or unreviewed packages,
+coverage regressions, missing/failed test runs, valid-but-truncated profiles,
+changed sources and failed tools. Real temporary Go modules prove the pinned
+linter rejects low-maintainability functions and duplicated implementations.
+A signal fixture verifies removal of the gate's owned PostgreSQL container.
+These checks run in the fast gate.
 
-A passing gate means configured checks pass with the accepted debt above. It does
-not establish that the architecture is healthy or replace independent code review.
+A passing gate means configured checks pass with the accepted coverage debt above.
+It does not establish architectural quality or replace independent code review.

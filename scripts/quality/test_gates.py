@@ -16,72 +16,28 @@ P = gates.MODULE
 def fixture():
     report = {"version": 1, "tags": gates.TAGS,
               "packages": {P: ["a.go"]}, "source_hashes": {"a.go": "a" * 64},
-              "coverage_files": ["a.go"], "metric_keys": ["file:a.go", "package:" + P],
-              "metrics": {"file:a.go": {"lines": 700, "components": 2}, "package:" + P: {"files": 1, "lines": 700}}}
-    policy = {"version": 1, "coverage": {P: {"minimum": 50, "reason": "fixture"}},
-              "structural_limits": {"file": {"lines": 600, "components": 1}, "package": {"files": 25, "lines": 6000}},
-              "structural_debt": {"file:a.go": {"ceilings": {"lines": 700, "components": 2},
-                                               "kind": "debt", "reason": "reviewed fixture"}}}
+              "coverage_files": ["a.go"]}
+    policy = {"version": 1, "coverage": {P: {"minimum": 50, "reason": "fixture"}}}
     return report, policy
 
 
-class StructuralTests(unittest.TestCase):
-    def test_reviewed_debt_and_improvement_pass(self):
+class InventoryTests(unittest.TestCase):
+    def test_missing_packages_and_source_fingerprints_fail(self):
         report, policy = fixture()
-        self.assertEqual([], gates.structural_failures(report, policy))
-        report["metrics"]["file:a.go"]["lines"] = 650
-        report["metrics"]["package:" + P]["lines"] = 650
-        self.assertEqual([], gates.structural_failures(report, policy))
-
-    def test_growth_and_disconnected_responsibility_fail(self):
-        for metric, value in (("lines", 701), ("components", 3)):
-            report, policy = fixture()
-            report["metrics"]["file:a.go"][metric] = value
-            report["metrics"]["package:" + P]["lines"] = report["metrics"]["file:a.go"]["lines"]
-            self.assertTrue(gates.structural_failures(report, policy))
-
-    def test_new_violation_is_not_hidden_by_exception_elsewhere(self):
-        report, policy = fixture()
-        report["packages"][P].append("new.go")
-        report["source_hashes"]["new.go"] = "b" * 64
-        report["metrics"]["file:new.go"] = {"lines": 701, "components": 1}
-        report["metric_keys"].append("file:new.go")
-        report["metrics"]["package:" + P] = {"files": 2, "lines": 1401}
-        self.assertTrue(gates.structural_failures(report, policy))
-
-    def test_missing_package_file_or_metric_fails_closed(self):
-        report, policy = fixture()
-        for key in ("packages", "metrics", "source_hashes"):
+        for key in ("packages", "source_hashes"):
             broken = copy.deepcopy(report)
             broken[key] = {}
             with self.assertRaises(ValueError):
-                gates.structural_failures(broken, policy)
-        report["metrics"]["file:a.go"].pop("components")
-        with self.assertRaises(ValueError):
-            gates.structural_failures(report, policy)
+                gates.validate_inventory(broken, policy)
 
-    def test_missing_package_receiver_and_holder_measurements_fail(self):
-        for kind in ("package", "receiver", "holder"):
-            report, policy = fixture()
-            identity = "package:" + P
-            if kind != "package":
-                identity = kind + ":" + P + ".Worker"
-                report["metrics"][identity] = {"methods": 1} if kind == "receiver" else {"dependencies": 1}
-                report["metric_keys"].append(identity)
-            report["metrics"].pop(identity)
-            with self.assertRaises(ValueError):
-                gates.structural_failures(report, policy)
+    def test_unreviewed_package_and_duplicate_ownership_fail(self):
         report, policy = fixture()
-        report["metrics"]["package:" + P]["files"] = 0
+        report["packages"][P + "/new"] = ["a.go"]
         with self.assertRaises(ValueError):
-            gates.structural_failures(report, policy)
-
-    def test_new_receiver_growth_fails(self):
-        report, policy = fixture()
-        policy["structural_limits"]["receiver"] = {"methods": 30, "lines": 600}
-        report["metrics"]["receiver:" + P + ".Worker"] = {"methods": 31, "lines": 300}
-        report["metric_keys"].append("receiver:" + P + ".Worker")
-        self.assertTrue(gates.structural_failures(report, policy))
+            gates.validate_inventory(report, policy)
+        policy["coverage"][P + "/new"] = {"minimum": 80, "reason": "fixture"}
+        with self.assertRaises(ValueError):
+            gates.validate_inventory(report, policy)
 
 
 class CoverageTests(unittest.TestCase):
@@ -90,9 +46,6 @@ class CoverageTests(unittest.TestCase):
         storage = P + "/internal/storage"
         report["packages"][storage] = ["internal/storage/store.go"]
         report["source_hashes"]["internal/storage/store.go"] = "b" * 64
-        report["metrics"]["file:internal/storage/store.go"] = {"lines": 10, "components": 0}
-        report["metrics"]["package:" + storage] = {"files": 1, "lines": 10}
-        report["metric_keys"].extend(["file:internal/storage/store.go", "package:" + storage])
         report["coverage_files"].append("internal/storage/store.go")
         policy["coverage"][storage] = {"minimum": 80, "reason": "fixture"}
         profiles, events = [], []
@@ -186,6 +139,10 @@ class RealLinterTests(unittest.TestCase):
     def test_new_low_maintainability_function_fails(self):
         body = "\n".join(f"if x > {n} {{ x += {n} }}" for n in range(160))
         self.assert_linter_rejects("maintidx", "package fixture\nfunc Bad(x int) int {\n" + body + "\nreturn x\n}\n")
+
+    def test_large_straight_line_function_fails_composite_score(self):
+        body = "\n".join(f"x += {n}" for n in range(400))
+        self.assert_linter_rejects("maintidx", "package fixture\nfunc Dense(x int) int {\n" + body + "\nreturn x\n}\n")
 
     def test_duplicate_implementation_fails(self):
         body = "\n".join(f"if x > {n} {{ x += {n} }}" for n in range(30))

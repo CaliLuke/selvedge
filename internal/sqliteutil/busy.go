@@ -14,6 +14,11 @@ import (
 // instead of waiting inside SQLite's busy handler. The caller must exclusively
 // own conn until this function returns. Its previous timeout is restored before
 // reuse, including after cancellation; a failed restoration discards conn.
+//
+// This works around context-insensitive busy waits in the pinned sqlite v1.40.1:
+// https://gitlab.com/cznic/sqlite/-/issues/262 (fixed upstream in v1.61.0).
+// Remove it after adopting a fixed driver release and confirming the producer
+// WAL/migration lock-cancellation tests pass with the normal busy timeout.
 func WithoutBusyTimeout(ctx context.Context, conn *sql.Conn, operation func() error) (err error) {
 	var timeout int
 	if err := conn.QueryRowContext(ctx, "PRAGMA busy_timeout").Scan(&timeout); err != nil {

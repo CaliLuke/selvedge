@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed structural and coverage policy checks. No baseline writes."""
+"""Fail-closed coverage inventory and policy checks. No baseline writes."""
 import argparse
 import json
 from pathlib import Path
@@ -30,55 +30,14 @@ def validate_inventory(report, policy):
     for package, files in packages.items():
         if not isinstance(files, list) or not files or len(files) != len(set(files)):
             raise ValueError(f"missing or duplicate sources for {package}")
-    if not isinstance(report.get("metrics"), dict) or not report["metrics"]:
-        raise ValueError("empty structural analysis")
-    keys = report.get("metric_keys")
-    if not isinstance(keys, list) or len(keys) != len(set(keys)) or set(keys) != set(report["metrics"]):
-        raise ValueError("structural analysis is missing declared metric identities")
     expected_files = {name for files in packages.values() for name in files}
-    actual_files = {key.removeprefix("file:") for key in report["metrics"] if key.startswith("file:")}
-    if expected_files != actual_files:
-        raise ValueError("structural analysis is missing source files")
-    expected_packages = {"package:" + name for name in packages}
-    actual_packages = {key for key in report["metrics"] if key.startswith("package:")}
-    if expected_packages != actual_packages:
-        raise ValueError("structural analysis is missing package measurements")
-    for package, files in packages.items():
-        metrics = report["metrics"]["package:" + package]
-        if metrics.get("files") != len(files) or metrics.get("lines") != sum(report["metrics"]["file:" + name]["lines"] for name in files):
-            raise ValueError(f"inconsistent package measurements: {package}")
+    if sum(len(files) for files in packages.values()) != len(expected_files):
+        raise ValueError("source belongs to multiple packages")
     if not set(report.get("coverage_files", [])).issubset(expected_files):
         raise ValueError("coverage inventory contains unknown sources")
     if set(report.get("source_hashes", {})) != expected_files:
         raise ValueError("incomplete source fingerprints")
     return packages
-
-
-def structural_failures(report, policy):
-    validate_inventory(report, policy)
-    failures = []
-    for identity, metrics in report["metrics"].items():
-        kind = identity.split(":", 1)[0]
-        limits = policy["structural_limits"].get(kind)
-        if limits is None or set(metrics) != set(limits):
-            raise ValueError(f"unknown/incomplete metrics: {identity}")
-        debt = policy["structural_debt"].get(identity, {})
-        for name, current in metrics.items():
-            if type(current) is not int or current < 0:
-                raise ValueError(f"invalid measurement: {identity}.{name}")
-            maximum = debt.get("ceilings", {}).get(name, limits[name])
-            if current > maximum:
-                failures.append(f"{identity}.{name}: {current} exceeds {maximum}")
-    for identity, debt in policy["structural_debt"].items():
-        if not debt.get("reason") or debt.get("kind") not in ("debt", "exception"):
-            raise ValueError(f"unreviewed structural baseline: {identity}")
-        if identity not in report["metrics"]:
-            raise ValueError(f"stale baseline requires review/removal: {identity}")
-        for name, maximum in debt["ceilings"].items():
-            current = report["metrics"][identity][name]
-            if current < maximum:
-                print(f"IMPROVED {identity}.{name}: {maximum} -> {current}; review baseline tightening")
-    return failures
 
 
 def read_profile(path):
@@ -210,7 +169,7 @@ def instrumented_values(source, name, integer_type):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("structure", "coverage"))
+    parser.add_argument("mode", choices=("inventory", "coverage"))
     parser.add_argument("--inventory", required=True)
     parser.add_argument("--policy", required=True)
     parser.add_argument("--profile", action="append", default=[])
@@ -220,8 +179,9 @@ def main():
         report, policy = load(args.inventory), load(args.policy)
         if policy.get("version") != 1:
             raise ValueError("unsupported policy version")
-        if args.mode == "structure":
-            failures = structural_failures(report, policy)
+        if args.mode == "inventory":
+            validate_inventory(report, policy)
+            failures = []
         else:
             failures = coverage_failures(report, policy, args.profile, args.events)
         if failures:

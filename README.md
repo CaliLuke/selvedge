@@ -619,7 +619,7 @@ server's test database, so never use an application database. Go 1.27.3, Python
 hook version; the config rejects older versions.
 
 See [quality-gate policy](docs/quality-gates.md) for enforced checks, explicit
-legacy debt, coverage floors, and the structural analyzer's limitations.
+coverage debt, package floors, and the Halstead-based maintainability gate.
 
 For PostgreSQL storage tests, start the development database and run:
 

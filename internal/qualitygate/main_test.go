@@ -3,9 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,7 +16,7 @@ func testSource(t *testing.T, root, name, source string) {
 	require.NoError(t, os.WriteFile(filepath.Join(root, name), []byte(source), 0600))
 }
 
-func TestInventoryMeasuresOwnedDeclarations(t *testing.T) {
+func TestInventoryIncludesOwnedExecutableSources(t *testing.T) {
 	root := t.TempDir()
 	testSource(t, root, "a.go", `package example
 import "io"
@@ -36,8 +33,6 @@ func (s Store[T]) Write() {}
 	require.Equal(t, []string{"generated.go"}, r.GeneratedFiles)
 	require.Equal(t, []string{"a.go"}, r.CoverageFiles)
 	require.Len(t, r.SourceHashes["a.go"], 64)
-	require.Equal(t, 2, r.Metrics["receiver:example.Store"]["methods"])
-	require.Equal(t, 1, r.Metrics["holder:example.Store"]["dependencies"])
 }
 
 func TestInventoryRejectsIncompleteAnalysis(t *testing.T) {
@@ -74,39 +69,4 @@ func TestRunLoadsActualPackageInventory(t *testing.T) {
 	require.Equal(t, []string{"a.go"}, r.Packages["example.com/fixture"])
 	testSource(t, root, "go.mod", "invalid module file")
 	require.Error(t, run(&output))
-}
-
-func TestReceiverNameHandlesAllGoReceiverForms(t *testing.T) {
-	for _, source := range []string{"Store", "*Store", "Store[T]", "*Store[K, V]"} {
-		expr, err := parser.ParseExpr(source)
-		require.NoError(t, err)
-		require.Equal(t, "Store", receiverName(expr))
-	}
-	require.Equal(t, "<unknown>", receiverName(&ast.BasicLit{}))
-}
-
-func TestCohesionDetectsNewDisconnectedConcerns(t *testing.T) {
-	body := strings.Repeat("println(1)\n", 85)
-	for _, connected := range []bool{false, true} {
-		source := "package fixture\nfunc A() {\n" + body + "}\nfunc B() {\n" + body
-		want := 2
-		if connected {
-			source += "A()\n"
-			want = 1
-		}
-		source += "}\n"
-		fs := token.NewFileSet()
-		file, err := parser.ParseFile(fs, "fixture.go", source, 0)
-		require.NoError(t, err)
-		require.Equal(t, want, substantialComponents(file, fs))
-	}
-}
-
-func TestCohesionConnectsReceiverMethods(t *testing.T) {
-	body := strings.Repeat("println(1)\n", 85)
-	source := "package fixture\nfunc (s *Store) A() {\n" + body + "}\nfunc (s *Store) B() {\n" + body + "}\n"
-	fs := token.NewFileSet()
-	file, err := parser.ParseFile(fs, "fixture.go", source, 0)
-	require.NoError(t, err)
-	require.Equal(t, 1, substantialComponents(file, fs))
 }

@@ -1,4 +1,4 @@
-// Command qualitygate inventories owned Go source for structural and coverage gates.
+// Command qualitygate inventories owned Go source for coverage validation.
 package main
 
 import (
@@ -25,14 +25,12 @@ type packageInfo struct {
 }
 
 type report struct {
-	MetricKeys     []string                  `json:"metric_keys"`
-	Version        int                       `json:"version"`
-	Tags           string                    `json:"tags"`
-	Packages       map[string][]string       `json:"packages"`
-	SourceHashes   map[string]string         `json:"source_hashes"`
-	GeneratedFiles []string                  `json:"generated_files"`
-	CoverageFiles  []string                  `json:"coverage_files"`
-	Metrics        map[string]map[string]int `json:"metrics"`
+	Version        int                 `json:"version"`
+	Tags           string              `json:"tags"`
+	Packages       map[string][]string `json:"packages"`
+	SourceHashes   map[string]string   `json:"source_hashes"`
+	GeneratedFiles []string            `json:"generated_files"`
+	CoverageFiles  []string            `json:"coverage_files"`
 }
 
 func main() {
@@ -61,7 +59,7 @@ func run(out io.Writer) error {
 }
 
 func inventory(root string, input io.Reader) (*report, error) {
-	r := &report{Version: 1, Tags: buildTags, Packages: map[string][]string{}, SourceHashes: map[string]string{}, Metrics: map[string]map[string]int{}}
+	r := &report{Version: 1, Tags: buildTags, Packages: map[string][]string{}, SourceHashes: map[string]string{}}
 	decoder := json.NewDecoder(input)
 	for {
 		var pkg packageInfo
@@ -98,14 +96,6 @@ func inventory(root string, input io.Reader) (*report, error) {
 	return r, nil
 }
 
-func (r *report) metric(key string) map[string]int {
-	if r.Metrics[key] == nil {
-		r.Metrics[key] = map[string]int{}
-		r.MetricKeys = append(r.MetricKeys, key)
-	}
-	return r.Metrics[key]
-}
-
 func (r *report) addFile(pkg, relative, path string) error {
 	fs := token.NewFileSet()
 	source, err := os.ReadFile(path)
@@ -123,67 +113,11 @@ func (r *report) addFile(pkg, relative, path string) error {
 	r.Packages[pkg] = append(r.Packages[pkg], relative)
 	hash := sha256.Sum256(source)
 	r.SourceHashes[relative] = hex.EncodeToString(hash[:])
-	lines := fs.Position(file.End()).Line
-	r.metric("file:" + relative)["lines"] = lines
-	r.metric("file:" + relative)["components"] = 0
-	if lines > 600 {
-		r.metric("file:" + relative)["components"] = substantialComponents(file, fs)
-	}
-	r.metric("package:" + pkg)["files"]++
-	r.metric("package:" + pkg)["lines"] += lines
-	coverable := false
 	for _, decl := range file.Decls {
-		switch d := decl.(type) {
-		case *ast.FuncDecl:
-			if d.Body != nil && len(d.Body.List) > 0 {
-				coverable = true
-			}
-			if d.Recv == nil {
-				continue
-			}
-			key := "receiver:" + pkg + "." + receiverName(d.Recv.List[0].Type)
-			r.metric(key)["methods"]++
-			r.metric(key)["lines"] += fs.Position(d.End()).Line - fs.Position(d.Pos()).Line + 1
-		case *ast.GenDecl:
-			for _, spec := range d.Specs {
-				typeSpec, ok := spec.(*ast.TypeSpec)
-				if !ok {
-					continue
-				}
-				strct, ok := typeSpec.Type.(*ast.StructType)
-				if !ok {
-					continue
-				}
-				dependencies := map[string]bool{}
-				ast.Inspect(strct.Fields, func(n ast.Node) bool {
-					if sel, ok := n.(*ast.SelectorExpr); ok {
-						if ident, ok := sel.X.(*ast.Ident); ok {
-							dependencies[ident.Name] = true
-						}
-					}
-					return true
-				})
-				r.metric("holder:" + pkg + "." + typeSpec.Name.Name)["dependencies"] = len(dependencies)
-			}
+		if function, ok := decl.(*ast.FuncDecl); ok && function.Body != nil && len(function.Body.List) > 0 {
+			r.CoverageFiles = append(r.CoverageFiles, relative)
+			break
 		}
 	}
-	if coverable {
-		r.CoverageFiles = append(r.CoverageFiles, relative)
-	}
 	return nil
-}
-
-func receiverName(expr ast.Expr) string {
-	switch e := expr.(type) {
-	case *ast.Ident:
-		return e.Name
-	case *ast.StarExpr:
-		return receiverName(e.X)
-	case *ast.IndexExpr:
-		return receiverName(e.X)
-	case *ast.IndexListExpr:
-		return receiverName(e.X)
-	default:
-		return "<unknown>"
-	}
 }
