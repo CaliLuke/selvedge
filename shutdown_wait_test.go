@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -30,6 +31,8 @@ func (s *shutdownCloseStore) Close() error {
 	return s.err
 }
 
+// shutdownHandle isolates each public shutdown method at the storage-close
+// boundary, without worker scheduling or database timing influencing the result.
 func shutdownHandle(t *testing.T, role string, timeout time.Duration, closeErr error) (func(context.Context) error, func(), *shutdownCloseStore) {
 	t.Helper()
 	store := &shutdownCloseStore{release: make(chan struct{}), err: closeErr}
@@ -63,6 +66,8 @@ func awaitShutdownResult(t *testing.T, shutdown func(context.Context) error) err
 	}
 }
 
+// Context-shaped close failures must remain final results, so retry decisions
+// depend on the interruption marker rather than on the underlying context cause.
 func TestShutdownDistinguishesInterruptedWaitFromCleanupResult(t *testing.T) {
 	for _, role := range []string{"app", "producer"} {
 		for _, wait := range []string{"timeout", "cancelled", "deadline"} {
@@ -116,33 +121,39 @@ func TestShutdownDistinguishesInterruptedWaitFromCleanupResult(t *testing.T) {
 	}
 }
 
+// Establish overlapping waiters before cancellation so cancelling one cannot
+// silently interrupt another caller already waiting for the cleanup result.
 func TestShutdownCallersWaitIndependently(t *testing.T) {
 	for _, role := range []string{"app", "producer"} {
 		t.Run(role, func(t *testing.T) {
-			closeErr := errors.New("storage close failed")
-			shutdown, release, store := shutdownHandle(t, role, 5*time.Second, closeErr)
-			waiting := make(chan error, 1)
-			go func() { waiting <- shutdown(context.Background()) }()
-			ctx, cancel := context.WithCancel(context.Background())
-			cancel()
-			err := shutdown(ctx)
-			require.ErrorIs(t, err, ErrShutdownInterrupted)
-			require.ErrorIs(t, err, context.Canceled)
-			select {
-			case err := <-waiting:
-				t.Fatalf("other caller stopped waiting before cleanup: %v", err)
-			default:
-			}
-			release()
-			select {
-			case err := <-waiting:
-				require.ErrorIs(t, err, closeErr)
-				require.NotErrorIs(t, err, ErrShutdownInterrupted)
-			case <-time.After(5 * time.Second):
-				t.Fatal("other caller did not observe cleanup")
-			}
-			require.ErrorIs(t, shutdown(ctx), closeErr)
-			require.EqualValues(t, 1, store.closes.Load())
+			synctest.Test(t, func(t *testing.T) {
+				closeErr := errors.New("storage close failed")
+				shutdown, release, store := shutdownHandle(t, role, 5*time.Second, closeErr)
+				waiting := make(chan error, 1)
+				go func() { waiting <- shutdown(context.Background()) }()
+				synctest.Wait()
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
+				err := shutdown(ctx)
+				require.ErrorIs(t, err, ErrShutdownInterrupted)
+				require.ErrorIs(t, err, context.Canceled)
+				synctest.Wait()
+				select {
+				case err := <-waiting:
+					t.Fatalf("other caller stopped waiting before cleanup: %v", err)
+				default:
+				}
+				release()
+				select {
+				case err := <-waiting:
+					require.ErrorIs(t, err, closeErr)
+					require.NotErrorIs(t, err, ErrShutdownInterrupted)
+				case <-time.After(5 * time.Second):
+					t.Fatal("other caller did not observe cleanup")
+				}
+				require.ErrorIs(t, shutdown(ctx), closeErr)
+				require.EqualValues(t, 1, store.closes.Load())
+			})
 		})
 	}
 }

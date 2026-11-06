@@ -19,6 +19,8 @@ type appShutdown struct {
 	err  error
 }
 
+// wait observes the published cleanup result without owning cleanup's lifetime.
+// It checks completion both before blocking and after a wait interruption.
 func (s *appShutdown) wait(ctx context.Context, timeout time.Duration) error {
 	// A completed cleanup takes precedence over an already cancelled waiter.
 	select {
@@ -28,12 +30,21 @@ func (s *appShutdown) wait(ctx context.Context, timeout time.Duration) error {
 	}
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
+	var interrupted error
 	select {
 	case <-s.done:
 		return s.err
 	case <-ctx.Done():
-		return fmt.Errorf("%w: %w", ErrShutdownInterrupted, ctx.Err())
+		interrupted = fmt.Errorf("%w: %w", ErrShutdownInterrupted, ctx.Err())
 	case <-timer.C:
-		return fmt.Errorf("%w after %v: %w", ErrShutdownInterrupted, timeout, context.DeadlineExceeded)
+		interrupted = fmt.Errorf("%w after %v: %w", ErrShutdownInterrupted, timeout, context.DeadlineExceeded)
+	}
+	// Completion may have become ready alongside the interruption. Observe it
+	// before reporting an interrupted wait; the caller must retry only if unseen.
+	select {
+	case <-s.done:
+		return s.err
+	default:
+		return interrupted
 	}
 }
