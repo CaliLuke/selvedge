@@ -40,7 +40,7 @@ func OpenProducer(ctx context.Context, opts ...Option) (*Producer, error) {
 		return nil, err
 	}
 	app := NewApp(opts...)
-	if err := app.config.validate(); err != nil {
+	if err := app.config.validateLifecycle(); err != nil {
 		return nil, err
 	}
 	app.hooks = &hooks.NoOpHooks{}

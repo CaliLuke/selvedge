@@ -312,14 +312,23 @@ func WithActivityQueues(queues ...string) Option {
 }
 
 // validate rejects values that would panic a background timer or spin a poller.
+func (c *appConfig) validateLifecycle() error {
+	if c.shutdownTimeout <= 0 {
+		return fmt.Errorf("shutdown timeout must be positive")
+	}
+	return nil
+}
+
 func (c *appConfig) validate() error {
+	if err := c.validateLifecycle(); err != nil {
+		return err
+	}
 	for _, setting := range []struct {
 		name  string
 		value time.Duration
 	}{
 		{"timer check interval", c.timerCheckInterval},
 		{"workflow resumption interval", c.workflowResumptionInterval},
-		{"shutdown timeout", c.shutdownTimeout},
 		{"notification reconnect delay", c.notifyReconnectDelay},
 	} {
 		if setting.value <= 0 {

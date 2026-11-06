@@ -229,6 +229,9 @@ func (a *App) finishShutdown(shutdown *appShutdown) {
 
 // initStorage initializes the storage backend.
 func (a *App) initStorage() error {
+	if err := a.config.lease.Validate(); err != nil {
+		return err
+	}
 	if err := a.openStorage(a.ctx, true); err != nil {
 		return err
 	}
@@ -238,9 +241,6 @@ func (a *App) initStorage() error {
 
 // openStorage shares persistence setup without starting execution services.
 func (a *App) openStorage(ctx context.Context, listener bool) error {
-	if err := a.config.lease.Validate(); err != nil {
-		return err
-	}
 	if a.config.databaseURL == "" {
 		a.config.databaseURL = "selvedge.db"
 	}

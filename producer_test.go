@@ -41,6 +41,37 @@ func producerPair(t *testing.T, factory replayAppFactory, opts ...Option) (*Prod
 	return producer, worker
 }
 
+func TestProducerValidatesOnlyApplicableConfiguration(t *testing.T) {
+	for _, test := range []struct {
+		name            string
+		option          Option
+		producerRejects bool
+	}{
+		{"worker timer", WithTimerCheckInterval(0), false},
+		{"worker resumption", WithWorkflowResumptionInterval(0), false},
+		{"listener reconnect", WithNotifyReconnectDelay(0), false},
+		{"execution lease", WithLease(0, 0, 0, 0), false},
+		{"shutdown timeout", WithShutdownTimeout(0), true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			// Worker validation still rejects these configurations.
+			require.Error(t, NewApp(test.option).Start(ctx))
+			producer, err := OpenProducer(ctx, WithDatabase(filepath.Join(t.TempDir(), "producer.db")), test.option)
+			if test.producerRejects {
+				require.Error(t, err)
+				require.Nil(t, producer)
+				return
+			}
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, producer.Shutdown(context.Background())) })
+			_, err = producer.StartWorkflowByName(ctx, "registered-by-worker", "input")
+			require.NoError(t, err)
+		})
+	}
+}
+
 func TestProducerSeparateWorker(t *testing.T) { producerSeparateWorker(t, createTestApp) }
 func producerSeparateWorker(t *testing.T, factory replayAppFactory) {
 	h := &producerStartHooks{}
