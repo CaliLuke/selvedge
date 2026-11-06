@@ -170,7 +170,9 @@ func WithHooks(h hooks.WorkflowHooks) Option {
 	}
 }
 
-// WithShutdownTimeout sets the timeout for graceful shutdown.
+// WithShutdownTimeout bounds each App or Producer Shutdown call's wait for cleanup.
+// Expiry returns ErrShutdownInterrupted wrapping context.DeadlineExceeded; cleanup
+// continues independently. The duration must be positive.
 func WithShutdownTimeout(d time.Duration) Option {
 	return func(c *appConfig) {
 		c.shutdownTimeout = d

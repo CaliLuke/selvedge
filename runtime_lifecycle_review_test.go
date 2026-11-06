@@ -25,13 +25,17 @@ func TestShutdownCancellationStillClosesStorage(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	require.ErrorIs(t, app.Shutdown(ctx), context.Canceled)
+	err := app.Shutdown(ctx)
+	require.ErrorIs(t, err, context.Canceled)
+	require.ErrorIs(t, err, ErrShutdownInterrupted)
 	restartErr := app.Start(context.Background())
 	secondShutdownErr := app.Shutdown(ctx)
 	release()
 	require.ErrorContains(t, restartErr, "shutting down")
 	require.ErrorIs(t, secondShutdownErr, context.Canceled)
+	require.ErrorIs(t, secondShutdownErr, ErrShutdownInterrupted)
 	require.NoError(t, app.Shutdown(context.Background()))
+	require.NoError(t, app.Shutdown(ctx), "completed cleanup wins over caller cancellation")
 	require.Error(t, app.Storage().DB().PingContext(context.Background()), "cleanup must close storage after caller cancellation")
 
 	// Completed shutdown still permits a fresh run on the same App.
