@@ -603,11 +603,23 @@ Migration lock waits use the context passed to `App.Start`. Without a deadline, 
 ## Development
 
 ```sh
-go build ./...
-go vet ./...
-go test -race ./...
-make lint
+make install-tools
+uv tool install prek==0.5.10
+make install-hooks
+make check-fast # read-only build, vet/lint, formatting, hygiene and maintainability
+make check      # full gate: adds fresh race tests and coverage floors
+make fmt        # explicit formatting/import fixes
 ```
+
+CI and the pre-push hook run `make check`; pre-commit runs `make check-fast`.
+The full gate starts and removes an isolated PostgreSQL 17 container unless
+`SELVEDGE_TEST_POSTGRES_URL` points to a dedicated test server. It resets the
+server's test database, so never use an application database. Go 1.27.3, Python
+3.9+, and Docker (or that test URL) are prerequisites. Prek 0.5.10 is the tested
+hook version; the config rejects older versions.
+
+See [quality-gate policy](docs/quality-gates.md) for enforced checks, explicit
+legacy debt, coverage floors, and the structural analyzer's limitations.
 
 For PostgreSQL storage tests, start the development database and run:
 

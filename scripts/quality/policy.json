@@ -1,0 +1,143 @@
+{
+  "coverage": {
+    "github.com/CaliLuke/selvedge": {
+      "minimum": 80,
+      "reason": "Default floor for owned executable code."
+    },
+    "github.com/CaliLuke/selvedge/hooks": {
+      "minimum": 100,
+      "no_statements": true,
+      "reason": "Only hook interfaces, data types and empty NoOpHooks bodies; no executable statements."
+    },
+    "github.com/CaliLuke/selvedge/hooks/otel": {
+      "minimum": 80,
+      "reason": "Default floor for owned executable code."
+    },
+    "github.com/CaliLuke/selvedge/internal/migrations": {
+      "minimum": 80,
+      "reason": "Default floor for owned executable code."
+    },
+    "github.com/CaliLuke/selvedge/internal/notify": {
+      "minimum": 75,
+      "reason": "Accepted coverage debt: measured 77.69%; reconnect, malformed notification and handler-panic paths remain uncovered. Follow-up: exercise connection loss/recovery and dispatch error behavior. Small margin accommodates concurrent listener paths."
+    },
+    "github.com/CaliLuke/selvedge/internal/qualitygate": {
+      "minimum": 80,
+      "reason": "Default floor for owned executable code."
+    },
+    "github.com/CaliLuke/selvedge/internal/replay": {
+      "minimum": 80,
+      "reason": "Default floor for owned executable code."
+    },
+    "github.com/CaliLuke/selvedge/internal/sqliteutil": {
+      "minimum": 80,
+      "reason": "Default floor for owned executable code."
+    },
+    "github.com/CaliLuke/selvedge/internal/storage": {
+      "minimum": 80,
+      "reason": "Default floor for owned executable code."
+    },
+    "github.com/CaliLuke/selvedge/internal/storage/faultstore": {
+      "minimum": 72,
+      "reason": "Accepted coverage debt: measured 72.27%; several delegated operations and injected-error branches are not exercised. Follow-up: cover missing fault boundaries through consumer behavior tests."
+    },
+    "github.com/CaliLuke/selvedge/internal/testkit": {
+      "minimum": 69,
+      "reason": "Accepted coverage debt: measured 69.23%; canonical checks supply a dedicated PostgreSQL server, leaving the alternate testcontainers startup path and infrastructure-failure branches uncovered. Follow-up: validate that fallback separately without weakening the production package floors."
+    },
+    "github.com/CaliLuke/selvedge/retry": {
+      "minimum": 80,
+      "reason": "Default floor for owned executable code."
+    }
+  },
+  "file_coverage": {
+    "internal/qualitygate/cohesion.go": 80,
+    "internal/qualitygate/main.go": 80,
+    "internal/sqliteutil/busy.go": 100,
+    "producer.go": 80
+  },
+  "structural_debt": {
+    "file:app.go": {
+      "ceilings": {
+        "lines": 902
+      },
+      "kind": "debt",
+      "reason": "App combines initialization, worker leadership, dispatch, submission and cleanup. Follow-up: extract lifecycle/dispatch ownership while preserving lease and shutdown invariants."
+    },
+    "file:internal/storage/sqlite.go": {
+      "ceilings": {
+        "lines": 670
+      },
+      "kind": "debt",
+      "reason": "SQLite pool setup, transactions, instance CRUD and listing share one file. Follow-up: separate connection setup and instance query responsibilities without splitting transaction ownership."
+    },
+    "package:github.com/CaliLuke/selvedge": {
+      "ceilings": {
+        "files": 29
+      },
+      "kind": "debt",
+      "reason": "Public workflow APIs and runtime orchestration share the root package. Follow-up: separate internal runtime implementation behind the existing public API; avoid package-per-method moves."
+    },
+    "package:github.com/CaliLuke/selvedge/internal/storage": {
+      "ceilings": {
+        "files": 26
+      },
+      "kind": "debt",
+      "reason": "Persistence spans histories, timers, tasks, scopes and leases. Follow-up: narrow consumers to existing manager interfaces before considering package boundaries."
+    },
+    "receiver:github.com/CaliLuke/selvedge.App": {
+      "ceilings": {
+        "lines": 972,
+        "methods": 39
+      },
+      "kind": "debt",
+      "reason": "App combines client ingress and worker lifecycle. Follow-up: extract worker coordination behind a narrower owner, retaining the public API and shutdown ordering."
+    },
+    "receiver:github.com/CaliLuke/selvedge/internal/replay.queryStorage": {
+      "ceilings": {
+        "methods": 57
+      },
+      "kind": "exception",
+      "reason": "Read-only wrapper intentionally implements Storage and rejects mutation methods. Review additions against the read-only boundary rather than splitting the wrapper."
+    },
+    "receiver:github.com/CaliLuke/selvedge/internal/storage.PostgresStorage": {
+      "ceilings": {
+        "methods": 61
+      },
+      "kind": "debt",
+      "reason": "Backend adapter implements the broad Storage contract. Follow-up: narrow consumer interfaces before decomposing the adapter; preserve transaction and fencing boundaries."
+    },
+    "receiver:github.com/CaliLuke/selvedge/internal/storage.SQLiteStorage": {
+      "ceilings": {
+        "methods": 59
+      },
+      "kind": "debt",
+      "reason": "Backend adapter implements the broad Storage contract. Follow-up: narrow consumer interfaces before decomposing the adapter; preserve transaction and fencing boundaries."
+    },
+    "receiver:github.com/CaliLuke/selvedge/internal/storage/faultstore.Store": {
+      "ceilings": {
+        "methods": 54
+      },
+      "kind": "exception",
+      "reason": "Test fault-injection wrapper intentionally mirrors Storage operations to inject failures around durable writes. Review additions for delegation and hook ordering."
+    }
+  },
+  "structural_limits": {
+    "file": {
+      "components": 1,
+      "lines": 600
+    },
+    "holder": {
+      "dependencies": 8
+    },
+    "package": {
+      "files": 25,
+      "lines": 6000
+    },
+    "receiver": {
+      "lines": 600,
+      "methods": 30
+    }
+  },
+  "version": 1
+}
