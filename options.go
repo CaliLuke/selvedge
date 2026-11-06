@@ -9,7 +9,7 @@ import (
 	"github.com/CaliLuke/selvedge/internal/replay"
 )
 
-// Option configures an App.
+// Option configures an App or Producer. See OpenProducer for applicable options.
 type Option func(*appConfig)
 
 // appConfig holds the configuration for an App.
@@ -98,7 +98,8 @@ func WithDatabase(url string) Option {
 // WithAutoMigrate enables or disables automatic database migrations on startup.
 //
 // When enabled (default), selvedge will automatically apply pending dbmate-compatible
-// migrations from the embedded internal/migrations/sql/ directory during App.Start().
+// migrations from the embedded internal/migrations/sql/ directory during App.Start
+// or OpenProducer.
 //
 // This is compatible with the dbmate CLI tool and uses the same schema_migrations
 // table for tracking applied migrations.

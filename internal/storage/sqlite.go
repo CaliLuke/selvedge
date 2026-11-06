@@ -34,6 +34,14 @@ type SQLiteStorage struct {
 
 // NewSQLiteStorage creates a new SQLite storage.
 func NewSQLiteStorage(dbPath string) (*SQLiteStorage, error) {
+	return NewSQLiteStorageContext(context.Background(), dbPath)
+}
+
+// NewSQLiteStorageContext opens storage with context-bounded WAL initialization.
+func NewSQLiteStorageContext(ctx context.Context, dbPath string) (*SQLiteStorage, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	// Each anonymous memory store needs its own identity, while its pooled
 	// connections share that identity. Named memory URIs retain explicit sharing.
 	connStr := dbPath
@@ -63,7 +71,7 @@ func NewSQLiteStorage(dbPath string) (*SQLiteStorage, error) {
 	// WAL persists on disk. Set it once per pool, rather than on every new
 	// connection. Concurrent journal-mode changes can return BUSY immediately
 	// even with busy_timeout set, so retry the pragma within the same budget.
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if err := enableSQLiteWAL(ctx, db); err != nil {
 		_ = db.Close()

@@ -26,6 +26,84 @@ and cache-hit callbacks are markers; completion spans use the reported duration.
 Correlate callbacks through instance and command ID attributes. Spans inherit the
 callback context and do not remain open across suspension or worker handoff.
 
+## Producer-only processes
+
+Use `OpenProducer` in API servers or command-line clients that submit and inspect
+work without executing it. A `Producer` has no workflow or activity registration
+API. It starts no workers, leader election, maintenance, or notification listener.
+Dedicated `App` workers use the same database and existing registration APIs.
+
+```go
+initCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+producer, err := selvedge.OpenProducer(initCtx,
+    selvedge.WithDatabase(databaseURL),
+    selvedge.WithAutoMigrate(false), // migrations are managed by this deployment
+)
+cancel() // initialization is finished; the producer remains usable
+if err != nil {
+    return err
+}
+// Arrange producer.Shutdown with a bounded context at process shutdown.
+
+id, err := producer.StartWorkflowByName(ctx, "send_email", input,
+    selvedge.WithInstanceID("email-order-123"))
+if err != nil {
+    return err
+}
+status, err := producer.Describe(ctx, id)
+if err != nil {
+    return err
+}
+// StatusRunning includes admitted work waiting for a worker.
+result, err := selvedge.GetProducerWorkflowResult[EmailResult](ctx, producer, id)
+```
+
+`Describe` returns the stored workflow name, JSON input in `InputData`, status,
+and parent identity. Empty `ParentInstanceID` and `ParentKey` identify a root.
+`GetProducerWorkflowResult[T]` is nonblocking and follows `GetWorkflowResult`:
+workflow failures are in `result.Error`; lookup and output decode failures are
+returned as Go errors. Poll with caller-owned deadlines if completion is needed.
+
+Submission preserves the existing admission classifications:
+
+- `ErrWorkflowStartRejected`: no instance insert was attempted. A producer that
+  has begun shutdown also returns `ErrProducerClosed` through `errors.Is`.
+- `ErrWorkflowAlreadyStarted`: that ID already exists, including a completed
+  workflow or child. Read `Describe` and compare workflow name, parent identity,
+  and input before treating it as the intended submission.
+- Other storage errors can leave admission uncertain. Retry the same explicit ID
+  and reconcile a duplicate; do not generate a new ID for the retry.
+
+`StartWorkflowByName` uses `encoding/json`, including for `json.RawMessage`;
+whitespace may be compacted and HTML characters escaped. For byte-preserving
+submission, use `producer.StartWorkflowEncoded(ctx, name, json.RawMessage(data),
+opts...)`. It rejects invalid JSON before insertion and stores a copy of the
+bytes verbatim on SQLite and PostgreSQL, including whitespace, key order, escapes,
+and number spelling. Do not mutate the input concurrently with the call.
+
+Automatic migration is enabled by default. `WithAutoMigrate(false)` validates
+configuration and connectivity, but **does not check schema compatibility**.
+Apply the current embedded migrations externally before using that handle.
+`WithMigrationsFS` selects custom migrations when automatic migration is enabled.
+All initialization database work uses the initialization context; cancelling it
+after a successful open has no effect on later operations.
+
+`Shutdown` rejects new operations, drains admitted operations, then closes storage.
+Give each operation its own deadline to bound draining. Concurrent and repeated
+shutdown calls join the same cleanup. Cancelling a shutdown waiter or reaching
+`WithShutdownTimeout` interrupts only that wait; cleanup continues. A wrapped
+`context.Canceled` or `context.DeadlineExceeded` reports interrupted waiting.
+Call `Shutdown` again to observe completion and any storage-close error. A closed
+producer cannot reopen; create another with `OpenProducer`.
+
+Database, migration, notification publishing and shutdown timeout options apply
+to producers. Worker options do not enable execution. `WithListenNotify` controls
+PostgreSQL notification publishing so separate workers can wake promptly; producers
+do not listen. Workflow lifecycle hooks supplied through `WithHooks`, including
+`OnWorkflowStart`, never fire in a producer. Wrap submission and lookup calls with
+application metrics or tracing for client observability; no client-specific hook
+interface is currently provided.
+
 ## Signals and cancellation
 
 `App.Signal(ctx, instanceID, channel, payload)` stores a JSON payload for one workflow instance. The inbox accepts signals immediately after instance creation.

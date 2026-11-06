@@ -4,6 +4,7 @@ package notify
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -166,6 +167,9 @@ func (l *Listener) listenLoop(done chan struct{}) {
 
 		// Try to connect
 		if err := l.connect(); err != nil {
+			if l.ctx.Err() != nil && errors.Is(err, l.ctx.Err()) {
+				return
+			}
 			l.mu.Lock()
 			l.isActive = false
 			l.lastError = err
@@ -272,7 +276,7 @@ func (l *Listener) listenForNotifications() error {
 
 		notification, err := conn.WaitForNotification(l.ctx)
 		if err != nil {
-			if l.ctx.Err() != nil {
+			if l.ctx.Err() != nil && errors.Is(err, l.ctx.Err()) {
 				return nil // Context cancelled, graceful shutdown
 			}
 			return err

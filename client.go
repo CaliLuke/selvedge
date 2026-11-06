@@ -18,6 +18,8 @@ var ErrInvalidSignalPayload = errors.New("invalid signal payload")
 
 // StartWorkflowByName starts a workflow without requiring local registration.
 // The returned instance ID also identifies the run; IDs cannot be reused.
+// Input uses encoding/json, including json.RawMessage, so its original bytes may
+// change. Producer.StartWorkflowEncoded provides byte-preserving JSON submission.
 func StartWorkflowByName(ctx context.Context, app *App, workflow string, input any, opts ...StartOption) (string, error) {
 	options := &startOptions{}
 	for _, opt := range opts {
