@@ -1,0 +1,210 @@
+# Workflows
+
+[Documentation](README.md) · [Project overview](../README.md)
+
+Workflows coordinate activities, timers, signals, and child workflows. After a restart or a wait, the engine replays workflow code from the beginning.
+
+## Execution rules
+
+Workflow code runs on one coroutine per execution. A pending `Sleep` or `Receive` yields to the dispatcher without returning. The dispatcher closes that coroutine, runs its defers, and releases the lease. A later dispatch replays from the beginning.
+
+Workflow defers must not block: the dispatcher waits for them without a time limit. During coroutine closure, the runtime rejects commands from defers without hooks or writes. Workflow panics and unexpected `runtime.Goexit` calls fail the instance with `*WorkflowPanicError`, including the value and stack. An activity function panic also fails the instance with `*WorkflowPanicError` and is not retried.
+
+Workflow code must issue workflow commands serially. Commands inside activity functions and overlapping commands from user goroutines fail the run with nondeterminism. The runtime also rejects commands while the workflow coroutine is not running. If a command reaches a blocking yield on a foreign goroutine, Yield returns a sticky nondeterminism error without a dispatcher handoff.
+
+The runtime cannot detect non-overlapping foreign commands that finish without a blocking yield while the workflow coroutine runs pure user code. Such use remains unsupported. Activities can use `GetActivityInfo` to read metadata.
+
+## Signals and cancellation
+
+`App.Signal(ctx, instanceID, channel, payload)` stores a JSON payload for one workflow instance. The inbox accepts signals immediately after instance creation.
+
+`Receive[T](ctx, channel)` consumes the oldest pending signal from that channel. Each channel has its own sequence. Replay reads the recorded payload from history.
+
+```go
+// Outside the workflow:
+err := app.Signal(ctx, instanceID, "confirmation", true)
+
+// Inside the workflow:
+confirmed, err := selvedge.Receive[bool](workflowCtx, "confirmation")
+if err != nil {
+    return false, err
+}
+return confirmed, nil
+```
+
+Channel names pass through unchanged and contain 1–255 bytes. Every signal wakes its instance, including during an active execution. Unknown instances return `ErrInstanceNotFound`. Closed instances return `*InstanceClosedError`, which also matches `ErrInstanceClosed` through `errors.Is`.
+
+Signals have no idempotency key.
+
+### Cancellation
+
+`CancelWorkflow` stores a durable request and wakes the instance. Attached scopes
+observe this request at blocking waits: Sleep, Receive, Await, Timer.Get,
+Future.Get, and ReceiveWithTimeout. A stored outcome takes precedence over
+cancellation. At a new Receive, cancellation takes precedence over a pending signal.
+
+`WithCancel(ctx)` returns a child context and a cancel function. `Detached(ctx)`
+returns a parentless context that ignores the durable request and ancestor
+cancellation. These functions issue no commands and write no history.
+`WithContext` retains the same scope.
+
+The first cancel call inserts one `cancel_scope` history row, even for an empty
+scope. One fenced transaction cancels unfinished activities and timers in that
+scope and its attached descendants. It also cancels their queued or running tasks
+and deletes their timer subscriptions. Repeated calls, including after ancestor
+cancellation, write nothing and consume no command position. Replay repeats the
+same cancel calls without new writes.
+
+New scope and child cancellation records include their targets so replay rejects
+changes to which commands are cancelled. Older records remain readable, but lack
+the target metadata needed for that check.
+
+A scope cancellation matches `context.Canceled` and is not a
+`WorkflowCancelledError`. Commands issued in a locally cancelled scope record
+cancellation without creating tasks or timer subscriptions. A nonpositive
+ReceiveWithTimeout still records an immediate timeout. Await evaluates its
+predicate before cancellation. IsReady, Pending, ReceiveAsync, and Now ignore
+cancellation.
+
+Future.Get and Timer.Get use their issuing scope, regardless of the context
+passed to Get. Newly cancelled outcomes become ready at the cancel command's
+position. A stored outcome remains unchanged, including its delivery position.
+
+Detached cleanup can run after cancellation:
+
+```go
+_, cancelErr := selvedge.Receive[string](ctx, "work")
+if errors.Is(cancelErr, context.Canceled) {
+    if _, err := cleanup.Execute(selvedge.Detached(ctx), input); err != nil {
+        return output, err
+    }
+}
+return output, cancelErr
+```
+
+`WithCancel(Detached(ctx))` supports its own local cancellation. Detached scopes
+retain lease and shutdown cancellation. WorkflowContext.Done and Err report
+those Go context signals, never scope cancellation. WorkflowContext.Cancel was
+removed. The cancel function must run on the workflow coroutine, outside Await
+predicates. Calls during coroutine closure write nothing.
+
+A durable request alone does not stop activity tasks. Future.Get cancels its
+unfinished task when it observes the request. Scope cancellation stops its
+unfinished tasks immediately. Running attempts lose renewal, receive context
+cancellation, and cannot overwrite the recorded cancellation.
+
+An uncaught cancellation error closes the workflow as cancelled only if a durable
+request exists. Without that request, a scope cancellation error closes it as
+failed. A workflow that catches cancellation and returns successfully completes
+normally. Closure cancels every unfinished task, including tasks from detached
+scopes.
+
+### Timers and timed receives
+
+`ReceiveWithTimeout[T](ctx, channel, timeout)` returns a signal or an error that
+matches `context.DeadlineExceeded`. A nonpositive timeout records an immediate
+timeout without consuming a pending signal. Positive waits prefer cancellation,
+then a pending signal, then the timer fire. A signal or cancellation retires the
+timer in the same transaction as its observation. A later fire cannot wake the
+instance or change that observation.
+
+`NewTimer(ctx, duration, opts...)` returns a `*Timer` without suspending the
+workflow. `Timer.Key()` returns its history key. `Timer.IsReady()` reads the
+delivered view, like activity futures. `Timer.Get(ctx)` returns the recorded
+expiry time or cancellation and caches that outcome for this execution.
+A nonpositive duration expires immediately. `Sleep` and `NewTimer` followed by
+`Get` share the same command and support replay with either form. Timer Get
+consumes no command position and delivers no batch.
+
+### Readiness and delivery
+
+`Await(ctx, cond)` waits until a predicate is true in the delivered view.
+`future.IsReady()` reports whether the future has been delivered or a Get has
+already returned its outcome in this execution. `Pending(ctx, channel)` counts
+that channel's delivered, unconsumed signals. `ReceiveAsync[T](ctx, channel)`
+records either the next such signal or that none was available, without waiting
+or observing cancellation.
+
+Arrival and delivery are separate. Activity workers, timer fires, and signal
+senders record arrivals. A completing Await or Receive, or Sleep's cancellation
+path, commits a delivery batch under the workflow lease. Await delivers exactly
+the arrivals its predicate evaluated. Other batching waits deliver all arrivals
+at commit time. Get never delivers a batch; passing a recorded timer fire also
+leaves arrivals undelivered until a later batching wait. Replay reconstructs the
+view from durable delivery and consumption positions, so later arrivals cannot
+change earlier readiness or pending counts.
+
+Await predicates must be deterministic and side-effect free. They may read
+IsReady, Pending, and local values. Workflow commands inside a predicate fail
+the run, and a predicate panic fails the run. An immediately true pre-check
+returns without issuing a command or writing history. Replay runs that same
+pre-check, then uses the recorded observation instead of reevaluating a recorded
+Await's candidate batch. A never-true predicate parks the instance and costs one
+replay per input. Nil predicates and invalid Pending channels fail the run.
+
+Use IsReady and Pending only on the workflow coroutine, including inside Await
+predicates. Off-coroutine calls to these pure reads are unsupported and are not
+detected.
+
+## Child workflows
+
+`StartChild[O](ctx, workflowName, input, opts...)` starts a child by name and
+returns a `*Child[O]`. Only the worker that runs the child needs to register
+its workflow. The parent command and child instance commit in one transaction.
+
+`child.ID()` returns the instance ID. The default is `<parentID>/<historyKey>`.
+`WithChildID(id)` supplies an explicit ID, and `child.Key()` returns the history key.
+A duplicate ID returns `ErrWorkflowAlreadyStarted`. The recorded error also
+returns on replay. The parent can catch this error and continue.
+
+`child.Get(ctx)` returns the stored result or yields until an outcome exists.
+It caches its outcome for the execution and consumes no command position or
+delivery batch. Child failures preserve their error envelopes. The parent can
+catch child panic and nondeterminism errors. Invalid result data fails the parent.
+
+`child.IsReady()` reads the delivered view, like activity futures. It becomes
+true after a delivery batch or after Get returns. It is safe inside Await predicates.
+The child methods belong to their issuing execution and require serial use on
+the workflow coroutine.
+
+`child.Cancel(ctx)` records one command and requests cancellation of a running
+child. It resolves an unfinished handle immediately, without waiting for the
+child to close. Further calls on that handle consume no command position.
+A stored result takes precedence over cancellation.
+
+When the parent completes, fails, or cancels, its close transaction requests
+cancellation of every running child. Each child observes the request at its next
+blocking yield. Closing that child applies the same policy to its own children.
+A parent cancellation observed by a blocked Get records the outcome and requests
+child cancellation together.
+
+Child RunTimeout, TaskQueue, and RetryPolicy are not supported. Child scope integration
+and detached child handles are not supported.
+
+## Workflow time
+
+Use `Now(ctx)` for time-based decisions in workflow code. It returns a
+`(time.Time, error)`. Each live call writes one fenced history observation;
+values are not cached or batched. Replay returns the recorded value, even if
+the deadline has passed since the previous execution.
+
+Values use UTC and contain no monotonic clock reading. Live and replay values
+compare identically with both `==` and `Equal`. Each execution tracks the largest
+time returned so far, including replayed values and timer expiries observed by
+`Sleep` or `Timer.Get`. Contexts made with
+`WithContext` share this floor, so a backward clock step cannot lower a later
+live value. On error, `Now` returns the floor and a sticky error that fails the
+execution even if workflow code ignores it.
+
+`WithClock(func() time.Time)` configures the wall clock used by `Now` and timer
+expiry; the default (also for a nil clock) is `time.Now`. `Sleep` and `NewTimer`
+set expiry to the larger of that clock and the workflow time floor, plus the
+duration. Nonpositive durations still expire immediately. `SleepUntil` computes
+its duration against that same base. Replay keeps the stored expiry.
+Observing a fire advances the floor, so a later live `Now` cannot precede it.
+Issuing a timer or checking `IsReady` does not advance the floor.
+Lease clocks and the timer poller's store clock are unchanged.
+
+Like other workflow commands, `Now` must be called serially from workflow
+code. Calls while the coroutine is closing return an error and the floor,
+without writing history.
